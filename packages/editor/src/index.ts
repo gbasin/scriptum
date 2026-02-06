@@ -42,3 +42,11 @@ export {
   type SectionEditEvent,
   type SectionEditHistoryEntry,
 } from "./reconciliation/detector";
+export {
+  overlapIndicatorExtension,
+  sectionOverlapIndicatorState,
+  setSectionOverlaps,
+  type SectionOverlapData,
+  type SectionOverlapSection,
+  type SectionOverlapSeverity,
+} from "./section/overlap-indicator";
