@@ -20,6 +20,7 @@ sha2 = "0.10"
 toml = { workspace = true }
 dirs = { workspace = true }
 yrs = { workspace = true, features = ["sync"] }
+tiktoken-rs = { workspace = true }
 
 [dev-dependencies]
 futures-util = "0.3"

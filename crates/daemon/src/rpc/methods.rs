@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tiktoken_rs::CoreBPE;
 use uuid::Uuid;
 
 // ── Git sync policy ─────────────────────────────────────────────────
@@ -168,6 +169,60 @@ struct DocReadResult {
     content_md: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+enum DocBundleInclude {
+    Parents,
+    Children,
+    Backlinks,
+    Comments,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocBundleParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    #[serde(default)]
+    section_id: Option<String>,
+    #[serde(default)]
+    include: Vec<DocBundleInclude>,
+    #[serde(default)]
+    token_budget: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BacklinkContext {
+    doc_id: Uuid,
+    path: String,
+    snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CommentThreadContext {
+    thread_id: String,
+    section_id: String,
+    excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct DocBundleContext {
+    #[serde(default)]
+    parents: Vec<Section>,
+    #[serde(default)]
+    children: Vec<Section>,
+    #[serde(default)]
+    backlinks: Vec<BacklinkContext>,
+    #[serde(default)]
+    comments: Vec<CommentThreadContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DocBundleResult {
+    section_content: String,
+    context: DocBundleContext,
+    tokens_used: usize,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct DocEditSectionParams {
     workspace_id: Uuid,
@@ -275,6 +330,73 @@ impl RpcServerState {
         }
 
         DocReadResult { metadata, sections, content_md: include_content.then_some(content_md) }
+    }
+
+    async fn bundle_doc(&self, params: DocBundleParams) -> Result<DocBundleResult, String> {
+        let doc = {
+            let mut manager = self.doc_manager.write().await;
+            manager.subscribe_or_create(params.doc_id)
+        };
+        let doc_id = params.doc_id;
+
+        let bundle_result = (|| -> Result<DocBundleResult, String> {
+            let content_md = doc.get_text_string("content");
+            let sections = parse_sections(&content_md);
+            let sections_by_id: HashMap<String, Section> =
+                sections.iter().cloned().map(|section| (section.id.clone(), section)).collect();
+
+            let target_section = if let Some(section_id) = params.section_id.as_deref() {
+                let normalized = section_id.trim();
+                if normalized.is_empty() {
+                    return Err("section_id must not be empty".to_string());
+                }
+
+                Some(
+                    sections_by_id
+                        .get(normalized)
+                        .cloned()
+                        .ok_or_else(|| format!("section `{normalized}` not found"))?,
+                )
+            } else {
+                None
+            };
+
+            let include: HashSet<DocBundleInclude> = params.include.into_iter().collect();
+            let mut context = DocBundleContext::default();
+
+            if include.contains(&DocBundleInclude::Parents) {
+                if let Some(target) = target_section.as_ref() {
+                    context.parents = section_parent_chain(target, &sections_by_id);
+                }
+            }
+
+            if include.contains(&DocBundleInclude::Children) {
+                if let Some(target) = target_section.as_ref() {
+                    context.children = section_descendants(target, &sections, &sections_by_id);
+                }
+            }
+
+            if include.contains(&DocBundleInclude::Backlinks) {
+                context.backlinks = Vec::new();
+            }
+
+            if include.contains(&DocBundleInclude::Comments) {
+                context.comments = Vec::new();
+            }
+
+            let section_content = extract_section_content(&content_md, target_section.as_ref());
+            let tokens_used =
+                apply_bundle_token_budget(&section_content, &mut context, params.token_budget)?;
+
+            Ok(DocBundleResult { section_content, context, tokens_used })
+        })();
+
+        {
+            let mut manager = self.doc_manager.write().await;
+            let _ = manager.unsubscribe(doc_id);
+        }
+
+        bundle_result
     }
 
     async fn edit_section(
@@ -415,6 +537,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
             )
         }
         "doc.read" => handle_doc_read(request, state).await,
+        "doc.bundle" => handle_doc_bundle(request, state).await,
         "doc.edit_section" => handle_doc_edit_section(request, state).await,
         "git.status" => handle_git_status(request, state),
         "git.sync" => handle_git_sync(request, state),
@@ -457,6 +580,37 @@ fn parse_doc_read_params(
     })
 }
 
+async fn handle_doc_bundle(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_doc_bundle_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.bundle_doc(params).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => invalid_params_response(request.id, reason),
+    }
+}
+
+fn parse_doc_bundle_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<DocBundleParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(
+            request_id,
+            "doc.bundle requires params".to_string(),
+        ));
+    };
+
+    serde_json::from_value::<DocBundleParams>(params).map_err(|error| {
+        invalid_params_response(
+            request_id,
+            format!("failed to decode doc.bundle params: {}", error),
+        )
+    })
+}
+
 async fn handle_doc_edit_section(request: Request, state: &RpcServerState) -> Response {
     let Some(params) = request.params else {
         return invalid_params_response(request.id, "doc.edit_section requires params".to_string());
@@ -482,6 +636,164 @@ async fn handle_doc_edit_section(request: Request, state: &RpcServerState) -> Re
                 data: None,
             },
         ),
+    }
+}
+
+fn extract_section_content(markdown: &str, section: Option<&Section>) -> String {
+    let Some(section) = section else {
+        return markdown.to_string();
+    };
+
+    let start_line = section.start_line.saturating_sub(1) as usize;
+    let end_line = section.end_line.saturating_sub(1) as usize;
+
+    markdown
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            (index >= start_line && index < end_line).then_some(line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn section_parent_chain(
+    section: &Section,
+    sections_by_id: &HashMap<String, Section>,
+) -> Vec<Section> {
+    let mut parents = Vec::new();
+    let mut current_parent = section.parent_id.clone();
+
+    while let Some(parent_id) = current_parent {
+        let Some(parent) = sections_by_id.get(&parent_id) else {
+            break;
+        };
+        parents.push(parent.clone());
+        current_parent = parent.parent_id.clone();
+    }
+
+    parents.reverse();
+    parents
+}
+
+fn section_descendants(
+    section: &Section,
+    sections: &[Section],
+    sections_by_id: &HashMap<String, Section>,
+) -> Vec<Section> {
+    sections
+        .iter()
+        .filter(|candidate| candidate.id != section.id)
+        .filter(|candidate| section_is_descendant_of(candidate, &section.id, sections_by_id))
+        .cloned()
+        .collect()
+}
+
+fn section_is_descendant_of(
+    candidate: &Section,
+    ancestor_id: &str,
+    sections_by_id: &HashMap<String, Section>,
+) -> bool {
+    let mut current_parent = candidate.parent_id.as_deref();
+    while let Some(parent_id) = current_parent {
+        if parent_id == ancestor_id {
+            return true;
+        }
+        current_parent = sections_by_id.get(parent_id).and_then(|section| section.parent_id.as_deref());
+    }
+    false
+}
+
+fn apply_bundle_token_budget(
+    section_content: &str,
+    context: &mut DocBundleContext,
+    token_budget: Option<usize>,
+) -> Result<usize, String> {
+    apply_bundle_token_budget_with(section_content, context, token_budget, &count_tokens_cl100k)
+}
+
+fn apply_bundle_token_budget_with<F>(
+    section_content: &str,
+    context: &mut DocBundleContext,
+    token_budget: Option<usize>,
+    token_counter: &F,
+) -> Result<usize, String>
+where
+    F: Fn(&str) -> Result<usize, String>,
+{
+    let Some(token_budget) = token_budget else {
+        return count_bundle_tokens_with(section_content, context, token_counter);
+    };
+
+    let mut tokens_used = count_bundle_tokens_with(section_content, context, token_counter)?;
+    if tokens_used <= token_budget {
+        return Ok(tokens_used);
+    }
+
+    while tokens_used > token_budget && !context.comments.is_empty() {
+        context.comments.pop();
+        tokens_used = count_bundle_tokens_with(section_content, context, token_counter)?;
+    }
+
+    while tokens_used > token_budget && !context.backlinks.is_empty() {
+        context.backlinks.pop();
+        tokens_used = count_bundle_tokens_with(section_content, context, token_counter)?;
+    }
+
+    while tokens_used > token_budget && !context.children.is_empty() {
+        context.children.pop();
+        tokens_used = count_bundle_tokens_with(section_content, context, token_counter)?;
+    }
+
+    while tokens_used > token_budget && !context.parents.is_empty() {
+        context.parents.pop();
+        tokens_used = count_bundle_tokens_with(section_content, context, token_counter)?;
+    }
+
+    Ok(tokens_used)
+}
+
+fn count_bundle_tokens_with<F>(
+    section_content: &str,
+    context: &DocBundleContext,
+    token_counter: &F,
+) -> Result<usize, String>
+where
+    F: Fn(&str) -> Result<usize, String>,
+{
+    let mut total = token_counter(section_content)?;
+    total += count_serialized_tokens_with(&context.parents, token_counter)?;
+    total += count_serialized_tokens_with(&context.children, token_counter)?;
+    total += count_serialized_tokens_with(&context.backlinks, token_counter)?;
+    total += count_serialized_tokens_with(&context.comments, token_counter)?;
+    Ok(total)
+}
+
+fn count_serialized_tokens_with<T, F>(
+    value: &T,
+    token_counter: &F,
+) -> Result<usize, String>
+where
+    T: Serialize,
+    F: Fn(&str) -> Result<usize, String>,
+{
+    let serialized =
+        serde_json::to_string(value).map_err(|error| format!("failed to serialize bundle data: {error}"))?;
+    token_counter(&serialized)
+}
+
+fn count_tokens_cl100k(value: &str) -> Result<usize, String> {
+    let tokenizer = cl100k_tokenizer()?;
+    Ok(tokenizer.encode_with_special_tokens(value).len())
+}
+
+fn cl100k_tokenizer() -> Result<&'static CoreBPE, String> {
+    static TOKENIZER: OnceLock<Result<CoreBPE, String>> = OnceLock::new();
+    let tokenizer = TOKENIZER.get_or_init(|| tiktoken_rs::cl100k_base().map_err(|error| error.to_string()));
+
+    match tokenizer {
+        Ok(tokenizer) => Ok(tokenizer),
+        Err(error) => Err(error.clone()),
     }
 }
 
@@ -636,12 +948,14 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use scriptum_common::protocol::jsonrpc::{Request, RequestId, INTERNAL_ERROR, INVALID_PARAMS};
+    use scriptum_common::types::Section;
     use serde_json::json;
     use tokio::sync::broadcast;
     use uuid::Uuid;
 
     use super::{
-        dispatch_request, GitOps, GitStatusInfo, GitSyncAction, GitSyncPolicy, RpcServerState,
+        apply_bundle_token_budget_with, dispatch_request, BacklinkContext, CommentThreadContext,
+        DocBundleContext, GitOps, GitStatusInfo, GitSyncAction, GitSyncPolicy, RpcServerState,
     };
 
     // ── Mock GitOps ────────────────────────────────────────────────────
@@ -789,6 +1103,190 @@ mod tests {
         assert!(response.result.is_none());
         let error = response.error.expect("error should be present");
         assert_eq!(error.code, -32602);
+    }
+
+    #[tokio::test]
+    async fn doc_bundle_returns_section_content_and_context() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let markdown = "# Root\nroot body\n\n## Child\nchild body\n\n### Grandchild\ndeep body\n";
+        state.seed_doc(workspace_id, doc_id, "docs/readme.md", "Readme", markdown).await;
+
+        let request = Request::new(
+            "doc.bundle",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "section_id": "root/child",
+                "include": ["parents", "children", "backlinks", "comments"],
+                "token_budget": 8000
+            })),
+            RequestId::Number(4),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success response: {response:?}");
+        let result = response.result.expect("result should be populated");
+        assert_eq!(result["section_content"], json!("## Child\nchild body\n"));
+        assert_eq!(result["context"]["parents"][0]["id"], json!("root"));
+        assert_eq!(result["context"]["children"][0]["id"], json!("root/child/grandchild"));
+        assert_eq!(result["context"]["backlinks"], json!([]));
+        assert_eq!(result["context"]["comments"], json!([]));
+        assert!(result["tokens_used"].as_u64().expect("tokens_used should be numeric") > 0);
+    }
+
+    #[tokio::test]
+    async fn doc_bundle_rejects_unknown_section_id() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/readme.md", "Readme", "# Root\n")
+            .await;
+
+        let request = Request::new(
+            "doc.bundle",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "section_id": "missing",
+                "include": ["parents"],
+                "token_budget": 1000
+            })),
+            RequestId::Number(5),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(error.message, "Invalid params");
+        let reason = error
+            .data
+            .as_ref()
+            .and_then(|value| value.get("reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(reason.contains("section `missing` not found"));
+    }
+
+    #[test]
+    fn bundle_budget_truncation_order_is_comments_backlinks_children_parents() {
+        fn token_counter(value: &str) -> Result<usize, String> {
+            Ok(value.len())
+        }
+
+        fn section(id: &str, parent_id: Option<&str>, heading: &str) -> Section {
+            Section {
+                id: id.to_string(),
+                parent_id: parent_id.map(|value| value.to_string()),
+                heading: heading.to_string(),
+                level: 2,
+                start_line: 1,
+                end_line: 2,
+            }
+        }
+
+        let base_context = DocBundleContext {
+            parents: vec![section("root", None, &"P".repeat(120))],
+            children: vec![section("root/child", Some("root"), &"C".repeat(120))],
+            backlinks: vec![BacklinkContext {
+                doc_id: Uuid::new_v4(),
+                path: "docs/reference.md".to_string(),
+                snippet: "B".repeat(120),
+            }],
+            comments: vec![CommentThreadContext {
+                thread_id: "thread-1".to_string(),
+                section_id: "root/child".to_string(),
+                excerpt: "M".repeat(120),
+            }],
+        };
+        let section_content = "core section body";
+
+        let mut no_comments = base_context.clone();
+        no_comments.comments.clear();
+        let budget_without_comments =
+            apply_bundle_token_budget_with(section_content, &mut no_comments, None, &token_counter)
+                .expect("should count tokens without comments");
+
+        let mut drop_comments = base_context.clone();
+        let _ = apply_bundle_token_budget_with(
+            section_content,
+            &mut drop_comments,
+            Some(budget_without_comments),
+            &token_counter,
+        )
+        .expect("should truncate comments");
+        assert!(drop_comments.comments.is_empty());
+        assert_eq!(drop_comments.backlinks.len(), 1);
+        assert_eq!(drop_comments.children.len(), 1);
+        assert_eq!(drop_comments.parents.len(), 1);
+
+        let mut no_comments_or_backlinks = base_context.clone();
+        no_comments_or_backlinks.comments.clear();
+        no_comments_or_backlinks.backlinks.clear();
+        let budget_without_comments_or_backlinks = apply_bundle_token_budget_with(
+            section_content,
+            &mut no_comments_or_backlinks,
+            None,
+            &token_counter,
+        )
+        .expect("should count tokens without comments/backlinks");
+
+        let mut drop_comments_then_backlinks = base_context.clone();
+        let _ = apply_bundle_token_budget_with(
+            section_content,
+            &mut drop_comments_then_backlinks,
+            Some(budget_without_comments_or_backlinks),
+            &token_counter,
+        )
+        .expect("should truncate comments then backlinks");
+        assert!(drop_comments_then_backlinks.comments.is_empty());
+        assert!(drop_comments_then_backlinks.backlinks.is_empty());
+        assert_eq!(drop_comments_then_backlinks.children.len(), 1);
+        assert_eq!(drop_comments_then_backlinks.parents.len(), 1);
+
+        let mut only_parents = base_context.clone();
+        only_parents.comments.clear();
+        only_parents.backlinks.clear();
+        only_parents.children.clear();
+        let budget_without_comments_backlinks_children = apply_bundle_token_budget_with(
+            section_content,
+            &mut only_parents,
+            None,
+            &token_counter,
+        )
+        .expect("should count tokens with parents only");
+
+        let mut drop_comments_backlinks_children = base_context.clone();
+        let _ = apply_bundle_token_budget_with(
+            section_content,
+            &mut drop_comments_backlinks_children,
+            Some(budget_without_comments_backlinks_children),
+            &token_counter,
+        )
+        .expect("should truncate comments/backlinks/children");
+        assert!(drop_comments_backlinks_children.comments.is_empty());
+        assert!(drop_comments_backlinks_children.backlinks.is_empty());
+        assert!(drop_comments_backlinks_children.children.is_empty());
+        assert_eq!(drop_comments_backlinks_children.parents.len(), 1);
+
+        let mut section_only_context = DocBundleContext::default();
+        let section_only_budget =
+            apply_bundle_token_budget_with(section_content, &mut section_only_context, None, &token_counter)
+                .expect("should count section-only tokens");
+
+        let mut drop_all_context = base_context.clone();
+        let _ = apply_bundle_token_budget_with(
+            section_content,
+            &mut drop_all_context,
+            Some(section_only_budget),
+            &token_counter,
+        )
+        .expect("should drop all context groups");
+        assert!(drop_all_context.comments.is_empty());
+        assert!(drop_all_context.backlinks.is_empty());
+        assert!(drop_all_context.children.is_empty());
+        assert!(drop_all_context.parents.is_empty());
     }
 
     #[tokio::test]

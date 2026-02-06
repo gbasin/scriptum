@@ -60,6 +60,7 @@ dirs = "6"
 
 # Unicode normalization
 unicode-normalization = "0.1"
+tiktoken-rs = "0.6"
 
 # Internal crates
 scriptum-common = { path = "crates/common" }
