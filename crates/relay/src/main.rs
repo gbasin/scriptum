@@ -2,6 +2,7 @@ mod api;
 mod audit;
 mod auth;
 mod awareness;
+pub mod config;
 mod cors;
 mod db;
 mod error;
@@ -35,40 +36,44 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let cfg = config::RelayConfig::from_env();
+
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&cfg.log_filter)),
+        )
         .init();
 
-    let addr = "0.0.0.0:8080";
-    let jwt_secret = std::env::var("SCRIPTUM_RELAY_JWT_SECRET")
-        .unwrap_or_else(|_| "scriptum_local_development_jwt_secret_must_be_32_chars".to_string());
+    if cfg.is_dev_jwt_secret() {
+        tracing::warn!("using development JWT secret — set SCRIPTUM_RELAY_JWT_SECRET in production");
+    }
+
     let jwt_service =
-        Arc::new(JwtAccessTokenService::new(&jwt_secret).context("invalid relay JWT secret")?);
+        Arc::new(JwtAccessTokenService::new(&cfg.jwt_secret).context("invalid relay JWT secret")?);
     let session_store = Arc::new(SyncSessionStore::default());
     let doc_store = Arc::new(DocSyncStore::default());
     let membership_store = ws::WorkspaceMembershipStore::from_env()
         .await
         .context("failed to initialize websocket workspace membership store")?;
     let oauth_state = OAuthState::from_env();
-    let ws_base_url =
-        std::env::var("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("ws://{addr}"));
     let app = build_router(
         Arc::clone(&jwt_service),
         session_store,
         doc_store,
         membership_store,
         oauth_state,
-        ws_base_url,
+        cfg.ws_base_url.clone(),
         api::build_router_from_env(jwt_service)
             .await
             .context("failed to build relay workspace API router")?,
     );
 
-    let listener = TcpListener::bind(addr)
+    let listener = TcpListener::bind(cfg.listen_addr)
         .await
-        .with_context(|| format!("failed to bind relay listener on {addr}"))?;
+        .with_context(|| format!("failed to bind relay listener on {}", cfg.listen_addr))?;
 
-    info!(listen_addr = addr, "starting relay server");
+    info!(listen_addr = %cfg.listen_addr, "starting relay server");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
