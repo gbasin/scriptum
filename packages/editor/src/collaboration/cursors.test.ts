@@ -86,6 +86,8 @@ describe("remotePeersField", () => {
         name: "alice",
         color: "#e06c75",
         cursor: 10,
+        selectionFrom: 10,
+        selectionTo: 10,
         lastMovedAt: Date.now(),
       },
     ];
@@ -109,6 +111,8 @@ describe("remotePeersField", () => {
         name: "alice",
         color: "#e06c75",
         cursor: 3,
+        selectionFrom: 3,
+        selectionTo: 3,
         lastMovedAt: Date.now(),
       },
     ];
@@ -370,6 +374,102 @@ describe("remoteCursorExtension", () => {
     peers = view.state.field(remotePeersField);
     expect(peers[0].cursor).toBe(8);
     expect(peers[0].lastMovedAt).toBe(15_000);
+
+    view.destroy();
+  });
+
+  it("renders collaborator selection highlights for non-collapsed selections", async () => {
+    const { awareness } = makeAwareness();
+
+    const remoteDoc = new Y.Doc();
+    const remoteClientId = remoteDoc.clientID;
+
+    const states = awareness.getStates();
+    states.set(remoteClientId, {
+      cursor: { anchor: 2, head: 7 },
+      user: { name: "alice", color: "#61afef" },
+    });
+
+    const view = makeEditor(awareness, Date.now, "hello world");
+
+    awareness.emit("change", [
+      { added: [remoteClientId], updated: [], removed: [] },
+      "test",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const peers = view.state.field(remotePeersField);
+    expect(peers.length).toBe(1);
+    expect(peers[0].cursor).toBe(7);
+    expect(peers[0].selectionFrom).toBe(2);
+    expect(peers[0].selectionTo).toBe(7);
+
+    const highlights = view.dom.querySelectorAll(
+      ".cm-remote-selection",
+    );
+    expect(highlights.length).toBe(1);
+    expect(highlights[0].getAttribute("data-peer-color")).toBe(
+      "#61afef",
+    );
+
+    view.destroy();
+  });
+
+  it("uses deterministic name-based color for selection highlight when user color is missing", async () => {
+    const { awareness } = makeAwareness();
+
+    const remoteDoc = new Y.Doc();
+    const remoteClientId = remoteDoc.clientID;
+
+    const states = awareness.getStates();
+    states.set(remoteClientId, {
+      cursor: { anchor: 1, head: 4 },
+      user: { name: "zara" },
+    });
+
+    const view = makeEditor(awareness, Date.now, "hello world");
+
+    awareness.emit("change", [
+      { added: [remoteClientId], updated: [], removed: [] },
+      "test",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const highlights = view.dom.querySelectorAll(
+      ".cm-remote-selection",
+    );
+    expect(highlights.length).toBe(1);
+    expect(highlights[0].getAttribute("data-peer-color")).toBe(
+      nameToColor("zara"),
+    );
+
+    view.destroy();
+  });
+
+  it("does not render a selection highlight for collapsed selections", async () => {
+    const { awareness } = makeAwareness();
+
+    const remoteDoc = new Y.Doc();
+    const remoteClientId = remoteDoc.clientID;
+
+    const states = awareness.getStates();
+    states.set(remoteClientId, {
+      cursor: { anchor: 3, head: 3 },
+      user: { name: "bob", color: "#e06c75" },
+    });
+
+    const view = makeEditor(awareness, Date.now, "hello world");
+
+    awareness.emit("change", [
+      { added: [remoteClientId], updated: [], removed: [] },
+      "test",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const highlights = view.dom.querySelectorAll(
+      ".cm-remote-selection",
+    );
+    expect(highlights.length).toBe(0);
 
     view.destroy();
   });

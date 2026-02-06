@@ -1,6 +1,7 @@
-// Remote cursor rendering: colored cursors with auto-hiding name labels.
+// Remote collaboration rendering: colored cursors with auto-hiding name labels
+// and translucent collaborator selections.
 // Reads awareness state from a Yjs Awareness instance and renders
-// CodeMirror 6 widget decorations for each remote peer.
+// CodeMirror 6 decorations for each remote peer.
 
 import {
   type EditorState,
@@ -23,6 +24,8 @@ const LABEL_HIDE_DELAY_MS = 3_000;
 
 /** Number of preset cursor colors to cycle through. */
 const CURSOR_PALETTE_SIZE = 12;
+/** Opacity used for collaborator selection highlights. */
+const REMOTE_SELECTION_ALPHA = 0.24;
 
 /**
  * A bright, high-contrast palette for remote cursors.
@@ -65,6 +68,8 @@ interface RemotePeer {
   readonly name: string;
   readonly color: string;
   readonly cursor: number; // absolute position in document
+  readonly selectionFrom: number; // absolute selection start (inclusive)
+  readonly selectionTo: number; // absolute selection end (exclusive)
   readonly lastMovedAt: number; // timestamp of last cursor change
 }
 
@@ -145,14 +150,38 @@ function buildDecorations(
   }
 
   const docLength = state.doc.length;
-  const decorations: { pos: number; decoration: Decoration }[] = [];
+  const decorations: {
+    from: number;
+    to: number;
+    decoration: Decoration;
+  }[] = [];
+
+  const clampToDoc = (pos: number) =>
+    Math.min(Math.max(0, pos), docLength);
 
   for (const peer of peers) {
-    const pos = Math.min(Math.max(0, peer.cursor), docLength);
+    const pos = clampToDoc(peer.cursor);
     const showLabel = now - peer.lastMovedAt < LABEL_HIDE_DELAY_MS;
+    const selectionFrom = clampToDoc(peer.selectionFrom);
+    const selectionTo = clampToDoc(peer.selectionTo);
+
+    if (selectionFrom < selectionTo) {
+      decorations.push({
+        from: selectionFrom,
+        to: selectionTo,
+        decoration: Decoration.mark({
+          attributes: {
+            class: "cm-remote-selection",
+            style: `background-color: ${toRgba(peer.color, REMOTE_SELECTION_ALPHA)};`,
+            "data-peer-color": peer.color,
+          },
+        }),
+      });
+    }
 
     decorations.push({
-      pos,
+      from: pos,
+      to: pos,
       decoration: Decoration.widget({
         widget: new CursorWidget(peer.name, peer.color, showLabel),
         side: 1,
@@ -161,11 +190,35 @@ function buildDecorations(
   }
 
   // Decorations must be sorted by position for CodeMirror.
-  decorations.sort((a, b) => a.pos - b.pos);
+  decorations.sort((a, b) => {
+    if (a.from !== b.from) return a.from - b.from;
+    return a.to - b.to;
+  });
 
   return Decoration.set(
-    decorations.map(({ pos, decoration }) => decoration.range(pos)),
+    decorations.map(({ from, to, decoration }) =>
+      from === to ? decoration.range(from) : decoration.range(from, to),
+    ),
   );
+}
+
+function toRgba(color: string, alpha: number): string {
+  const match = color.trim().match(/^#([\da-f]{3}|[\da-f]{6})$/i);
+  if (match == null) {
+    return color;
+  }
+  const hex = match[1];
+  const expanded =
+    hex.length === 3
+      ? hex
+          .split("")
+          .map((ch) => `${ch}${ch}`)
+          .join("")
+      : hex;
+  const r = Number.parseInt(expanded.slice(0, 2), 16);
+  const g = Number.parseInt(expanded.slice(2, 4), 16);
+  const b = Number.parseInt(expanded.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 // ── View plugin: awareness → state → decorations ─────────────────────
@@ -216,29 +269,36 @@ export function remoteCursorExtension(
       const cursor = state.cursor;
       if (cursor == null) continue;
 
-      // anchor is the cursor position in Yjs-relative offset; if it's
-      // an absolute position we use it directly. y-codemirror.next
-      // encodes the selection as {anchor, head}. For a cursor (no selection),
-      // anchor === head. We use anchor as the position.
-      const pos =
+      // y-codemirror.next encodes selection as {anchor, head}.
+      const anchor =
         typeof cursor.anchor === "number" ? cursor.anchor : undefined;
-      if (pos == null) continue;
+      const head =
+        typeof cursor.head === "number" ? cursor.head : undefined;
+      if (anchor == null && head == null) continue;
+
+      const safeAnchor = anchor ?? head ?? 0;
+      const safeHead = head ?? anchor ?? 0;
+      const selectionFrom = Math.min(safeAnchor, safeHead);
+      const selectionTo = Math.max(safeAnchor, safeHead);
+      const cursorPos = safeHead;
 
       const name: string = state.user?.name ?? `User ${clientId}`;
       const color: string = state.user?.color ?? nameToColor(name);
 
       // Detect cursor movement.
       const prevPos = lastKnownCursor.get(clientId);
-      if (prevPos !== pos) {
+      if (prevPos !== cursorPos) {
         lastMovedAt.set(clientId, now);
-        lastKnownCursor.set(clientId, pos);
+        lastKnownCursor.set(clientId, cursorPos);
       }
 
       peers.push({
         clientId,
         name,
         color,
-        cursor: pos,
+        cursor: cursorPos,
+        selectionFrom,
+        selectionTo,
         lastMovedAt: lastMovedAt.get(clientId) ?? now,
       });
     }
@@ -329,6 +389,9 @@ export function remoteCursorExtension(
 // ── Base theme ───────────────────────────────────────────────────────
 
 const remoteCursorBaseTheme = EditorView.baseTheme({
+  ".cm-remote-selection": {
+    borderRadius: "2px",
+  },
   ".cm-remote-cursor": {
     position: "relative",
     display: "inline",
