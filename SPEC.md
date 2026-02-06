@@ -508,20 +508,316 @@ Core architectural decisions:
 
 ```
 scriptum/
-├── turbo.json                  # Turborepo pipeline config
-├── Cargo.toml                  # Cargo workspace root
+├── .github/
+│   └── workflows/
+│       ├── lint.yml                    # biome check, clippy, rustfmt, tsc --noEmit
+│       ├── test-ts.yml                 # vitest across all TS packages (Turborepo cached)
+│       ├── test-rust.yml               # cargo nextest across all crates
+│       ├── golden-tests.yml            # diff-to-Yjs edge case suite
+│       ├── property-tests.yml          # nightly: CRDT convergence + randomized diff
+│       ├── integration.yml             # daemon+watcher, relay+WS, git worker E2E
+│       ├── security.yml                # path traversal, XSS, token replay, AuthZ bypass
+│       ├── build.yml                   # Tauri desktop, CLI binaries, Docker relay image
+│       └── release.yml                 # changesets + publish + auto-update
+├── Cargo.toml                          # Cargo workspace root (edition=2021, resolver=2)
+├── turbo.json                          # Turborepo pipeline config (build/test/lint)
+├── pnpm-workspace.yaml                 # packages/*
+├── package.json                        # Root: scripts, devDeps (turbo, biome)
+├── biome.json                          # Biome config (lint + format for all TS)
 ├── crates/
-│   ├── daemon/                 # scriptumd (Yjs engine, file watcher, WS server)
-│   ├── cli/                    # scriptum CLI
-│   ├── relay/                  # Relay server (Axum)
-│   └── common/                 # Shared Rust: CRDT ops, section parser, protocol types
+│   ├── common/                         # Shared Rust: CRDT ops, section parser, protocol types
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── types.rs                # Workspace, Document, Section, Agent, etc.
+│   │       ├── protocol/
+│   │       │   ├── mod.rs
+│   │       │   ├── jsonrpc.rs          # JSON-RPC 2.0 request/response types
+│   │       │   └── ws.rs              # WebSocket message types (hello, subscribe, yjs_update, etc.)
+│   │       ├── crdt/
+│   │       │   ├── mod.rs
+│   │       │   └── origin.rs          # Origin tag types for attribution
+│   │       ├── section/
+│   │       │   ├── mod.rs
+│   │       │   ├── parser.rs          # pulldown-cmark ATX heading parser
+│   │       │   └── slug.rs            # Section slug generation + ancestor chain
+│   │       ├── diff/
+│   │       │   ├── mod.rs
+│   │       │   └── patch.rs           # Diff algorithm + diff-to-Yjs op conversion
+│   │       └── path/
+│   │           ├── mod.rs
+│   │           └── normalize.rs       # Canonicalize, NFKC, traversal rejection, 512 char max
+│   ├── daemon/                         # scriptumd (Yjs engine, file watcher, WS server)
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs                 # Standalone mode entry point
+│   │       ├── lib.rs                  # Library entry point (embedded in Tauri)
+│   │       ├── startup.rs              # Socket-activated startup, PID file, readiness signal
+│   │       ├── engine/
+│   │       │   ├── mod.rs
+│   │       │   ├── doc_manager.rs      # Y.Doc lifecycle: subscribe/LRU, 512MB threshold
+│   │       │   └── awareness.rs        # Awareness protocol wrapper
+│   │       ├── watcher/
+│   │       │   ├── mod.rs
+│   │       │   ├── pipeline.rs         # Full pipeline: event → debounce → hash → diff → Yjs
+│   │       │   ├── debounce.rs         # 100ms configurable debounce (50-500ms)
+│   │       │   └── hash.rs            # SHA-256 change detection
+│   │       ├── section/
+│   │       │   ├── mod.rs              # Section tree rebuild on CRDT update
+│   │       │   └── overlap.rs          # Multi-editor overlap detection + severity
+│   │       ├── agent/
+│   │       │   ├── mod.rs
+│   │       │   ├── state.rs            # Agent session + recent edit tracking
+│   │       │   └── lease.rs            # Advisory lease storage (TTL lifecycle)
+│   │       ├── git/
+│   │       │   ├── mod.rs
+│   │       │   ├── worker.rs           # Git sync worker (semantic triggers + idle fallback)
+│   │       │   ├── leader.rs           # Leader election (relay-mediated lease)
+│   │       │   ├── commit.rs           # AI commit messages (Claude Haiku + fallback)
+│   │       │   └── attribution.rs      # Co-authored-by trailer generation
+│   │       ├── rpc/
+│   │       │   ├── mod.rs
+│   │       │   ├── methods.rs          # JSON-RPC method dispatch (workspace.*, doc.*, agent.*, git.*)
+│   │       │   └── ws.rs              # WebSocket /rpc endpoint
+│   │       ├── store/
+│   │       │   ├── mod.rs
+│   │       │   ├── wal.rs             # Append-only WAL ([len][checksum][payload]*)
+│   │       │   ├── snapshot.rs         # Compressed snapshots (every 1000 updates or 10 min)
+│   │       │   └── meta_db.rs          # SQLite meta.db (documents_local, agents, outbox, git)
+│   │       ├── outbox/
+│   │       │   ├── mod.rs
+│   │       │   └── queue.rs           # Exponential backoff, 10k/1GiB bounds
+│   │       └── search/
+│   │           ├── mod.rs
+│   │           └── fts.rs             # FTS5 index (behind abstraction layer)
+│   ├── cli/                            # scriptum CLI
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs                 # clap CLI entry point
+│   │       ├── client.rs               # Daemon JSON-RPC client (Unix socket)
+│   │       ├── output.rs               # TTY vs JSON auto-detect
+│   │       ├── daemon_launcher.rs      # Socket-activated daemon auto-start
+│   │       └── commands/
+│   │           ├── mod.rs
+│   │           ├── read.rs             # scriptum read (--section, --agent)
+│   │           ├── edit.rs             # scriptum edit (--section, --content, --file, --agent, --summary)
+│   │           ├── tree.rs             # scriptum tree (section structure with IDs)
+│   │           ├── sections.rs         # scriptum sections (list with metadata)
+│   │           ├── search.rs           # scriptum search (full-text)
+│   │           ├── diff.rs             # scriptum diff (pending changes since last commit)
+│   │           ├── ls.rs               # scriptum ls (workspace documents)
+│   │           ├── blame.rs            # scriptum blame (CRDT-based per-line attribution)
+│   │           ├── claim.rs            # scriptum claim (advisory lease)
+│   │           ├── bundle.rs           # scriptum bundle (context bundling with token budget)
+│   │           ├── whoami.rs           # scriptum whoami (agent identity + workspace state)
+│   │           ├── status.rs           # scriptum status (agent's active sections/overlaps)
+│   │           ├── conflicts.rs        # scriptum conflicts (section overlap warnings)
+│   │           ├── agents.rs           # scriptum agents (list active agents)
+│   │           ├── setup.rs            # scriptum setup claude (install hooks)
+│   │           └── peek.rs            # scriptum peek (read without registering intent)
+│   └── relay/                          # Relay server (Axum)
+│       ├── Cargo.toml
+│       └── src/
+│           ├── main.rs                 # Axum server bootstrap + graceful shutdown
+│           ├── config.rs               # Server configuration
+│           ├── api/                    # REST handlers (/v1/*)
+│           │   ├── mod.rs
+│           │   ├── auth.rs             # OAuth start/callback, token refresh, logout
+│           │   ├── workspaces.rs       # CRUD + list
+│           │   ├── members.rs          # Invite, accept, list, update role, remove
+│           │   ├── documents.rs        # CRUD + list + content
+│           │   ├── comments.rs         # Threads, messages, resolve/reopen
+│           │   ├── share_links.rs      # Create, update, redeem
+│           │   ├── search.rs           # Full-text search endpoint
+│           │   └── acl.rs             # Document ACL overrides
+│           ├── ws/                     # WebSocket sync handler
+│           │   ├── mod.rs
+│           │   ├── session.rs          # Session creation + token management
+│           │   ├── handler.rs          # Message dispatch loop
+│           │   └── protocol.rs         # scriptum-sync.v1 message types + serialization
+│           ├── sync/                   # CRDT sync engine
+│           │   ├── mod.rs
+│           │   ├── sequencer.rs        # In-memory atomic counter, batch flush to PG
+│           │   ├── doc_manager.rs      # Relay Y.Doc lifecycle (load/validate/unload)
+│           │   └── snapshot.rs         # Snapshot compaction + retention
+│           ├── auth/                   # Auth logic
+│           │   ├── mod.rs
+│           │   ├── oauth.rs            # GitHub OAuth 2.1 + PKCE
+│           │   ├── jwt.rs              # JWT generation + validation (15min access tokens)
+│           │   └── middleware.rs        # Bearer token extraction + RBAC enforcement
+│           ├── db/
+│           │   ├── mod.rs
+│           │   ├── pool.rs             # sqlx PgPool setup
+│           │   ├── migrations/         # SQL migration files (expand-only pattern)
+│           │   └── queries/            # Per-table query modules
+│           ├── leader/
+│           │   └── mod.rs              # Git leader election (lease-based, TTL 60s)
+│           ├── awareness/
+│           │   └── mod.rs              # Awareness aggregation (cursors, presence, leases)
+│           └── audit/
+│               └── mod.rs              # Immutable audit event logging (PII hashed)
 ├── packages/
-│   ├── web/                    # Web app (React + CodeMirror 6)
-│   ├── desktop/                # Tauri shell (wraps web + daemon)
-│   ├── mcp-server/             # MCP server (TypeScript, stdio)
-│   ├── editor/                 # Shared CM6 extensions (live preview, collaboration)
-│   └── shared/                 # Shared TS types, API client, protocol definitions
-└── .github/workflows/          # CI
+│   ├── editor/                         # Shared CM6 extensions (live preview, collaboration)
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   └── src/
+│   │       ├── index.ts                # Main extension export
+│   │       ├── live-preview/           # Hybrid markdown live preview (single monolithic CM6 extension)
+│   │       │   ├── extension.ts        # Extension entry: active line raw, unfocused lines rich
+│   │       │   ├── decorations.ts      # Widget/replace decoration management
+│   │       │   ├── heading.ts          # H1-H6 rendering
+│   │       │   ├── emphasis.ts         # Bold, italic, strikethrough
+│   │       │   ├── link.ts             # Inline links + autolinks
+│   │       │   ├── image.ts            # Image preview
+│   │       │   ├── code-block.ts       # Fenced code with syntax highlighting
+│   │       │   ├── table.ts            # GFM table rendering
+│   │       │   ├── task-list.ts        # Checkbox task lists
+│   │       │   ├── blockquote.ts       # Blockquote styling
+│   │       │   ├── horizontal-rule.ts  # HR rendering
+│   │       │   └── math.ts            # KaTeX math rendering
+│   │       ├── collaboration/          # y-codemirror.next wrappers
+│   │       │   ├── provider.ts         # y-websocket provider setup
+│   │       │   ├── cursors.ts          # Remote cursor rendering (name labels, auto-hide)
+│   │       │   ├── selections.ts       # Per-collaborator selection highlights
+│   │       │   └── awareness.ts        # Awareness state management
+│   │       ├── section/                # Section awareness UI
+│   │       │   ├── lease-badge.ts      # [agent-name editing] inline badge
+│   │       │   └── overlap-indicator.ts # Section overlap warning indicator
+│   │       ├── reconciliation/         # Inline reconciliation UI
+│   │       │   ├── detector.ts         # Trigger: >50% section changed by 2+ editors in 30s
+│   │       │   └── inline-ui.ts        # Version display + Keep A / Keep B / Keep Both
+│   │       ├── slash-commands/
+│   │       │   ├── extension.ts        # CM6 autocomplete integration
+│   │       │   └── commands.ts         # /table, /code, /image, /callout
+│   │       └── comments/               # Comment annotation decorations
+│   │           ├── gutter.ts           # Margin comment icon
+│   │           └── highlight.ts        # Yellow highlight on commented text
+│   ├── web/                            # Web app (React + CodeMirror 6)
+│   │   ├── package.json
+│   │   ├── vite.config.ts
+│   │   ├── index.html
+│   │   └── src/
+│   │       ├── main.tsx
+│   │       ├── App.tsx
+│   │       ├── routes/
+│   │       │   ├── index.tsx           # Landing / workspace selector
+│   │       │   ├── workspace.tsx       # Workspace view (sidebar + editor)
+│   │       │   ├── document.tsx        # Document editor view
+│   │       │   ├── settings.tsx        # Settings page (tabbed)
+│   │       │   └── auth-callback.tsx   # OAuth callback handler
+│   │       ├── components/
+│   │       │   ├── sidebar/
+│   │       │   │   ├── Sidebar.tsx             # Linear-style minimal sidebar
+│   │       │   │   ├── WorkspaceDropdown.tsx   # Workspace switcher
+│   │       │   │   ├── DocumentTree.tsx        # Folder tree with expand/collapse
+│   │       │   │   ├── TagsList.tsx            # Tag filter chips
+│   │       │   │   └── AgentsList.tsx          # Active/idle agent indicators
+│   │       │   ├── editor/
+│   │       │   │   ├── EditorContainer.tsx     # CM6 mount + provider wiring
+│   │       │   │   ├── TabBar.tsx              # Open doc tabs (Obsidian-style)
+│   │       │   │   ├── Breadcrumb.tsx          # Path breadcrumb navigation
+│   │       │   │   └── StatusBar.tsx           # Sync dot, cursor pos, editor count
+│   │       │   ├── presence/
+│   │       │   │   ├── AvatarStack.tsx         # Top-right online avatars
+│   │       │   │   └── CursorLabel.tsx         # Floating cursor name label
+│   │       │   ├── comments/
+│   │       │   │   ├── CommentPopover.tsx      # Notion-style inline comment popover
+│   │       │   │   └── ThreadList.tsx          # Threaded reply list
+│   │       │   ├── search/
+│   │       │   │   └── SearchPanel.tsx         # Cmd+Shift+F search (Obsidian-style)
+│   │       │   ├── history/
+│   │       │   │   ├── TimelineSlider.tsx      # Horizontal scrub slider
+│   │       │   │   └── DiffView.tsx            # Authorship colors / diff-from-current
+│   │       │   ├── right-panel/
+│   │       │   │   ├── Outline.tsx             # Document heading outline
+│   │       │   │   └── Backlinks.tsx           # Incoming [[backlinks]] panel
+│   │       │   ├── settings/
+│   │       │   │   └── SettingsPage.tsx        # Tabbed: General, Git, Agents, Perms, Appearance
+│   │       │   ├── CommandPalette.tsx          # Cmd+K quick navigation
+│   │       │   └── OfflineBanner.tsx           # Yellow "You're offline" banner (web only)
+│   │       ├── store/                  # Zustand stores
+│   │       │   ├── workspace.ts        # Workspace list + active workspace
+│   │       │   ├── documents.ts        # Document list + open docs + Yjs reactive
+│   │       │   ├── presence.ts         # Awareness / who's online
+│   │       │   ├── sync.ts             # Sync status (online/offline/reconnecting)
+│   │       │   └── ui.ts              # Sidebar state, active panel, modals
+│   │       ├── hooks/
+│   │       │   ├── useYjs.ts           # Y.Doc + provider lifecycle
+│   │       │   ├── usePresence.ts      # Awareness subscription
+│   │       │   ├── useSyncStatus.ts    # Connection state tracking
+│   │       │   └── useAuth.ts          # Auth state + token refresh
+│   │       ├── lib/
+│   │       │   ├── api-client.ts       # REST API client (fetch wrapper)
+│   │       │   ├── auth.ts             # OAuth flow + session storage
+│   │       │   └── idb-store.ts        # IndexedDB CRDT store (offline web)
+│   │       └── test/
+│   │           ├── fixtures/           # Named UI state fixtures
+│   │           ├── harness.ts          # __SCRIPTUM_TEST__ API implementation
+│   │           └── setup.ts            # Fixture mode setup (disable animations, freeze time)
+│   ├── desktop/                        # Tauri shell (wraps web + daemon)
+│   │   ├── package.json
+│   │   ├── src-tauri/
+│   │   │   ├── Cargo.toml
+│   │   │   ├── tauri.conf.json
+│   │   │   └── src/
+│   │   │       ├── main.rs             # Tauri app entry
+│   │   │       ├── commands.rs         # Tauri IPC commands
+│   │   │       └── daemon.rs           # Embedded daemon bridge (in-process)
+│   │   └── src/                        # Re-exports web app src
+│   ├── mcp-server/                     # MCP server (TypeScript, stdio)
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   └── src/
+│   │       ├── index.ts                # Entry point (stdio transport)
+│   │       ├── server.ts               # MCP server setup + tool/resource registration
+│   │       ├── daemon-client.ts        # JSON-RPC client to daemon (Unix socket)
+│   │       ├── tools/                  # MCP tool implementations
+│   │       │   ├── read.ts             # scriptum_read → doc.read
+│   │       │   ├── edit.ts             # scriptum_edit → doc.edit
+│   │       │   ├── list.ts             # scriptum_list → doc.tree
+│   │       │   ├── tree.ts             # scriptum_tree → doc.sections
+│   │       │   ├── status.ts           # scriptum_status → agent.status
+│   │       │   ├── conflicts.ts        # scriptum_conflicts → agent.conflicts
+│   │       │   ├── history.ts          # scriptum_history → doc.diff
+│   │       │   ├── subscribe.ts        # scriptum_subscribe (polling change token)
+│   │       │   ├── agents.ts           # scriptum_agents → agent.list
+│   │       │   ├── claim.ts            # scriptum_claim → agent.claim
+│   │       │   └── bundle.ts           # scriptum_bundle → doc.bundle
+│   │       └── resources/              # MCP resource implementations
+│   │           ├── docs.ts             # scriptum://docs/{id}, scriptum://docs/{id}/sections
+│   │           ├── workspace.ts        # scriptum://workspace
+│   │           └── agents.ts           # scriptum://agents
+│   └── shared/                         # Shared TS types, API client, protocol definitions
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── src/
+│           ├── index.ts
+│           ├── types/                  # Shared TypeScript types
+│           │   ├── workspace.ts
+│           │   ├── document.ts
+│           │   ├── section.ts
+│           │   ├── comment.ts
+│           │   ├── agent.ts
+│           │   └── sync.ts
+│           ├── api/
+│           │   ├── client.ts           # Typed REST API client
+│           │   └── endpoints.ts        # Endpoint URL builders
+│           └── protocol/
+│               ├── ws.ts               # WS message type definitions
+│               └── rpc.ts              # JSON-RPC type definitions
+├── tests/
+│   ├── golden/                         # Golden file tests for diff-to-Yjs
+│   │   ├── cases/                      # Curated edge cases (multi-hunk, Unicode, empty, etc.)
+│   │   └── runner.rs                   # Golden test runner
+│   ├── integration/                    # Cross-component integration tests
+│   │   ├── daemon_watcher.rs           # Daemon + file watcher pipeline
+│   │   ├── relay_ws.rs                 # Relay + WebSocket sync protocol
+│   │   └── git_worker.rs              # Git sync worker E2E
+│   └── e2e/                            # End-to-end Playwright tests
+│       ├── playwright.config.ts
+│       ├── fixtures/                   # Named fixture data
+│       └── specs/                      # Test specs per feature
+└── .gitignore
 ```
 
 **TypeScript Tooling**:

@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output — Rust
+target/
+
+# Build output — TypeScript / Vite
+dist/
+.turbo/
+
+# Build output — Tauri
+packages/desktop/src-tauri/target/
+packages/desktop/src-tauri/gen/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Daemon runtime
+*.pid
+*.sock
+daemon.lock
+daemon.log
+
+# Local SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# WAL / snapshot files (local CRDT storage)
+*.wal
+*.snapshot
+
+# Test & coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Tauri auto-generated
+packages/desktop/src-tauri/icons/
+
+# Cargo intermediate
+**/*.rs.bk
+
+# pnpm
+.pnpm-debug.log
