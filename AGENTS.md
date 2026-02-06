@@ -42,7 +42,7 @@ Multiple agents work concurrently in the same worktree and branch.
 - **Only fix what you broke.** If tests fail that are unrelated to your changes, leave them — another agent likely has that in progress.
 - Run tests scoped to your work (e.g. the module you changed), not the full suite, unless asked.
 - If pre-existing failures block your work, create a `br` issue — don't try to fix them.
-- **ALWAYS claim work with `br update <id> --status=in_progress` BEFORE starting.** This is not optional — see Workflow Pattern below.
+- **ALWAYS claim work with `br update <id> --claim` BEFORE starting.** This is not optional — see Workflow Pattern below.
 - Expect files to change under you. Re-read before editing if your context is stale.
 - Keep commits small and focused — avoid touching files outside your task to minimize merge pain.
 
@@ -64,7 +64,7 @@ automation with Playwright. Start server, take screenshots, verify DOM state.
 
 ## Beads Workflow Integration
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`/`bd`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/` and tracked in git.
+This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. **Always use `br`, never `bd` — they share the same DB and the `bd` daemon drifts out of sync.** Issues are stored in `.beads/` and tracked in git.
 
 ### Triage (bv — read-only intelligence)
 
@@ -93,7 +93,7 @@ br search "keyword"   # Full-text search
 
 # Create and update
 br create --title="..." --description="..." --type=task --priority=2
-br update <id> --status=in_progress
+br update <id> --claim              # atomic: sets assignee + in_progress, fails if already claimed
 br close <id> --reason="Completed"
 br close <id1> <id2>  # Close multiple issues at once
 
@@ -107,9 +107,9 @@ br sync --status      # Check sync status
 1. **Pick**: Run `bv --robot-next` to get the highest-impact actionable task
 2. **Claim IMMEDIATELY — before reading any code or planning**:
    ```bash
-   br update <id> --status=in_progress
+   br update <id> --claim
    ```
-   ⚠️ **DO NOT proceed until this succeeds.** Other agents run `bv --robot-next` concurrently — if you don't claim first, two agents will pick the same task.
+   ⚠️ **DO NOT proceed until this succeeds.** `--claim` is atomic — it sets assignee + status=in_progress and **fails** if another agent already claimed it. If it fails, run `bv --robot-next` again to get a different task.
 3. **Work**: Implement the task
 4. **Complete**: Use `br close <id>`
 5. **Sync**: Always run `br sync --flush-only` at session end
@@ -143,29 +143,3 @@ git push                # Push to remote
 - Always sync before ending session
 
 <!-- end-br-agent-instructions -->
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds

@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, VecDeque},
     env,
+    future::Future,
+    pin::Pin,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
@@ -12,8 +14,11 @@ use axum::{
     routing::post,
     Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, Duration, Utc};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use url::Url;
 use uuid::Uuid;
@@ -30,14 +35,118 @@ const MAX_STATE_LEN: usize = 512;
 const MIN_CODE_CHALLENGE_LEN: usize = 43;
 const MAX_CODE_CHALLENGE_LEN: usize = 128;
 
+const DEFAULT_GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS: i64 = 15 * 60;
+const DEFAULT_REFRESH_TOKEN_TTL_DAYS: i64 = 30;
+const REFRESH_TOKEN_BYTES: usize = 32;
+
+/// Information returned by GitHub after code exchange.
+#[derive(Debug, Clone)]
+pub struct GithubTokenResponse {
+    pub access_token: String,
+}
+
+/// GitHub user profile information.
+#[derive(Debug, Clone)]
+pub struct GithubUserInfo {
+    pub email: String,
+    pub display_name: String,
+}
+
+/// Trait for GitHub OAuth API calls (exchanging codes, fetching user info).
+/// Using boxed futures for object safety / dynamic dispatch in tests.
+pub trait GithubExchange: Send + Sync {
+    fn exchange_code(
+        &self,
+        code: &str,
+        client_id: &str,
+        client_secret: &str,
+        redirect_uri: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<GithubTokenResponse, RelayError>> + Send>>;
+
+    fn get_user_info(
+        &self,
+        access_token: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<GithubUserInfo, RelayError>> + Send>>;
+}
+
+/// User record as returned after create-or-find.
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthUser {
+    pub id: Uuid,
+    pub email: String,
+    pub display_name: String,
+}
+
+/// In-memory refresh token store entry.
+#[derive(Debug, Clone)]
+struct RefreshSession {
+    user_id: Uuid,
+    token_hash: Vec<u8>,
+    family_id: Uuid,
+    expires_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+/// In-memory store for refresh tokens (will be replaced by PostgreSQL).
+#[derive(Debug, Default)]
+pub struct RefreshTokenStore {
+    sessions: RwLock<HashMap<Uuid, RefreshSession>>,
+    /// Maps user_id → list of session IDs in the same family.
+    users: RwLock<HashMap<Uuid, Vec<Uuid>>>,
+}
+
+impl RefreshTokenStore {
+    async fn insert(
+        &self,
+        session_id: Uuid,
+        user_id: Uuid,
+        token_hash: Vec<u8>,
+        family_id: Uuid,
+        expires_at: DateTime<Utc>,
+    ) {
+        let session =
+            RefreshSession { user_id, token_hash, family_id, expires_at, revoked_at: None };
+        self.sessions.write().await.insert(session_id, session);
+        self.users.write().await.entry(user_id).or_default().push(session_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct OAuthState {
     flow_store: Arc<OAuthFlowStore>,
     rate_limiter: Arc<OAuthStartRateLimiter>,
     github_client_id: String,
+    github_client_secret: String,
     github_authorize_url: String,
+    github_token_url: String,
     github_scope: String,
     flow_ttl: Duration,
+    github_exchange: Arc<dyn GithubExchange>,
+    refresh_store: Arc<RefreshTokenStore>,
+    jwt_secret: String,
+}
+
+/// Stub GithubExchange that always fails (used when from_env is called without a real client).
+struct StubGithubExchange;
+
+impl GithubExchange for StubGithubExchange {
+    fn exchange_code(
+        &self,
+        _code: &str,
+        _client_id: &str,
+        _client_secret: &str,
+        _redirect_uri: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<GithubTokenResponse, RelayError>> + Send>> {
+        Box::pin(async { Err(RelayError::from_code(ErrorCode::AuthCodeInvalid)) })
+    }
+
+    fn get_user_info(
+        &self,
+        _access_token: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<GithubUserInfo, RelayError>> + Send>> {
+        Box::pin(async { Err(RelayError::from_code(ErrorCode::InternalError)) })
+    }
 }
 
 impl OAuthState {
@@ -47,15 +156,32 @@ impl OAuthState {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_GITHUB_CLIENT_ID.to_string());
 
+        let github_client_secret = env::var("SCRIPTUM_RELAY_GITHUB_CLIENT_SECRET")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_default();
+
         let github_authorize_url = env::var("SCRIPTUM_RELAY_GITHUB_AUTHORIZE_URL")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_GITHUB_AUTH_URL.to_string());
 
+        let github_token_url = env::var("SCRIPTUM_RELAY_GITHUB_TOKEN_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_GITHUB_TOKEN_URL.to_string());
+
         let github_scope = env::var("SCRIPTUM_RELAY_GITHUB_SCOPE")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_GITHUB_SCOPE.to_string());
+
+        let jwt_secret = env::var("SCRIPTUM_RELAY_JWT_SECRET")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                "scriptum_local_development_jwt_secret_must_be_32_chars".to_string()
+            });
 
         let flow_ttl_minutes = env::var("SCRIPTUM_RELAY_OAUTH_FLOW_TTL_MINUTES")
             .ok()
@@ -83,9 +209,14 @@ impl OAuthState {
                 StdDuration::from_secs(rate_limit_window_secs),
             )),
             github_client_id,
+            github_client_secret,
             github_authorize_url,
+            github_token_url,
             github_scope,
             flow_ttl: Duration::minutes(flow_ttl_minutes),
+            github_exchange: Arc::new(StubGithubExchange),
+            refresh_store: Arc::new(RefreshTokenStore::default()),
+            jwt_secret,
         }
     }
 
@@ -95,19 +226,42 @@ impl OAuthState {
         max_requests: usize,
         rate_limit_window: StdDuration,
     ) -> Self {
+        Self::for_tests_with_exchange(
+            flow_store,
+            max_requests,
+            rate_limit_window,
+            Arc::new(StubGithubExchange),
+        )
+    }
+
+    #[cfg(test)]
+    fn for_tests_with_exchange(
+        flow_store: Arc<OAuthFlowStore>,
+        max_requests: usize,
+        rate_limit_window: StdDuration,
+        github_exchange: Arc<dyn GithubExchange>,
+    ) -> Self {
         Self {
             flow_store,
             rate_limiter: Arc::new(OAuthStartRateLimiter::new(max_requests, rate_limit_window)),
             github_client_id: "test-client-id".to_string(),
+            github_client_secret: "test-client-secret".to_string(),
             github_authorize_url: DEFAULT_GITHUB_AUTH_URL.to_string(),
+            github_token_url: DEFAULT_GITHUB_TOKEN_URL.to_string(),
             github_scope: DEFAULT_GITHUB_SCOPE.to_string(),
             flow_ttl: Duration::minutes(DEFAULT_FLOW_TTL_MINUTES),
+            github_exchange,
+            refresh_store: Arc::new(RefreshTokenStore::default()),
+            jwt_secret: "scriptum_test_jwt_secret_that_is_definitely_long_enough".to_string(),
         }
     }
 }
 
 pub fn router(state: OAuthState) -> Router {
-    Router::new().route("/v1/auth/oauth/github/start", post(start_github_oauth)).with_state(state)
+    Router::new()
+        .route("/v1/auth/oauth/github/start", post(start_github_oauth))
+        .route("/v1/auth/oauth/github/callback", post(callback_github_oauth))
+        .with_state(state)
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +282,13 @@ impl OAuthFlowStore {
         let mut guard = self.flows.write().await;
         prune_expired_flows(&mut guard);
         guard.insert(flow_id, record);
+    }
+
+    /// Consume a flow (one-time use). Returns None if expired or not found.
+    async fn take(&self, flow_id: Uuid) -> Option<OAuthFlowRecord> {
+        let mut guard = self.flows.write().await;
+        prune_expired_flows(&mut guard);
+        guard.remove(&flow_id)
     }
 
     #[cfg(test)]
@@ -387,6 +548,137 @@ fn prune_old_requests(requests: &mut VecDeque<Instant>, now: Instant, window: St
     }
 }
 
+// ─── OAuth Callback ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct OAuthGithubCallbackRequest {
+    flow_id: Uuid,
+    code: String,
+    state: String,
+    code_verifier: String,
+    #[allow(dead_code)]
+    device_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct OAuthGithubCallbackResponse {
+    access_token: String,
+    access_expires_at: DateTime<Utc>,
+    refresh_token: String,
+    refresh_expires_at: DateTime<Utc>,
+    user: OAuthUser,
+}
+
+impl IntoResponse for OAuthCallbackError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Relay(error) => error.into_response(),
+        }
+    }
+}
+
+enum OAuthCallbackError {
+    Relay(RelayError),
+}
+
+impl From<RelayError> for OAuthCallbackError {
+    fn from(value: RelayError) -> Self {
+        Self::Relay(value)
+    }
+}
+
+async fn callback_github_oauth(
+    State(state): State<OAuthState>,
+    Json(payload): Json<OAuthGithubCallbackRequest>,
+) -> Result<Json<OAuthGithubCallbackResponse>, OAuthCallbackError> {
+    // 1. Consume the flow (one-time use)
+    let flow =
+        state.flow_store.take(payload.flow_id).await.ok_or_else(|| {
+            RelayError::new(ErrorCode::AuthCodeInvalid, "unknown or expired flow")
+        })?;
+
+    // 2. Verify state matches
+    if flow.state != payload.state {
+        return Err(RelayError::from_code(ErrorCode::AuthStateMismatch).into());
+    }
+
+    // 3. Verify PKCE: SHA256(code_verifier) base64url == stored code_challenge
+    verify_pkce_s256(&payload.code_verifier, &flow.code_challenge)?;
+
+    // 4. Exchange authorization code with GitHub
+    let github_tokens = state
+        .github_exchange
+        .exchange_code(
+            &payload.code,
+            &state.github_client_id,
+            &state.github_client_secret,
+            &flow.redirect_uri,
+        )
+        .await?;
+
+    // 5. Fetch GitHub user info
+    let github_user = state.github_exchange.get_user_info(&github_tokens.access_token).await?;
+
+    // 6. Create or find user (for now, user is constructed from GitHub info)
+    let user = OAuthUser {
+        id: Uuid::new_v4(),
+        email: github_user.email,
+        display_name: github_user.display_name,
+    };
+
+    // 7. Generate JWT access token (15 min)
+    let now = Utc::now();
+    let access_expires_at = now + Duration::seconds(DEFAULT_ACCESS_TOKEN_TTL_SECONDS);
+    let jwt_service = crate::auth::jwt::JwtAccessTokenService::new(&state.jwt_secret)
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+    // Use a placeholder workspace ID for auth-level tokens
+    let access_token = jwt_service
+        .issue_workspace_token(user.id, Uuid::nil())
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+
+    // 8. Generate opaque refresh token (30 day, rotating)
+    let refresh_expires_at = now + Duration::days(DEFAULT_REFRESH_TOKEN_TTL_DAYS);
+    let (refresh_token, refresh_hash) = generate_refresh_token();
+    let session_id = Uuid::new_v4();
+    let family_id = Uuid::new_v4();
+    state
+        .refresh_store
+        .insert(session_id, user.id, refresh_hash, family_id, refresh_expires_at)
+        .await;
+
+    Ok(Json(OAuthGithubCallbackResponse {
+        access_token,
+        access_expires_at,
+        refresh_token,
+        refresh_expires_at,
+        user,
+    }))
+}
+
+/// Verify PKCE S256: SHA256(code_verifier) base64url-encoded must equal code_challenge.
+fn verify_pkce_s256(code_verifier: &str, code_challenge: &str) -> Result<(), OAuthCallbackError> {
+    let hash = Sha256::digest(code_verifier.as_bytes());
+    let computed_challenge = URL_SAFE_NO_PAD.encode(hash);
+
+    if computed_challenge != code_challenge {
+        return Err(RelayError::new(
+            ErrorCode::AuthCodeInvalid,
+            "PKCE code_verifier does not match code_challenge",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Generate a random opaque refresh token and its SHA-256 hash.
+fn generate_refresh_token() -> (String, Vec<u8>) {
+    let mut bytes = [0u8; REFRESH_TOKEN_BYTES];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let token = URL_SAFE_NO_PAD.encode(bytes);
+    let hash = Sha256::digest(token.as_bytes()).to_vec();
+    (token, hash)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
@@ -400,7 +692,17 @@ mod tests {
     use url::Url;
     use uuid::Uuid;
 
-    use super::{router, OAuthFlowStore, OAuthState};
+    use super::{
+        router, GithubExchange, GithubTokenResponse, GithubUserInfo, OAuthFlowRecord,
+        OAuthFlowStore, OAuthState,
+    };
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use chrono::{Duration, Utc};
+    use sha2::{Digest, Sha256};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use crate::error::RelayError;
 
     fn test_router(max_requests: usize) -> (axum::Router, Arc<OAuthFlowStore>) {
         let flow_store = Arc::new(OAuthFlowStore::default());
@@ -531,5 +833,212 @@ mod tests {
             to_bytes(second.into_body(), usize::MAX).await.expect("response body should read");
         let parsed: Value = serde_json::from_slice(&body).expect("response body should be JSON");
         assert_eq!(parsed["error"]["code"], "RATE_LIMITED");
+    }
+
+    // ─── Callback tests ────────────────────────────────────────────
+
+    struct MockGithubExchange;
+
+    impl GithubExchange for MockGithubExchange {
+        fn exchange_code(
+            &self,
+            _code: &str,
+            _client_id: &str,
+            _client_secret: &str,
+            _redirect_uri: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<GithubTokenResponse, RelayError>> + Send>> {
+            Box::pin(async {
+                Ok(GithubTokenResponse { access_token: "gh-mock-token".to_string() })
+            })
+        }
+
+        fn get_user_info(
+            &self,
+            _access_token: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<GithubUserInfo, RelayError>> + Send>> {
+            Box::pin(async {
+                Ok(GithubUserInfo {
+                    email: "gary@example.com".to_string(),
+                    display_name: "Gary".to_string(),
+                })
+            })
+        }
+    }
+
+    fn make_pkce_pair() -> (String, String) {
+        let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string();
+        let hash = Sha256::digest(code_verifier.as_bytes());
+        let code_challenge = URL_SAFE_NO_PAD.encode(hash);
+        (code_verifier, code_challenge)
+    }
+
+    fn test_callback_router() -> (axum::Router, Arc<OAuthFlowStore>) {
+        let flow_store = Arc::new(OAuthFlowStore::default());
+        let state = OAuthState::for_tests_with_exchange(
+            flow_store.clone(),
+            100,
+            StdDuration::from_secs(60),
+            Arc::new(MockGithubExchange),
+        );
+        (router(state), flow_store)
+    }
+
+    fn callback_request(payload: Value) -> Request<Body> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/auth/oauth/github/callback")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("request should build")
+    }
+
+    async fn seed_flow(flow_store: &OAuthFlowStore, code_challenge: &str) -> Uuid {
+        let flow_id = Uuid::new_v4();
+        flow_store
+            .insert(
+                flow_id,
+                OAuthFlowRecord {
+                    redirect_uri: "https://app.scriptum.dev/callback".to_string(),
+                    state: "test-state-abc".to_string(),
+                    code_challenge: code_challenge.to_string(),
+                    expires_at: Utc::now() + Duration::minutes(10),
+                },
+            )
+            .await;
+        flow_id
+    }
+
+    #[tokio::test]
+    async fn callback_returns_tokens_and_user() {
+        let (app, flow_store) = test_callback_router();
+        let (code_verifier, code_challenge) = make_pkce_pair();
+        let flow_id = seed_flow(&flow_store, &code_challenge).await;
+
+        let payload = json!({
+            "flow_id": flow_id,
+            "code": "github-auth-code-123",
+            "state": "test-state-abc",
+            "code_verifier": code_verifier,
+            "device_name": "Test Device"
+        });
+
+        let response =
+            app.oneshot(callback_request(payload)).await.expect("callback should complete");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+        let parsed: Value = serde_json::from_slice(&body).expect("body should be JSON");
+
+        assert!(parsed["access_token"].as_str().is_some_and(|t| !t.is_empty()));
+        assert!(parsed["refresh_token"].as_str().is_some_and(|t| !t.is_empty()));
+        assert!(parsed["access_expires_at"].as_str().is_some());
+        assert!(parsed["refresh_expires_at"].as_str().is_some());
+        assert_eq!(parsed["user"]["email"], "gary@example.com");
+        assert_eq!(parsed["user"]["display_name"], "Gary");
+        assert!(parsed["user"]["id"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn callback_rejects_unknown_flow() {
+        let (app, _) = test_callback_router();
+        let (code_verifier, _) = make_pkce_pair();
+
+        let payload = json!({
+            "flow_id": Uuid::new_v4(),
+            "code": "some-code",
+            "state": "test-state-abc",
+            "code_verifier": code_verifier,
+        });
+
+        let response = app.oneshot(callback_request(payload)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "AUTH_CODE_INVALID");
+    }
+
+    #[tokio::test]
+    async fn callback_rejects_state_mismatch() {
+        let (app, flow_store) = test_callback_router();
+        let (code_verifier, code_challenge) = make_pkce_pair();
+        let flow_id = seed_flow(&flow_store, &code_challenge).await;
+
+        let payload = json!({
+            "flow_id": flow_id,
+            "code": "some-code",
+            "state": "WRONG-STATE",
+            "code_verifier": code_verifier,
+        });
+
+        let response = app.oneshot(callback_request(payload)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "AUTH_STATE_MISMATCH");
+    }
+
+    #[tokio::test]
+    async fn callback_rejects_bad_pkce_verifier() {
+        let (app, flow_store) = test_callback_router();
+        let (_, code_challenge) = make_pkce_pair();
+        let flow_id = seed_flow(&flow_store, &code_challenge).await;
+
+        let payload = json!({
+            "flow_id": flow_id,
+            "code": "some-code",
+            "state": "test-state-abc",
+            "code_verifier": "WRONG-VERIFIER-THAT-WONT-HASH-MATCH",
+        });
+
+        let response = app.oneshot(callback_request(payload)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "AUTH_CODE_INVALID");
+    }
+
+    #[tokio::test]
+    async fn callback_flow_is_consumed_single_use() {
+        let (app, flow_store) = test_callback_router();
+        let (code_verifier, code_challenge) = make_pkce_pair();
+        let flow_id = seed_flow(&flow_store, &code_challenge).await;
+
+        let payload = json!({
+            "flow_id": flow_id,
+            "code": "github-auth-code-123",
+            "state": "test-state-abc",
+            "code_verifier": code_verifier,
+        });
+
+        let first = app.clone().oneshot(callback_request(payload.clone())).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app.oneshot(callback_request(payload)).await.unwrap();
+        assert_eq!(second.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn pkce_verification_works_for_valid_pair() {
+        let (verifier, challenge) = make_pkce_pair();
+        assert!(super::verify_pkce_s256(&verifier, &challenge).is_ok());
+    }
+
+    #[test]
+    fn pkce_verification_fails_for_wrong_verifier() {
+        let (_, challenge) = make_pkce_pair();
+        assert!(super::verify_pkce_s256("wrong-verifier", &challenge).is_err());
+    }
+
+    #[test]
+    fn generate_refresh_token_produces_unique_tokens() {
+        let (token1, hash1) = super::generate_refresh_token();
+        let (token2, hash2) = super::generate_refresh_token();
+        assert_ne!(token1, token2);
+        assert_ne!(hash1, hash2);
+        assert!(!token1.is_empty());
+        assert_eq!(hash1.len(), 32);
     }
 }

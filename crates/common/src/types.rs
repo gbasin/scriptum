@@ -37,7 +37,7 @@ pub struct Document {
 /// A heading-based section within a document.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Section {
-    /// Stable ID: slug of heading chain, e.g. "h2:authentication" or "h2_3" fallback.
+    /// Stable ID: ancestor slug chain, e.g. "root/api/authentication" or "h2_3" fallback.
     pub id: String,
     /// Parent section ID (forms a tree via heading levels).
     pub parent_id: Option<String>,

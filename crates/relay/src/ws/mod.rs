@@ -1868,10 +1868,7 @@ mod tests {
             serde_json::from_str(&body).expect("response should be valid json");
         assert_eq!(parsed["error"]["code"], "UPGRADE_REQUIRED");
         assert_eq!(parsed["error"]["retryable"], false);
-        assert_eq!(
-            parsed["error"]["details"]["requested_version"],
-            "scriptum-sync.v99"
-        );
+        assert_eq!(parsed["error"]["details"]["requested_version"], "scriptum-sync.v99");
         assert!(parsed["error"]["details"]["supported_versions"]
             .as_array()
             .expect("supported_versions should be an array")

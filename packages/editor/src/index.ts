@@ -13,3 +13,9 @@ export {
   type ProviderFactory,
   type ProviderStatus,
 } from "./collaboration/provider";
+export {
+  nameToColor,
+  remoteCursorExtension,
+  type RemoteCursorOptions,
+  type RemotePeer,
+} from "./collaboration/cursors";

@@ -19,6 +19,9 @@ pub enum ErrorCode {
     ValidationFailed,
     AuthInvalidToken,
     AuthInvalidRedirect,
+    AuthStateMismatch,
+    AuthCodeInvalid,
+    AuthTokenRevoked,
     AuthForbidden,
     NotFound,
     DocPathConflict,
@@ -29,6 +32,7 @@ pub enum ErrorCode {
     InternalError,
     AiCommitUnavailable,
     DiskWriteFailed,
+    UpgradeRequired,
 }
 
 impl ErrorCode {
@@ -37,6 +41,9 @@ impl ErrorCode {
             Self::ValidationFailed => "VALIDATION_FAILED",
             Self::AuthInvalidToken => "AUTH_INVALID_TOKEN",
             Self::AuthInvalidRedirect => "AUTH_INVALID_REDIRECT",
+            Self::AuthStateMismatch => "AUTH_STATE_MISMATCH",
+            Self::AuthCodeInvalid => "AUTH_CODE_INVALID",
+            Self::AuthTokenRevoked => "AUTH_TOKEN_REVOKED",
             Self::AuthForbidden => "AUTH_FORBIDDEN",
             Self::NotFound => "NOT_FOUND",
             Self::DocPathConflict => "DOC_PATH_CONFLICT",
@@ -47,6 +54,7 @@ impl ErrorCode {
             Self::InternalError => "INTERNAL_ERROR",
             Self::AiCommitUnavailable => "AI_COMMIT_UNAVAILABLE",
             Self::DiskWriteFailed => "DISK_WRITE_FAILED",
+            Self::UpgradeRequired => "UPGRADE_REQUIRED",
         }
     }
 
@@ -55,6 +63,9 @@ impl ErrorCode {
             Self::ValidationFailed => StatusCode::BAD_REQUEST,
             Self::AuthInvalidToken => StatusCode::UNAUTHORIZED,
             Self::AuthInvalidRedirect => StatusCode::BAD_REQUEST,
+            Self::AuthStateMismatch => StatusCode::UNAUTHORIZED,
+            Self::AuthCodeInvalid => StatusCode::UNAUTHORIZED,
+            Self::AuthTokenRevoked => StatusCode::UNAUTHORIZED,
             Self::AuthForbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::DocPathConflict => StatusCode::CONFLICT,
@@ -65,6 +76,7 @@ impl ErrorCode {
             Self::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             Self::AiCommitUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::DiskWriteFailed => StatusCode::INSUFFICIENT_STORAGE,
+            Self::UpgradeRequired => StatusCode::UPGRADE_REQUIRED,
         }
     }
 
@@ -83,6 +95,9 @@ impl ErrorCode {
             Self::ValidationFailed => "request validation failed",
             Self::AuthInvalidToken => "invalid authentication token",
             Self::AuthInvalidRedirect => "invalid oauth redirect URI",
+            Self::AuthStateMismatch => "oauth state parameter mismatch",
+            Self::AuthCodeInvalid => "oauth authorization code invalid or expired",
+            Self::AuthTokenRevoked => "refresh token has been revoked",
             Self::AuthForbidden => "caller lacks required permission",
             Self::NotFound => "requested resource not found",
             Self::DocPathConflict => "resource already exists",
@@ -93,6 +108,7 @@ impl ErrorCode {
             Self::InternalError => "internal server error",
             Self::AiCommitUnavailable => "upstream AI service is unavailable",
             Self::DiskWriteFailed => "server could not persist data",
+            Self::UpgradeRequired => "client protocol version is not supported",
         }
     }
 }
@@ -168,6 +184,7 @@ pub fn default_code_for_status(status: StatusCode) -> ErrorCode {
         StatusCode::TOO_MANY_REQUESTS => ErrorCode::RateLimited,
         StatusCode::SERVICE_UNAVAILABLE => ErrorCode::AiCommitUnavailable,
         StatusCode::INSUFFICIENT_STORAGE => ErrorCode::DiskWriteFailed,
+        StatusCode::UPGRADE_REQUIRED => ErrorCode::UpgradeRequired,
         _ => ErrorCode::InternalError,
     }
 }

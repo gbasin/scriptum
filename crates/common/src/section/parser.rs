@@ -1,5 +1,6 @@
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
+use super::slug;
 use crate::types::Section;
 
 #[derive(Debug, Clone)]
@@ -46,20 +47,33 @@ pub fn parse_sections(markdown: &str) -> Vec<Section> {
 
 fn build_tree(markdown: &str, drafts: Vec<SectionDraft>) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::with_capacity(drafts.len());
-    let mut stack: Vec<usize> = Vec::new();
+    // Stack of (section_index, slug) for building ancestor chains.
+    let mut stack: Vec<(usize, String)> = Vec::new();
     let total_lines = markdown.lines().count() as u32;
 
+    // Track base_id occurrences for disambiguation.
+    let mut id_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
     for (index, draft) in drafts.iter().enumerate() {
-        while let Some(last_index) = stack.last().copied() {
-            if sections[last_index].level >= draft.level {
+        while let Some((last_index, _)) = stack.last() {
+            if sections[*last_index].level >= draft.level {
                 stack.pop();
             } else {
                 break;
             }
         }
 
-        let parent_id = stack.last().map(|parent_index| sections[*parent_index].id.clone());
-        let id = make_section_id(draft.level, &draft.heading, index + 1);
+        let parent_id = stack.last().map(|(parent_index, _)| sections[*parent_index].id.clone());
+
+        let ancestor_slugs: Vec<&str> = stack.iter().map(|(_, s)| s.as_str()).collect();
+        let base_id =
+            slug::make_section_id(&ancestor_slugs, &draft.heading, draft.level, index + 1);
+
+        let count = id_counts.entry(base_id.clone()).or_insert(0);
+        *count += 1;
+        let id = slug::disambiguate(&base_id, *count);
+
+        let this_slug = slug::slugify(&draft.heading);
         let end_line = drafts.get(index + 1).map(|next| next.start_line).unwrap_or(total_lines + 1);
 
         sections.push(Section {
@@ -70,29 +84,10 @@ fn build_tree(markdown: &str, drafts: Vec<SectionDraft>) -> Vec<Section> {
             start_line: draft.start_line,
             end_line,
         });
-        stack.push(index);
+        stack.push((index, this_slug));
     }
 
     sections
-}
-
-fn make_section_id(level: u8, heading: &str, ordinal: usize) -> String {
-    let slug = heading
-        .trim()
-        .to_lowercase()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
-    if slug.is_empty() {
-        format!("h{level}:{ordinal}")
-    } else {
-        format!("h{level}:{slug}")
-    }
 }
 
 fn is_atx_heading(markdown: &str, offset: usize) -> bool {
@@ -131,22 +126,26 @@ mod tests {
         assert_eq!(sections.len(), 4);
 
         assert_eq!(sections[0].heading, "Root");
+        assert_eq!(sections[0].id, "root");
         assert_eq!(sections[0].parent_id, None);
         assert_eq!(sections[0].start_line, 1);
         assert_eq!(sections[0].end_line, 3);
 
         assert_eq!(sections[1].heading, "Child");
-        assert_eq!(sections[1].parent_id.as_deref(), Some("h1:root"));
+        assert_eq!(sections[1].id, "root/child");
+        assert_eq!(sections[1].parent_id.as_deref(), Some("root"));
         assert_eq!(sections[1].start_line, 3);
         assert_eq!(sections[1].end_line, 5);
 
         assert_eq!(sections[2].heading, "Grandchild");
-        assert_eq!(sections[2].parent_id.as_deref(), Some("h2:child"));
+        assert_eq!(sections[2].id, "root/child/grandchild");
+        assert_eq!(sections[2].parent_id.as_deref(), Some("root/child"));
         assert_eq!(sections[2].start_line, 5);
         assert_eq!(sections[2].end_line, 7);
 
         assert_eq!(sections[3].heading, "Sibling");
-        assert_eq!(sections[3].parent_id.as_deref(), Some("h1:root"));
+        assert_eq!(sections[3].id, "root/sibling");
+        assert_eq!(sections[3].parent_id.as_deref(), Some("root"));
         assert_eq!(sections[3].start_line, 7);
     }
 

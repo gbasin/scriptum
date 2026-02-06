@@ -3,3 +3,4 @@
 pub mod methods;
 pub mod unix;
 pub mod ws;
+pub mod yjs_ws;

@@ -6,8 +6,8 @@ Read `AGENTS.md` for full project rules, beads workflow, git conventions, and se
 
 1. Run `bv --robot-next` to get the single highest-impact task
 2. **⚠️ CLAIM IT IMMEDIATELY — before reading code, planning, or doing anything else:**
-   `br update <id> --status=in_progress`
-   Other agents are running `bv --robot-next` at the same time. If you skip this step, two agents WILL pick the same task and collide. DO NOT PROCEED until the claim succeeds.
+   `br update <id> --claim`
+   `--claim` is atomic: it sets assignee + status=in_progress and **fails if another agent already claimed it**. If it fails, run `bv --robot-next` again for a different task. DO NOT PROCEED until the claim succeeds.
 3. Read the SPEC.md for implementation details relevant to your task (use grep/search — it's 3000+ lines)
 4. Implement the task, writing tests where appropriate
 5. When done: `br close <id> --reason="Completed"`
@@ -35,11 +35,10 @@ Read `AGENTS.md` for full project rules, beads workflow, git conventions, and se
 
 ## Before ending your session
 
-See `AGENTS.md` → "Landing the Plane" for the full checklist. The short version:
+See `AGENTS.md` The short version:
 
 ```bash
 git add <your-files>        # Only YOUR files — never git add . or git add -A
 git commit -m "feat: ..."   # Conventional commit
 br sync --flush-only        # Export beads changes
-git push                    # MANDATORY — work is not done until pushed
 ```
