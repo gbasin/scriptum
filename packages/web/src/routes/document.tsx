@@ -18,6 +18,7 @@ import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
+import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
 
@@ -35,6 +36,8 @@ const DEFAULT_TEST_STATE: ScriptumTestState = {
   cursor: { line: 0, ch: 0 },
   remotePeers: [],
   syncState: "synced",
+  pendingSyncUpdates: 0,
+  reconnectProgress: null,
   gitStatus: { dirty: false, ahead: 0, behind: 0 },
   commentThreads: [],
 };
@@ -377,6 +380,7 @@ export function DocumentRoute() {
   const [syncState, setSyncState] = useState<ScriptumTestState["syncState"]>(
     fixtureModeEnabled ? fixtureState.syncState : "reconnecting"
   );
+  const pendingChanges = useSyncStore((state) => state.pendingChanges);
   const [cursor, setCursor] = useState(fixtureState.cursor);
   const [daemonWsBaseUrl] = useState(DEFAULT_DAEMON_WS_BASE_URL);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
@@ -434,6 +438,12 @@ export function DocumentRoute() {
       ) ?? null
     );
   }, [activeSelection, inlineCommentThreads]);
+  const pendingSyncUpdates = fixtureModeEnabled
+    ? fixtureState.pendingSyncUpdates
+    : pendingChanges;
+  const reconnectProgress = fixtureModeEnabled
+    ? fixtureState.reconnectProgress
+    : null;
 
   useEffect(() => {
     const api = window.__SCRIPTUM_TEST__;
@@ -721,6 +731,23 @@ export function DocumentRoute() {
         tabs={openTabs}
       />
       <Breadcrumb path={currentDocumentPath} workspaceLabel={workspaceLabel} />
+      {syncState === "offline" ? (
+        <aside
+          aria-label="Offline banner"
+          data-testid="offline-banner"
+          role="status"
+          style={{
+            background: "#fef3c7",
+            border: "1px solid #f59e0b",
+            borderRadius: "0.5rem",
+            color: "#78350f",
+            marginBottom: "0.75rem",
+            padding: "0.625rem 0.75rem",
+          }}
+        >
+          Offline: updates are queued locally and will sync when reconnected.
+        </aside>
+      ) : null}
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>
@@ -982,7 +1009,13 @@ export function DocumentRoute() {
         )}
       </section>
 
-      <StatusBar syncState={syncState} cursor={cursor} activeEditors={activeEditors} />
+      <StatusBar
+        syncState={syncState}
+        cursor={cursor}
+        activeEditors={activeEditors}
+        pendingUpdates={pendingSyncUpdates}
+        reconnectProgress={reconnectProgress}
+      />
     </section>
   );
 }

@@ -4,6 +4,11 @@ interface StatusBarProps {
   syncState: SyncState;
   cursor: CursorPosition;
   activeEditors: number;
+  pendingUpdates?: number;
+  reconnectProgress?: {
+    syncedUpdates: number;
+    totalUpdates: number;
+  } | null;
 }
 
 interface SyncBadgeConfig {
@@ -19,10 +24,23 @@ const SYNC_BADGE: Record<SyncState, SyncBadgeConfig> = {
   error: { label: "Error", dotColor: "#dc2626", colorName: "red" },
 };
 
-export function StatusBar({ syncState, cursor, activeEditors }: StatusBarProps) {
+export function StatusBar({
+  syncState,
+  cursor,
+  activeEditors,
+  pendingUpdates = 0,
+  reconnectProgress = null,
+}: StatusBarProps) {
   const badge = SYNC_BADGE[syncState];
   const line = cursor.line + 1;
   const col = cursor.ch + 1;
+  const showReconnectProgress =
+    syncState === "reconnecting" &&
+    reconnectProgress !== null &&
+    reconnectProgress.totalUpdates > 0;
+  const syncedUpdates = showReconnectProgress
+    ? Math.min(reconnectProgress.syncedUpdates, reconnectProgress.totalUpdates)
+    : 0;
 
   return (
     <footer
@@ -59,6 +77,14 @@ export function StatusBar({ syncState, cursor, activeEditors }: StatusBarProps) 
       </span>
       <span data-testid="status-cursor">Ln {line}, Col {col}</span>
       <span data-testid="status-editor-count">Editors: {activeEditors}</span>
+      {pendingUpdates > 0 ? (
+        <span data-testid="status-pending-updates">Pending: {pendingUpdates}</span>
+      ) : null}
+      {showReconnectProgress ? (
+        <span data-testid="status-reconnect-progress">
+          Syncing... {syncedUpdates}/{reconnectProgress.totalUpdates} updates
+        </span>
+      ) : null}
     </footer>
   );
 }

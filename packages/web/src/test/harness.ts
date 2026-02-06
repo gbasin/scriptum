@@ -21,12 +21,19 @@ export interface GitStatus {
   lastCommit?: string;
 }
 
+export interface ReconnectProgress {
+  syncedUpdates: number;
+  totalUpdates: number;
+}
+
 export interface ScriptumTestState {
   fixtureName: string;
   docContent: string;
   cursor: CursorPosition;
   remotePeers: RemotePeer[];
   syncState: SyncState;
+  pendingSyncUpdates: number;
+  reconnectProgress: ReconnectProgress | null;
   gitStatus: GitStatus;
   commentThreads: unknown[];
 }
@@ -38,6 +45,8 @@ export interface ScriptumTestApi {
   spawnRemotePeer(peer: RemotePeer): void;
   setGitStatus(status: GitStatus): void;
   setSyncState(state: SyncState): void;
+  setPendingSyncUpdates(count: number): void;
+  setReconnectProgress(progress: ReconnectProgress | null): void;
   setCommentThreads(threads: unknown[]): void;
   getState(): ScriptumTestState;
   reset(): void;
@@ -56,6 +65,8 @@ const DEFAULT_STATE: ScriptumTestState = {
   cursor: { line: 0, ch: 0 },
   remotePeers: [],
   syncState: "synced",
+  pendingSyncUpdates: 0,
+  reconnectProgress: null,
   gitStatus: { dirty: false, ahead: 0, behind: 0 },
   commentThreads: [],
 };
@@ -76,6 +87,11 @@ const FIXTURES: Record<string, Partial<ScriptumTestState>> = {
       },
     ],
     syncState: "reconnecting",
+    pendingSyncUpdates: 356,
+    reconnectProgress: {
+      syncedUpdates: 847,
+      totalUpdates: 1203,
+    },
     gitStatus: { dirty: true, ahead: 1, behind: 0 },
   },
 };
@@ -99,12 +115,39 @@ function assertCursorPosition(value: CursorPosition): void {
   }
 }
 
+function assertNonNegativeInteger(value: number, label: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+}
+
+function assertReconnectProgress(
+  value: ReconnectProgress | null
+): ReconnectProgress | null {
+  if (value === null) {
+    return null;
+  }
+
+  assertNonNegativeInteger(value.syncedUpdates, "reconnectProgress.syncedUpdates");
+  assertNonNegativeInteger(value.totalUpdates, "reconnectProgress.totalUpdates");
+  if (value.syncedUpdates > value.totalUpdates) {
+    throw new Error(
+      "reconnectProgress.syncedUpdates must be <= reconnectProgress.totalUpdates"
+    );
+  }
+  return value;
+}
+
 function withDefaults(initialState?: Partial<ScriptumTestState>): ScriptumTestState {
   const merged: ScriptumTestState = {
     ...DEFAULT_STATE,
     ...initialState,
     cursor: initialState?.cursor ?? DEFAULT_STATE.cursor,
     remotePeers: initialState?.remotePeers ?? DEFAULT_STATE.remotePeers,
+    pendingSyncUpdates:
+      initialState?.pendingSyncUpdates ?? DEFAULT_STATE.pendingSyncUpdates,
+    reconnectProgress:
+      initialState?.reconnectProgress ?? DEFAULT_STATE.reconnectProgress,
     gitStatus: initialState?.gitStatus ?? DEFAULT_STATE.gitStatus,
     commentThreads: initialState?.commentThreads ?? DEFAULT_STATE.commentThreads,
   };
@@ -158,6 +201,17 @@ export function createScriptumTestApi(
 
     setSyncState(syncState: SyncState) {
       state.syncState = syncState;
+      emit();
+    },
+
+    setPendingSyncUpdates(count: number) {
+      assertNonNegativeInteger(count, "pendingSyncUpdates");
+      state.pendingSyncUpdates = count;
+      emit();
+    },
+
+    setReconnectProgress(progress: ReconnectProgress | null) {
+      state.reconnectProgress = assertReconnectProgress(progress);
       emit();
     },
 

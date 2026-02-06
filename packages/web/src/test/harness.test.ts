@@ -18,6 +18,8 @@ describe("createScriptumTestApi", () => {
       section: "Summary",
     });
     api.setSyncState("offline");
+    api.setPendingSyncUpdates(42);
+    api.setReconnectProgress({ syncedUpdates: 847, totalUpdates: 1203 });
     api.setGitStatus({ dirty: true, ahead: 2, behind: 1, lastCommit: "abc123" });
 
     const state = api.getState();
@@ -26,6 +28,11 @@ describe("createScriptumTestApi", () => {
     expect(state.remotePeers).toHaveLength(1);
     expect(state.remotePeers[0].name).toBe("Assistant");
     expect(state.syncState).toBe("offline");
+    expect(state.pendingSyncUpdates).toBe(42);
+    expect(state.reconnectProgress).toEqual({
+      syncedUpdates: 847,
+      totalUpdates: 1203,
+    });
     expect(state.gitStatus).toEqual({
       dirty: true,
       ahead: 2,
@@ -53,6 +60,14 @@ describe("createScriptumTestApi", () => {
     expect(() => api.setCursor({ line: -1, ch: 0 })).toThrow(
       /cursor\.line must be a non-negative integer/
     );
+  });
+
+  it("rejects invalid reconnect progress", () => {
+    const api = createScriptumTestApi();
+
+    expect(() =>
+      api.setReconnectProgress({ syncedUpdates: 5, totalUpdates: 3 })
+    ).toThrow(/must be <= reconnectProgress\.totalUpdates/);
   });
 });
 

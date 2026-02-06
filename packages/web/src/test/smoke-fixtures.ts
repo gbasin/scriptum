@@ -1,5 +1,6 @@
 import type {
   GitStatus,
+  ReconnectProgress,
   RemotePeer,
   ScriptumTestApi,
   SyncState,
@@ -12,6 +13,8 @@ export interface SmokeFixture {
   loadFixture?: string;
   docContent?: string;
   syncState?: SyncState;
+  pendingSyncUpdates?: number;
+  reconnectProgress?: ReconnectProgress | null;
   gitStatus?: GitStatus;
   remotePeers?: RemotePeer[];
 }
@@ -32,6 +35,7 @@ export const SMOKE_FIXTURES: SmokeFixture[] = [
     description: "Offline sync indicator with unsynced content",
     docContent: "# Smoke: Offline\n\nPending local updates while disconnected.",
     syncState: "offline",
+    pendingSyncUpdates: 19,
     gitStatus: { dirty: true, ahead: 2, behind: 0, lastCommit: "abc123" },
   },
   {
@@ -51,6 +55,8 @@ export const SMOKE_FIXTURES: SmokeFixture[] = [
     description: "Reconnect state with overlap-warning fixture",
     loadFixture: "overlap-warning",
     syncState: "reconnecting",
+    pendingSyncUpdates: 356,
+    reconnectProgress: { syncedUpdates: 847, totalUpdates: 1203 },
   },
   {
     id: "sync-error",
@@ -74,6 +80,12 @@ export function applySmokeFixture(
   }
   if (fixture.syncState !== undefined) {
     api.setSyncState(fixture.syncState);
+  }
+  if (fixture.pendingSyncUpdates !== undefined) {
+    api.setPendingSyncUpdates(fixture.pendingSyncUpdates);
+  }
+  if (fixture.reconnectProgress !== undefined) {
+    api.setReconnectProgress(fixture.reconnectProgress);
   }
   if (fixture.gitStatus !== undefined) {
     api.setGitStatus(fixture.gitStatus);
