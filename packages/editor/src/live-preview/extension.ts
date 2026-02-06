@@ -1113,6 +1113,47 @@ const taskBlockquoteHrTheme = EditorView.baseTheme({
   },
 });
 
+const codeBlockTheme = EditorView.baseTheme({
+  ".cm-livePreview-codeBlock": {
+    backgroundColor: "#0f172a",
+    border: "1px solid #1e293b",
+    borderRadius: "0.45rem",
+    color: "#e2e8f0",
+    display: "block",
+    margin: "0.45em 0",
+    overflowX: "auto",
+    padding: "0.6rem 0.7rem",
+  },
+  ".cm-livePreview-codeLanguage": {
+    color: "#94a3b8",
+    display: "inline-block",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "0.72em",
+    marginBottom: "0.4rem",
+    textTransform: "lowercase",
+  },
+  ".cm-livePreview-codePre": {
+    margin: "0",
+    whiteSpace: "pre",
+  },
+  ".cm-livePreview-code": {
+    display: "block",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "0.86em",
+    lineHeight: "1.45",
+  },
+  ".cm-livePreview-codeToken-keyword": {
+    color: "#93c5fd",
+    fontWeight: "600",
+  },
+  ".cm-livePreview-codeToken-string": {
+    color: "#86efac",
+  },
+  ".cm-livePreview-codeToken-number": {
+    color: "#fca5a5",
+  },
+});
+
 const inlineLinkTheme = EditorView.baseTheme({
   ".cm-livePreview-link": {
     color: "#2563eb",
@@ -1243,6 +1284,18 @@ export const taskBlockquoteHrDecorations = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+export const codeBlockDecorations = StateField.define<DecorationSet>({
+  create: buildCodeBlockDecorations,
+  update(currentDecorations, transaction) {
+    if (!transaction.docChanged && !transaction.selection) {
+      return currentDecorations;
+    }
+
+    return buildCodeBlockDecorations(transaction.state);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 export const inlineLinkDecorations = StateField.define<DecorationSet>({
   create: buildInlineLinkDecorations,
   update(currentDecorations, transaction) {
@@ -1279,11 +1332,13 @@ export function livePreview(): Extension {
     headingPreviewDecorations,
     inlineEmphasisDecorations,
     taskBlockquoteHrDecorations,
+    codeBlockDecorations,
     inlineLinkDecorations,
     tablePreviewDecorations,
     headingPreviewTheme,
     inlineEmphasisTheme,
     taskBlockquoteHrTheme,
+    codeBlockTheme,
     inlineLinkTheme,
     tablePreviewTheme,
   ];

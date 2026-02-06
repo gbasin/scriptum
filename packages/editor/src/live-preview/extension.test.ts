@@ -2,6 +2,7 @@ import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 import {
   activeLines,
+  codeBlockDecorations,
   getMarkdownNodes,
   headingPreviewDecorations,
   inlineEmphasisDecorations,
@@ -259,6 +260,29 @@ describe("livePreview", () => {
     });
     expect(hasTaskBlockquoteHrDecorationOnLine(activeHrState, 3)).toBe(false);
   });
+
+  it("renders fenced code blocks with language detection on unfocused lines", () => {
+    const source = ["active", "", "```ts", "const x = 1", "```"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    expect(collectCodeBlockLanguages(state)).toEqual(["ts"]);
+    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(true);
+  });
+
+  it("keeps active fenced code blocks raw markdown", () => {
+    const source = ["active", "", "```ts", "const x = 1", "```"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: source.indexOf("```ts") },
+      extensions: [livePreview()],
+    });
+
+    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(false);
+  });
 });
 
 function collectHeadingClasses(state: EditorState): Set<string> {
@@ -482,6 +506,38 @@ function hasTaskBlockquoteHrDecorationOnLine(
 ): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(taskBlockquoteHrDecorations);
+  let foundDecoration = false;
+
+  decorations.between(line.from, line.to, () => {
+    foundDecoration = true;
+  });
+
+  return foundDecoration;
+}
+
+function collectCodeBlockLanguages(state: EditorState): string[] {
+  const languages: string[] = [];
+  const decorations = state.field(codeBlockDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const widget = (value.spec as { widget?: { kind?: unknown; language?: unknown } }).widget;
+    if (!widget || widget.kind !== "code-block") {
+      return;
+    }
+
+    if (typeof widget.language === "string") {
+      languages.push(widget.language);
+    } else {
+      languages.push("");
+    }
+  });
+
+  return languages;
+}
+
+function hasCodeBlockDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+  const line = state.doc.line(lineNumber);
+  const decorations = state.field(codeBlockDecorations);
   let foundDecoration = false;
 
   decorations.between(line.from, line.to, () => {
