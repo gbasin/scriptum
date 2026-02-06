@@ -1,0 +1,27 @@
+{
+  "name": "@scriptum/editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"@scriptum/editor build\"",
+    "lint": "echo \"@scriptum/editor lint\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "latest",
+    "@codemirror/language": "latest",
+    "@codemirror/state": "latest",
+    "@codemirror/view": "latest",
+    "@lezer/common": "latest",
+    "@lezer/markdown": "latest",
+    "y-codemirror.next": "latest",
+    "yjs": "latest"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "latest"
+  }
+}

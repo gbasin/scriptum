@@ -46,11 +46,13 @@ daemon.log
 # WAL / snapshot files (local CRDT storage)
 *.wal
 *.snapshot
+*.snap
 
 # Test & coverage
 coverage/
 .nyc_output/
 *.lcov
+playwright-report/
 
 # Logs
 *.log

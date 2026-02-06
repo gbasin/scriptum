@@ -1,0 +1,17 @@
+{
+  "name": "@scriptum/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"@scriptum/shared build\"",
+    "lint": "echo \"@scriptum/shared lint\"",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

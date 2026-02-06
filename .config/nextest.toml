@@ -1,0 +1,5 @@
+[profile.default]
+failure-output = "immediate-final"
+fail-fast = false
+retries = 1
+slow-timeout = { period = "30s", terminate-after = 2 }
