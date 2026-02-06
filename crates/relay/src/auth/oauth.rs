@@ -9,7 +9,7 @@ use std::{
 
 use axum::{
     extract::{Json, State},
-    http::{header::RETRY_AFTER, HeaderValue},
+    http::{header::RETRY_AFTER, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Router,
@@ -109,6 +109,41 @@ impl RefreshTokenStore {
             RefreshSession { user_id, token_hash, family_id, expires_at, revoked_at: None };
         self.sessions.write().await.insert(session_id, session);
         self.users.write().await.entry(user_id).or_default().push(session_id);
+    }
+
+    /// Find a session by the SHA-256 hash of the raw token.
+    async fn find_by_hash(&self, token_hash: &[u8]) -> Option<(Uuid, RefreshSession)> {
+        let guard = self.sessions.read().await;
+        guard
+            .iter()
+            .find(|(_, session)| session.token_hash == token_hash)
+            .map(|(id, session)| (*id, session.clone()))
+    }
+
+    /// Revoke a single session. Returns true if the session was found and not already revoked.
+    async fn revoke_session(&self, session_id: Uuid) -> bool {
+        let mut guard = self.sessions.write().await;
+        if let Some(session) = guard.get_mut(&session_id) {
+            if session.revoked_at.is_none() {
+                session.revoked_at = Some(Utc::now());
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Revoke all sessions belonging to a token family (reuse detection).
+    async fn revoke_family(&self, family_id: Uuid) -> usize {
+        let mut guard = self.sessions.write().await;
+        let now = Utc::now();
+        let mut count = 0;
+        for session in guard.values_mut() {
+            if session.family_id == family_id && session.revoked_at.is_none() {
+                session.revoked_at = Some(now);
+                count += 1;
+            }
+        }
+        count
     }
 }
 
@@ -255,12 +290,19 @@ impl OAuthState {
             jwt_secret: "scriptum_test_jwt_secret_that_is_definitely_long_enough".to_string(),
         }
     }
+
+    #[cfg(test)]
+    fn refresh_store(&self) -> &Arc<RefreshTokenStore> {
+        &self.refresh_store
+    }
 }
 
 pub fn router(state: OAuthState) -> Router {
     Router::new()
         .route("/v1/auth/oauth/github/start", post(start_github_oauth))
         .route("/v1/auth/oauth/github/callback", post(callback_github_oauth))
+        .route("/v1/auth/token/refresh", post(handle_token_refresh))
+        .route("/v1/auth/logout", post(handle_logout))
         .with_state(state)
 }
 
@@ -679,6 +721,101 @@ fn generate_refresh_token() -> (String, Vec<u8>) {
     (token, hash)
 }
 
+// ─── Token Refresh ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct RefreshTokenRequest {
+    refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RefreshTokenResponse {
+    access_token: String,
+    access_expires_at: DateTime<Utc>,
+    refresh_token: String,
+    refresh_expires_at: DateTime<Utc>,
+}
+
+async fn handle_token_refresh(
+    State(state): State<OAuthState>,
+    Json(payload): Json<RefreshTokenRequest>,
+) -> Result<Json<RefreshTokenResponse>, RelayError> {
+    let token_hash = Sha256::digest(payload.refresh_token.as_bytes()).to_vec();
+
+    let (session_id, session) = state
+        .refresh_store
+        .find_by_hash(&token_hash)
+        .await
+        .ok_or_else(|| RelayError::from_code(ErrorCode::AuthInvalidToken))?;
+
+    // Reuse detection: if the token was already consumed, revoke the entire family.
+    if session.revoked_at.is_some() {
+        state.refresh_store.revoke_family(session.family_id).await;
+        return Err(RelayError::new(
+            ErrorCode::AuthTokenRevoked,
+            "refresh token reuse detected; token family revoked",
+        ));
+    }
+
+    // Reject expired tokens.
+    if session.expires_at < Utc::now() {
+        return Err(RelayError::new(ErrorCode::AuthInvalidToken, "refresh token has expired"));
+    }
+
+    // Revoke old session (single-use rotation).
+    state.refresh_store.revoke_session(session_id).await;
+
+    // Issue new refresh token in the same family.
+    let (new_refresh_token, new_refresh_hash) = generate_refresh_token();
+    let now = Utc::now();
+    let refresh_expires_at = now + Duration::days(DEFAULT_REFRESH_TOKEN_TTL_DAYS);
+    let new_session_id = Uuid::new_v4();
+    state
+        .refresh_store
+        .insert(
+            new_session_id,
+            session.user_id,
+            new_refresh_hash,
+            session.family_id,
+            refresh_expires_at,
+        )
+        .await;
+
+    // Issue new JWT access token.
+    let access_expires_at = now + Duration::seconds(DEFAULT_ACCESS_TOKEN_TTL_SECONDS);
+    let jwt_service = crate::auth::jwt::JwtAccessTokenService::new(&state.jwt_secret)
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+    let access_token = jwt_service
+        .issue_workspace_token(session.user_id, Uuid::nil())
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+
+    Ok(Json(RefreshTokenResponse {
+        access_token,
+        access_expires_at,
+        refresh_token: new_refresh_token,
+        refresh_expires_at,
+    }))
+}
+
+// ─── Logout ────────────────────────────────────────────────────────────
+
+async fn handle_logout(
+    State(state): State<OAuthState>,
+    Json(payload): Json<RefreshTokenRequest>,
+) -> Result<StatusCode, RelayError> {
+    let token_hash = Sha256::digest(payload.refresh_token.as_bytes()).to_vec();
+
+    let (session_id, _) = state
+        .refresh_store
+        .find_by_hash(&token_hash)
+        .await
+        .ok_or_else(|| RelayError::from_code(ErrorCode::AuthInvalidToken))?;
+
+    // Idempotent: succeeds even if already revoked.
+    state.refresh_store.revoke_session(session_id).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
@@ -694,7 +831,7 @@ mod tests {
 
     use super::{
         router, GithubExchange, GithubTokenResponse, GithubUserInfo, OAuthFlowRecord,
-        OAuthFlowStore, OAuthState,
+        OAuthFlowStore, OAuthState, RefreshTokenStore,
     };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use chrono::{Duration, Utc};
@@ -1040,5 +1177,177 @@ mod tests {
         assert_ne!(hash1, hash2);
         assert!(!token1.is_empty());
         assert_eq!(hash1.len(), 32);
+    }
+
+    // ─── Refresh token rotation tests ─────────────────────────────────
+
+    fn test_refresh_router_with_store() -> (axum::Router, Arc<RefreshTokenStore>) {
+        let flow_store = Arc::new(OAuthFlowStore::default());
+        let state = OAuthState::for_tests_with_exchange(
+            flow_store,
+            100,
+            StdDuration::from_secs(60),
+            Arc::new(MockGithubExchange),
+        );
+        let store = state.refresh_store().clone();
+        (router(state), store)
+    }
+
+    fn refresh_request(payload: Value) -> Request<Body> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/auth/token/refresh")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("request should build")
+    }
+
+    fn logout_request(payload: Value) -> Request<Body> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/auth/logout")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("request should build")
+    }
+
+    async fn seed_refresh(
+        store: &RefreshTokenStore,
+        user_id: Uuid,
+        family_id: Uuid,
+        ttl: Duration,
+    ) -> String {
+        let (raw_token, token_hash) = super::generate_refresh_token();
+        let session_id = Uuid::new_v4();
+        let expires_at = Utc::now() + ttl;
+        store.insert(session_id, user_id, token_hash, family_id, expires_at).await;
+        raw_token
+    }
+
+    #[tokio::test]
+    async fn refresh_rotates_token_and_returns_new_pair() {
+        let (app, store) = test_refresh_router_with_store();
+        let user_id = Uuid::new_v4();
+        let family_id = Uuid::new_v4();
+        let raw_token = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
+
+        let response = app
+            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+
+        assert!(parsed["access_token"].as_str().is_some_and(|t| !t.is_empty()));
+        let new_refresh = parsed["refresh_token"].as_str().expect("refresh_token should be present");
+        assert!(!new_refresh.is_empty());
+        assert_ne!(new_refresh, raw_token, "rotated token should differ from old");
+        assert!(parsed["access_expires_at"].as_str().is_some());
+        assert!(parsed["refresh_expires_at"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn refresh_reuse_detection_revokes_family() {
+        let (app, store) = test_refresh_router_with_store();
+        let user_id = Uuid::new_v4();
+        let family_id = Uuid::new_v4();
+        let token_a = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
+        let token_b = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
+
+        // First use of token_a succeeds (rotates it).
+        let first = app
+            .clone()
+            .oneshot(refresh_request(json!({ "refresh_token": token_a })))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        // Second use of (now-revoked) token_a triggers reuse detection.
+        let second = app
+            .clone()
+            .oneshot(refresh_request(json!({ "refresh_token": token_a })))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "AUTH_TOKEN_REVOKED");
+
+        // token_b (same family) should also be revoked now.
+        let third = app
+            .oneshot(refresh_request(json!({ "refresh_token": token_b })))
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn refresh_rejects_expired_token() {
+        let (app, store) = test_refresh_router_with_store();
+        let user_id = Uuid::new_v4();
+        let family_id = Uuid::new_v4();
+        // Seed with negative TTL so it's already expired.
+        let raw_token = seed_refresh(&store, user_id, family_id, Duration::seconds(-1)).await;
+
+        let response = app
+            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "AUTH_INVALID_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn refresh_rejects_unknown_token() {
+        let (app, _) = test_refresh_router_with_store();
+
+        let response = app
+            .oneshot(refresh_request(json!({ "refresh_token": "totally-bogus-token" })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "AUTH_INVALID_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_session() {
+        let (app, store) = test_refresh_router_with_store();
+        let user_id = Uuid::new_v4();
+        let family_id = Uuid::new_v4();
+        let raw_token = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
+
+        let response = app
+            .clone()
+            .oneshot(logout_request(json!({ "refresh_token": raw_token })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Token should no longer work for refresh (revoked → reuse detection).
+        let refresh_attempt = app
+            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
+            .await
+            .unwrap();
+        assert_eq!(refresh_attempt.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn logout_rejects_unknown_token() {
+        let (app, _) = test_refresh_router_with_store();
+
+        let response = app
+            .oneshot(logout_request(json!({ "refresh_token": "unknown-token" })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
