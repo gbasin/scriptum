@@ -7,6 +7,7 @@ import {
   commentHighlightExtension,
   createCollaborationProvider,
   livePreviewExtension,
+  nameToColor,
   remoteCursorExtension,
   setCommentGutterRanges,
   setCommentHighlightRanges,
@@ -14,10 +15,12 @@ import {
 } from "@scriptum/editor";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { AvatarStack } from "../components/AvatarStack";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
+import type { PeerPresence } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
@@ -29,6 +32,7 @@ const LOCAL_COMMENT_AUTHOR_ID = "local-user";
 const LOCAL_COMMENT_AUTHOR_NAME = "You";
 const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
 const UNKNOWN_COMMENT_TIMESTAMP = "1970-01-01T00:00:00.000Z";
+const FIXTURE_REMOTE_CLIENT_ID_BASE = 10_000;
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
   fixtureName: "default",
@@ -349,6 +353,35 @@ function makeClientId(prefix: string): string {
   return `${prefix}-${Math.random().toString(16).slice(2)}`;
 }
 
+function cursorOffsetFromLineCh(
+  markdown: string,
+  cursor: { line: number; ch: number }
+): number {
+  const lines = markdown.split("\n");
+  const lineIndex = Math.max(
+    0,
+    Math.min(lines.length - 1, Math.floor(cursor.line))
+  );
+  let offset = 0;
+  for (let index = 0; index < lineIndex; index += 1) {
+    offset += lines[index].length + 1;
+  }
+  const column = Math.max(
+    0,
+    Math.min(lines[lineIndex]?.length ?? 0, Math.floor(cursor.ch))
+  );
+  return offset + column;
+}
+
+function badgeSuffix(name: string): string {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "peer";
+}
+
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
@@ -388,6 +421,7 @@ export function DocumentRoute() {
   const collaborationProviderRef = useRef<
     ReturnType<typeof createCollaborationProvider> | null
   >(null);
+  const fixtureRemoteClientIdsRef = useRef<number[]>([]);
   const roomId = useMemo(
     () => `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
     [workspaceId, documentId]
@@ -419,6 +453,47 @@ export function DocumentRoute() {
       workspaceId
     );
   }, [workspaceId, workspaces]);
+  const presencePeers = useMemo<PeerPresence[]>(
+    () =>
+      fixtureState.remotePeers.map((peer) => ({
+        activeDocumentPath: currentDocumentPath,
+        color: nameToColor(peer.name),
+        cursor: {
+          column: peer.cursor.ch,
+          line: peer.cursor.line,
+          sectionId: peer.section ?? null,
+        },
+        lastSeenAt: new Date(Date.now()).toISOString(),
+        name: peer.name,
+        type: peer.type,
+      })),
+    [currentDocumentPath, fixtureState.remotePeers]
+  );
+  const overlapSummary = useMemo(() => {
+    const bySection = new Map<string, typeof fixtureState.remotePeers>();
+    for (const peer of fixtureState.remotePeers) {
+      const section = peer.section?.trim();
+      if (!section) {
+        continue;
+      }
+      const peers = bySection.get(section) ?? [];
+      peers.push(peer);
+      bySection.set(section, peers);
+    }
+
+    const warningSections = Array.from(bySection.entries())
+      .filter(([, peers]) => peers.length >= 2)
+      .map(([section, peers]) => ({ peers, section }));
+
+    const severity: "none" | "info" | "warning" =
+      warningSections.length > 0
+        ? "warning"
+        : fixtureState.remotePeers.length > 0
+          ? "info"
+          : "none";
+
+    return { severity, warningSections };
+  }, [fixtureState.remotePeers]);
   const commentRanges = useMemo(
     () => commentRangesFromThreads(inlineCommentThreads),
     [inlineCommentThreads]
@@ -608,6 +683,52 @@ export function DocumentRoute() {
       provider.yText.insert(0, fixtureState.docContent);
     }
   }, [fixtureModeEnabled, fixtureState.docContent]);
+
+  useEffect(() => {
+    if (!fixtureModeEnabled) {
+      return;
+    }
+
+    const provider = collaborationProviderRef.current;
+    if (!provider) {
+      return;
+    }
+
+    const awareness = provider.provider.awareness;
+    const states = awareness.getStates();
+    const previousClientIds = fixtureRemoteClientIdsRef.current;
+    for (const clientId of previousClientIds) {
+      states.delete(clientId);
+    }
+
+    const nextClientIds: number[] = [];
+    fixtureState.remotePeers.forEach((peer, index) => {
+      const clientId = FIXTURE_REMOTE_CLIENT_ID_BASE + index;
+      const cursorOffset = cursorOffsetFromLineCh(fixtureState.docContent, peer.cursor);
+      states.set(clientId, {
+        cursor: { anchor: cursorOffset, head: cursorOffset },
+        user: {
+          color: nameToColor(peer.name),
+          name: peer.name,
+        },
+      });
+      nextClientIds.push(clientId);
+    });
+    fixtureRemoteClientIdsRef.current = nextClientIds;
+
+    awareness.emit("change", [
+      {
+        added: nextClientIds.filter((clientId) => !previousClientIds.includes(clientId)),
+        removed: previousClientIds.filter((clientId) => !nextClientIds.includes(clientId)),
+        updated: nextClientIds.filter((clientId) => previousClientIds.includes(clientId)),
+      },
+      "fixture",
+    ]);
+  }, [
+    fixtureModeEnabled,
+    fixtureState.docContent,
+    fixtureState.remotePeers,
+  ]);
 
   useEffect(() => {
     setEditingMessageId(null);
@@ -996,6 +1117,7 @@ export function DocumentRoute() {
 
       <section aria-label="Presence stack" data-testid="presence-stack">
         <h2>Presence</h2>
+        <AvatarStack peers={presencePeers} />
         {fixtureState.remotePeers.length === 0 ? (
           <p>No collaborators connected.</p>
         ) : (
@@ -1006,6 +1128,70 @@ export function DocumentRoute() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section aria-label="Section overlap" data-testid="overlap-indicator">
+        <h2>Section overlap</h2>
+        <p data-severity={overlapSummary.severity} data-testid="overlap-severity">
+          Severity: {overlapSummary.severity}
+        </p>
+        {overlapSummary.severity === "warning" ? (
+          <ul>
+            {overlapSummary.warningSections.map(({ peers, section }) => (
+              <li key={section}>
+                <strong>{section}</strong>
+                <div>
+                  {peers.map((peer) => (
+                    <span
+                      data-peer-type={peer.type}
+                      data-testid={`attribution-badge-${badgeSuffix(peer.name)}`}
+                      key={`${section}:${peer.name}`}
+                      style={{
+                        backgroundColor: peer.type === "agent" ? "#dbeafe" : "#dcfce7",
+                        border: "1px solid #93c5fd",
+                        borderRadius: "9999px",
+                        display: "inline-flex",
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        marginRight: "0.375rem",
+                        padding: "0.1rem 0.45rem",
+                      }}
+                    >
+                      {peer.type === "agent" ? "AGENT" : "HUMAN"}: {peer.name}
+                    </span>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : overlapSummary.severity === "info" ? (
+          <div>
+            <p>No direct section collisions detected.</p>
+            <div>
+              {fixtureState.remotePeers.map((peer) => (
+                <span
+                  data-peer-type={peer.type}
+                  data-testid={`attribution-badge-${badgeSuffix(peer.name)}`}
+                  key={`info:${peer.name}`}
+                  style={{
+                    backgroundColor: peer.type === "agent" ? "#dbeafe" : "#dcfce7",
+                    border: "1px solid #93c5fd",
+                    borderRadius: "9999px",
+                    display: "inline-flex",
+                    fontSize: "0.7rem",
+                    fontWeight: 700,
+                    marginRight: "0.375rem",
+                    padding: "0.1rem 0.45rem",
+                  }}
+                >
+                  {peer.type === "agent" ? "AGENT" : "HUMAN"}: {peer.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p>Awaiting collaborators.</p>
         )}
       </section>
 

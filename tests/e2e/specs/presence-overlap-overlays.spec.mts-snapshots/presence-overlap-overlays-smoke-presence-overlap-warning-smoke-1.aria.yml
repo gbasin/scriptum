@@ -1,0 +1,38 @@
+- complementary "Sidebar":
+  - region "Workspace switcher":
+    - text: ""
+    - combobox "Workspace dropdown":
+      - option "No workspaces yet" [selected]
+    - button "Create new workspace"
+    - list "Workspace list"
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - navigation "Open document tabs":
+      - button "doc-smoke"
+      - button "Close doc-smoke"
+    - navigation "Document breadcrumb": ws-smoke / doc-smoke
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Overlap Harness ## Section A Alpha ## Section B Beta"
+      - textbox
+    - region "Comment threads":
+      - heading "Comments" [level=2]
+      - paragraph: No comments yet.
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - group "Online users"
+      - list:
+        - listitem: Alex Human (human)
+        - listitem: Scriptum Bot (agent)
+    - region "Section overlap":
+      - heading "Section overlap" [level=2]
+      - paragraph: "Severity: warning"
+      - list:
+        - listitem:
+          - strong: shared-auth
+          - text: "HUMAN: Alex Human AGENT: Scriptum Bot"
+    - status "Sync state": "Sync: Synced"
+    - text: "Ln 1, Col 1 Editors: 3"
