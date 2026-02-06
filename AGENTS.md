@@ -26,7 +26,7 @@
 
 - Check `git status`/`git diff` before commits
 - Atomic commits; push only when asked
-- Never destructive ops (`reset --hard`, `force push`) without explicit consent
+- Never destructive ops (`reset --hard`, `force push`, `checkout .`, `stash`, `restore`) without explicit consent — other agents may be editing the same worktree
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`
 
 ## Critical Thinking
@@ -34,6 +34,17 @@
 - Read more code when stuck
 - Document unexpected behavior
 - Call out conflicts between instructions
+
+## Parallel Agent Work
+
+Multiple agents work concurrently in the same worktree and branch.
+
+- **Only fix what you broke.** If tests fail that are unrelated to your changes, leave them — another agent likely has that in progress.
+- Run tests scoped to your work (e.g. the module you changed), not the full suite, unless asked.
+- If pre-existing failures block your work, create a `br` issue — don't try to fix them.
+- Claim work with `br update <id> --status=in_progress` so other agents can see it's taken.
+- Expect files to change under you. Re-read before editing if your context is stale.
+- Keep commits small and focused — avoid touching files outside your task to minimize merge pain.
 
 ## Engineering
 
