@@ -31,6 +31,8 @@ describe("AppRoutes", () => {
     expect(html).toContain("demo");
     expect(html).toContain("readme");
     expect(html).toContain("Editor");
+    expect(html).toContain("Comments");
+    expect(html).toContain("No comments yet.");
     expect(html).toContain("Presence");
     expect(html).toContain("Sync:");
   });
