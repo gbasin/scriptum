@@ -91,6 +91,37 @@ describe("livePreview", () => {
     expect(classes.has("cm-livePreview-heading-h2")).toBe(false);
   });
 
+  it("moves raw active line as cursor moves between lines", () => {
+    let state = EditorState.create({
+      doc: "# First\n# Second",
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    expect(hasDecorationOnLine(state, 1)).toBe(false);
+    expect(hasDecorationOnLine(state, 2)).toBe(true);
+
+    state = state.update({
+      selection: { anchor: state.doc.line(2).from },
+    }).state;
+
+    expect(hasDecorationOnLine(state, 1)).toBe(true);
+    expect(hasDecorationOnLine(state, 2)).toBe(false);
+  });
+
+  it("keeps all lines in a multi-line selection raw markdown", () => {
+    const source = ["**first**", "**second**", "---"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0, head: source.length },
+      extensions: [livePreview()],
+    });
+
+    expect(hasInlineDecorationOnLine(state, 1)).toBe(false);
+    expect(hasInlineDecorationOnLine(state, 2)).toBe(false);
+    expect(hasTaskBlockquoteHrDecorationOnLine(state, 3)).toBe(false);
+  });
+
   it("renders bold/italic/strikethrough on unfocused lines", () => {
     const source = ["*active line*", "**bold** and _italic_ and ~~strike~~"].join(
       "\n",

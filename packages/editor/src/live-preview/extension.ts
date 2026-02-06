@@ -28,6 +28,22 @@ function activeLineFromState(state: EditorState): number {
   return state.doc.lineAt(state.selection.main.head).number;
 }
 
+function activeSelectionLineRange(
+  state: EditorState,
+): { readonly startLine: number; readonly endLine: number } {
+  const from = state.selection.main.from;
+  const to = state.selection.main.to;
+  const startLine = state.doc.lineAt(Math.min(from, to)).number;
+  const endAnchor = Math.max(Math.min(from, to), Math.max(from, to) - 1);
+  const endLine = state.doc.lineAt(endAnchor).number;
+  return { startLine, endLine };
+}
+
+function lineIsInActiveSelection(state: EditorState, lineNumber: number): boolean {
+  const activeRange = activeSelectionLineRange(state);
+  return lineNumber >= activeRange.startLine && lineNumber <= activeRange.endLine;
+}
+
 function countTopLevelNodes(tree: Tree): number {
   let count = 0;
   let node = tree.topNode.firstChild;
@@ -51,10 +67,9 @@ function headingLevelFromLine(text: string): number | null {
 
 function buildHeadingDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
-    if (lineNumber === activeLine) {
+    if (lineIsInActiveSelection(state, lineNumber)) {
       continue;
     }
 
@@ -116,15 +131,15 @@ function isInlineMarkNode(name: string): boolean {
 
 function rangeTouchesActiveLine(
   state: EditorState,
-  activeLine: number,
   from: number,
   to: number,
 ): boolean {
+  const activeRange = activeSelectionLineRange(state);
   const startLine = state.doc.lineAt(from).number;
   const endAnchor = Math.max(from, to - 1);
   const endLine = state.doc.lineAt(endAnchor).number;
 
-  return activeLine >= startLine && activeLine <= endLine;
+  return !(endLine < activeRange.startLine || startLine > activeRange.endLine);
 }
 
 function addInlineEmphasisDecorations(
@@ -132,9 +147,8 @@ function addInlineEmphasisDecorations(
   state: EditorState,
   node: { from: number; to: number; firstChild: unknown; lastChild: unknown },
   className: string,
-  activeLine: number,
 ): void {
-  if (rangeTouchesActiveLine(state, activeLine, node.from, node.to)) {
+  if (rangeTouchesActiveLine(state, node.from, node.to)) {
     return;
   }
 
@@ -190,7 +204,6 @@ function addInlineEmphasisDecorations(
 
 function buildInlineEmphasisDecorations(state: EditorState): DecorationSet {
   const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
-  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
   const tree = markdownLanguage.parser.parse(state.doc.toString());
 
   function walk(node: {
@@ -208,7 +221,6 @@ function buildInlineEmphasisDecorations(state: EditorState): DecorationSet {
         state,
         node,
         className,
-        activeLine,
       );
     }
 
@@ -304,7 +316,6 @@ class HorizontalRuleWidget extends WidgetType {
 
 function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
   const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
-  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
   const tree = markdownLanguage.parser.parse(state.doc.toString());
 
   function walk(node: {
@@ -316,7 +327,7 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
   }): void {
     const nodeType = node.type.name;
 
-    if (nodeType === "Blockquote" && !rangeTouchesActiveLine(state, activeLine, node.from, node.to)) {
+    if (nodeType === "Blockquote" && !rangeTouchesActiveLine(state, node.from, node.to)) {
       const lineStart = state.doc.lineAt(node.from).from;
       decorations.push({
         from: lineStart,
@@ -327,7 +338,7 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
       });
     }
 
-    if (nodeType === "QuoteMark" && !rangeTouchesActiveLine(state, activeLine, node.from, node.to)) {
+    if (nodeType === "QuoteMark" && !rangeTouchesActiveLine(state, node.from, node.to)) {
       decorations.push({
         from: node.from,
         to: node.to,
@@ -337,7 +348,7 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
       });
     }
 
-    if (nodeType === "Task" && !rangeTouchesActiveLine(state, activeLine, node.from, node.to)) {
+    if (nodeType === "Task" && !rangeTouchesActiveLine(state, node.from, node.to)) {
       const marker = node.firstChild as
         | { type: { name: string }; from: number; to: number }
         | null;
@@ -376,7 +387,7 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
 
     if (
       nodeType === "HorizontalRule" &&
-      !rangeTouchesActiveLine(state, activeLine, node.from, node.to)
+      !rangeTouchesActiveLine(state, node.from, node.to)
     ) {
       decorations.push({
         from: node.from,
@@ -527,7 +538,6 @@ class CodeBlockWidget extends WidgetType {
 
 function buildCodeBlockDecorations(state: EditorState): DecorationSet {
   const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
-  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
   const tree = markdownLanguage.parser.parse(state.doc.toString());
 
   function walk(node: {
@@ -537,7 +547,7 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
     firstChild: unknown;
     nextSibling: unknown;
   }): void {
-    if (node.type.name === "FencedCode" && !rangeTouchesActiveLine(state, activeLine, node.from, node.to)) {
+    if (node.type.name === "FencedCode" && !rangeTouchesActiveLine(state, node.from, node.to)) {
       let language: string | null = null;
       let code = "";
 
@@ -801,10 +811,9 @@ class InlineImageWidget extends WidgetType {
 
 function buildInlineLinkDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
-    if (lineNumber === activeLine) {
+    if (lineIsInActiveSelection(state, lineNumber)) {
       continue;
     }
 
@@ -1007,7 +1016,6 @@ class InlineTableWidget extends WidgetType {
 
 function buildTableDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; ) {
     const tableBlock = parseTableBlock(state, lineNumber);
@@ -1016,7 +1024,7 @@ function buildTableDecorations(state: EditorState): DecorationSet {
       continue;
     }
 
-    if (rangeTouchesActiveLine(state, activeLine, tableBlock.from, tableBlock.to)) {
+    if (rangeTouchesActiveLine(state, tableBlock.from, tableBlock.to)) {
       lineNumber = tableBlock.nextLine;
       continue;
     }
@@ -1321,7 +1329,7 @@ export const tablePreviewDecorations = StateField.define<DecorationSet>({
 });
 
 export function isLineActive(state: EditorState, lineNumber: number): boolean {
-  return state.field(activeLines) === lineNumber;
+  return lineIsInActiveSelection(state, lineNumber);
 }
 
 export function livePreview(): Extension {
