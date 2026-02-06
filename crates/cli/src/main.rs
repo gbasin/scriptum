@@ -5,6 +5,7 @@ use clap::Parser;
 mod client;
 mod commands;
 mod daemon_launcher;
+pub mod exit_code;
 
 #[derive(Parser)]
 #[command(name = "scriptum", about = "Local-first collaborative markdown")]
