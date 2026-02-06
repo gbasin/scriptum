@@ -2,3 +2,4 @@
 # issue_prefix: bd
 # default_priority: 2
 # default_type: task
+claim.exclusive: true
