@@ -4,9 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-const INITIAL_MIGRATION_VERSION: i64 = 1;
-
-const INITIAL_MIGRATION_SQL: &str = r#"
+const MIGRATION_V1_SQL: &str = r#"
 CREATE TABLE documents_local (
     doc_id              TEXT PRIMARY KEY,
     workspace_id        TEXT NOT NULL,
@@ -74,6 +72,28 @@ CREATE TABLE outbox_updates (
 );
 "#;
 
+const MIGRATION_V2_SQL: &str = r#"
+CREATE TABLE agent_leases (
+    workspace_id    TEXT NOT NULL,
+    doc_id          TEXT NOT NULL,
+    section_id      TEXT NOT NULL,
+    agent_id        TEXT NOT NULL,
+    ttl_sec         INTEGER NOT NULL,
+    mode            TEXT NOT NULL CHECK (mode IN ('exclusive', 'shared')),
+    note            TEXT NULL,
+    expires_at      TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, doc_id, section_id, agent_id)
+);
+
+CREATE INDEX agent_leases_expires_idx
+    ON agent_leases (expires_at);
+
+CREATE INDEX agent_leases_lookup_idx
+    ON agent_leases (workspace_id, doc_id, section_id);
+"#;
+
+const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_V1_SQL), (2, MIGRATION_V2_SQL)];
+
 #[derive(Debug)]
 pub struct MetaDb {
     conn: Connection,
@@ -132,21 +152,24 @@ fn current_schema_version(conn: &Connection) -> Result<i64> {
 }
 
 fn apply_pending_migrations(conn: &mut Connection) -> Result<()> {
-    let current_version = current_schema_version(conn)?;
+    let mut current_version = current_schema_version(conn)?;
 
-    if current_version >= INITIAL_MIGRATION_VERSION {
-        return Ok(());
+    for (version, sql) in MIGRATIONS {
+        if *version <= current_version {
+            continue;
+        }
+
+        let tx = conn.transaction().context("failed to start migration transaction")?;
+        tx.execute_batch(sql)
+            .with_context(|| format!("failed to apply meta.db migration v{version}"))?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, datetime('now'))",
+            params![version],
+        )
+        .with_context(|| format!("failed to record migration v{version}"))?;
+        tx.commit().with_context(|| format!("failed to commit migration v{version}"))?;
+        current_version = *version;
     }
-
-    let tx = conn.transaction().context("failed to start migration transaction")?;
-
-    tx.execute_batch(INITIAL_MIGRATION_SQL).context("failed to apply initial meta.db migration")?;
-    tx.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, datetime('now'))",
-        params![INITIAL_MIGRATION_VERSION],
-    )
-    .context("failed to record initial migration")?;
-    tx.commit().context("failed to commit meta.db migration")?;
 
     Ok(())
 }
@@ -156,20 +179,23 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::MetaDb;
+    use rusqlite::Connection;
+
+    use super::{MetaDb, MIGRATION_V1_SQL};
 
     const EXPECTED_TABLES: &[&str] = &[
         "schema_migrations",
         "documents_local",
         "agent_sessions",
         "agent_recent_edits",
+        "agent_leases",
         "git_sync_config",
         "git_sync_jobs",
         "outbox_updates",
     ];
 
     #[test]
-    fn open_creates_schema_and_records_initial_migration() {
+    fn open_creates_schema_and_records_latest_migration() {
         let db_path = unique_temp_db_path("meta-db-schema");
         let db = MetaDb::open(&db_path).expect("meta db should open");
 
@@ -186,18 +212,18 @@ mod tests {
             assert_eq!(exists, 1, "expected `{table}` table to exist");
         }
 
-        assert_eq!(db.schema_version().expect("schema version should be readable"), 1);
+        assert_eq!(db.schema_version().expect("schema version should be readable"), 2);
 
         drop(db);
         cleanup_sqlite_files(&db_path);
     }
 
     #[test]
-    fn opening_twice_is_idempotent_for_migrations() {
+    fn opening_twice_is_idempotent_for_all_migrations() {
         let db_path = unique_temp_db_path("meta-db-idempotent");
         {
             let first = MetaDb::open(&db_path).expect("first open should succeed");
-            assert_eq!(first.schema_version().expect("schema version should be readable"), 1);
+            assert_eq!(first.schema_version().expect("schema version should be readable"), 2);
         }
 
         let second = MetaDb::open(&db_path).expect("second open should succeed");
@@ -205,9 +231,37 @@ mod tests {
             .connection()
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
             .expect("schema migration count query should succeed");
-        assert_eq!(migration_rows, 1);
+        assert_eq!(migration_rows, 2);
 
         drop(second);
+        cleanup_sqlite_files(&db_path);
+    }
+
+    #[test]
+    fn existing_v1_schema_is_migrated_to_v2() {
+        let db_path = unique_temp_db_path("meta-db-upgrade-v1-v2");
+        seed_v1_schema(&db_path);
+
+        let db = MetaDb::open(&db_path).expect("meta db should upgrade from v1 to v2");
+        assert_eq!(db.schema_version().expect("schema version should be readable"), 2);
+
+        let lease_table_exists: i64 = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'agent_leases'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("lease table existence query should succeed");
+        assert_eq!(lease_table_exists, 1);
+
+        let migration_rows: i64 = db
+            .connection()
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
+            .expect("schema migration count query should succeed");
+        assert_eq!(migration_rows, 2);
+
+        drop(db);
         cleanup_sqlite_files(&db_path);
     }
 
@@ -228,5 +282,24 @@ mod tests {
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(wal);
         let _ = std::fs::remove_file(shm);
+    }
+
+    fn seed_v1_schema(path: &PathBuf) {
+        let conn = Connection::open(path).expect("v1 seed db should open");
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version     INTEGER PRIMARY KEY,
+                applied_at  TEXT NOT NULL
+            );
+            ",
+        )
+        .expect("schema_migrations should be created");
+        conn.execute_batch(MIGRATION_V1_SQL).expect("v1 schema should be applied");
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (1, datetime('now'))",
+            [],
+        )
+        .expect("v1 migration row should be inserted");
     }
 }
