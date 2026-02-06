@@ -179,6 +179,38 @@ struct DocReadResult {
     content_md: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct DocSectionsParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocSectionsResult {
+    doc_id: Uuid,
+    sections: Vec<Section>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocTreeParams {
+    workspace_id: Uuid,
+    #[serde(default)]
+    path_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocTreeEntry {
+    doc_id: Uuid,
+    path: String,
+    title: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocTreeResult {
+    items: Vec<DocTreeEntry>,
+    total: usize,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 enum DocBundleInclude {
@@ -839,6 +871,58 @@ impl RpcServerState {
         DocReadResult { metadata, sections, content_md: include_content.then_some(content_md) }
     }
 
+    async fn doc_sections(&self, workspace_id: Uuid, doc_id: Uuid) -> DocSectionsResult {
+        let doc = {
+            let mut manager = self.doc_manager.write().await;
+            manager.subscribe_or_create(doc_id)
+        };
+
+        let content = doc.get_text_string("content");
+        let sections = parse_sections(&content);
+
+        {
+            let mut manager = self.doc_manager.write().await;
+            let _ = manager.unsubscribe(doc_id);
+        }
+
+        // Ensure metadata entry exists (mirrors read_doc behavior).
+        {
+            let mut metadata = self.doc_metadata.write().await;
+            metadata
+                .entry((workspace_id, doc_id))
+                .or_insert_with(|| default_metadata(workspace_id, doc_id));
+        }
+
+        DocSectionsResult { doc_id, sections }
+    }
+
+    async fn doc_tree(
+        &self,
+        workspace_id: Uuid,
+        path_prefix: Option<&str>,
+    ) -> DocTreeResult {
+        let metadata = self.doc_metadata.read().await;
+
+        let mut items: Vec<DocTreeEntry> = metadata
+            .values()
+            .filter(|m| m.workspace_id == workspace_id)
+            .filter(|m| match path_prefix {
+                Some(prefix) => m.path.starts_with(prefix),
+                None => true,
+            })
+            .map(|m| DocTreeEntry {
+                doc_id: m.doc_id,
+                path: m.path.clone(),
+                title: m.title.clone(),
+            })
+            .collect();
+
+        items.sort_by(|a, b| a.path.cmp(&b.path));
+        let total = items.len();
+
+        DocTreeResult { items, total }
+    }
+
     async fn bundle_doc(&self, params: DocBundleParams) -> Result<DocBundleResult, String> {
         let doc = {
             let mut manager = self.doc_manager.write().await;
@@ -1046,6 +1130,8 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
         "doc.read" => handle_doc_read(request, state).await,
         "doc.bundle" => handle_doc_bundle(request, state).await,
         "doc.edit_section" => handle_doc_edit_section(request, state).await,
+        "doc.sections" => handle_doc_sections(request, state).await,
+        "doc.tree" => handle_doc_tree(request, state).await,
         "agent.whoami" => handle_agent_whoami(request, state),
         "agent.status" => handle_agent_status(request, state),
         "agent.conflicts" => handle_agent_conflicts(request, state),
@@ -1152,6 +1238,46 @@ async fn handle_doc_edit_section(request: Request, state: &RpcServerState) -> Re
             },
         ),
     }
+}
+
+async fn handle_doc_sections(request: Request, state: &RpcServerState) -> Response {
+    let Some(params) = request.params else {
+        return invalid_params_response(request.id, "doc.sections requires params".to_string());
+    };
+
+    let params: DocSectionsParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return invalid_params_response(
+                request.id,
+                format!("failed to decode doc.sections params: {e}"),
+            );
+        }
+    };
+
+    let result = state.doc_sections(params.workspace_id, params.doc_id).await;
+    Response::success(request.id, json!(result))
+}
+
+async fn handle_doc_tree(request: Request, state: &RpcServerState) -> Response {
+    let Some(params) = request.params else {
+        return invalid_params_response(request.id, "doc.tree requires params".to_string());
+    };
+
+    let params: DocTreeParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return invalid_params_response(
+                request.id,
+                format!("failed to decode doc.tree params: {e}"),
+            );
+        }
+    };
+
+    let result = state
+        .doc_tree(params.workspace_id, params.path_prefix.as_deref())
+        .await;
+    Response::success(request.id, json!(result))
 }
 
 fn handle_agent_whoami(request: Request, state: &RpcServerState) -> Response {
@@ -2532,6 +2658,161 @@ mod tests {
             assert!(response.error.is_none(), "policy {policy_str}: {response:?}");
             assert_eq!(mock.get_policy(), expected);
         }
+    }
+
+    // ── doc.sections tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn doc_sections_returns_section_list() {
+        let state = RpcServerState::default();
+        let ws = Uuid::new_v4();
+        let doc = Uuid::new_v4();
+        state.seed_doc(ws, doc, "guide.md", "Guide", "# Guide\n\n## Setup\n\n## Usage\n").await;
+
+        let request = Request::new(
+            "doc.sections",
+            Some(json!({ "workspace_id": ws, "doc_id": doc })),
+            RequestId::Number(200),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        assert_eq!(result["doc_id"], json!(doc));
+        let sections = result["sections"].as_array().unwrap();
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0]["heading"], "Guide");
+        assert_eq!(sections[1]["heading"], "Setup");
+        assert_eq!(sections[2]["heading"], "Usage");
+    }
+
+    #[tokio::test]
+    async fn doc_sections_returns_empty_for_no_headings() {
+        let state = RpcServerState::default();
+        let ws = Uuid::new_v4();
+        let doc = Uuid::new_v4();
+        state.seed_doc(ws, doc, "plain.md", "Plain", "Just some text without headings.\n").await;
+
+        let request = Request::new(
+            "doc.sections",
+            Some(json!({ "workspace_id": ws, "doc_id": doc })),
+            RequestId::Number(201),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        let sections = result["sections"].as_array().unwrap();
+        assert!(sections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn doc_sections_rejects_missing_params() {
+        let state = RpcServerState::default();
+        let request = Request::new("doc.sections", None, RequestId::Number(202));
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+    }
+
+    // ── doc.tree tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn doc_tree_returns_all_docs_in_workspace() {
+        let state = RpcServerState::default();
+        let ws = Uuid::new_v4();
+        state.seed_doc(ws, Uuid::new_v4(), "docs/api.md", "API", "# API\n").await;
+        state.seed_doc(ws, Uuid::new_v4(), "docs/guide.md", "Guide", "# Guide\n").await;
+        state.seed_doc(ws, Uuid::new_v4(), "readme.md", "README", "# README\n").await;
+
+        let request = Request::new(
+            "doc.tree",
+            Some(json!({ "workspace_id": ws })),
+            RequestId::Number(210),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(result["total"], 3);
+        // Sorted by path.
+        assert_eq!(items[0]["path"], "docs/api.md");
+        assert_eq!(items[1]["path"], "docs/guide.md");
+        assert_eq!(items[2]["path"], "readme.md");
+    }
+
+    #[tokio::test]
+    async fn doc_tree_filters_by_path_prefix() {
+        let state = RpcServerState::default();
+        let ws = Uuid::new_v4();
+        state.seed_doc(ws, Uuid::new_v4(), "docs/api.md", "API", "# API\n").await;
+        state.seed_doc(ws, Uuid::new_v4(), "docs/guide.md", "Guide", "# Guide\n").await;
+        state.seed_doc(ws, Uuid::new_v4(), "readme.md", "README", "# README\n").await;
+
+        let request = Request::new(
+            "doc.tree",
+            Some(json!({ "workspace_id": ws, "path_prefix": "docs/" })),
+            RequestId::Number(211),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(result["total"], 2);
+        assert_eq!(items[0]["path"], "docs/api.md");
+        assert_eq!(items[1]["path"], "docs/guide.md");
+    }
+
+    #[tokio::test]
+    async fn doc_tree_returns_empty_for_unknown_workspace() {
+        let state = RpcServerState::default();
+        let request = Request::new(
+            "doc.tree",
+            Some(json!({ "workspace_id": Uuid::new_v4() })),
+            RequestId::Number(212),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        assert_eq!(result["total"], 0);
+        assert_eq!(result["items"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn doc_tree_excludes_other_workspaces() {
+        let state = RpcServerState::default();
+        let ws_a = Uuid::new_v4();
+        let ws_b = Uuid::new_v4();
+        state.seed_doc(ws_a, Uuid::new_v4(), "a.md", "A", "# A\n").await;
+        state.seed_doc(ws_b, Uuid::new_v4(), "b.md", "B", "# B\n").await;
+
+        let request = Request::new(
+            "doc.tree",
+            Some(json!({ "workspace_id": ws_a })),
+            RequestId::Number(213),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let result = response.result.expect("result");
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["path"], "a.md");
+    }
+
+    #[tokio::test]
+    async fn doc_tree_rejects_missing_params() {
+        let state = RpcServerState::default();
+        let request = Request::new("doc.tree", None, RequestId::Number(214));
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
     }
 
     // ── workspace.list tests ────────────────────────────────────────
