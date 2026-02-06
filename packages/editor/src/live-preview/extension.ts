@@ -259,21 +259,18 @@ function buildInlineEmphasisDecorations(state: EditorState): DecorationSet {
   );
 }
 
-class TaskCheckboxWidget extends Decoration.widget({
-  widget: new (class extends (class {} as { new (): WidgetType }) {})(),
-}).spec.widget.constructor {
-  readonly checked: boolean;
+class TaskCheckboxWidget extends WidgetType {
+  readonly kind = "task-checkbox";
 
-  constructor(checked: boolean) {
+  constructor(readonly checked: boolean) {
     super();
-    this.checked = checked;
   }
 
-  eq(other: TaskCheckboxWidget): boolean {
+  override eq(other: TaskCheckboxWidget): boolean {
     return this.checked === other.checked;
   }
 
-  toDOM(): HTMLElement {
+  override toDOM(): HTMLElement {
     const node = document.createElement("span");
     node.className = "cm-livePreview-task-checkbox";
     node.setAttribute("aria-hidden", "true");
@@ -281,26 +278,26 @@ class TaskCheckboxWidget extends Decoration.widget({
     return node;
   }
 
-  ignoreEvent(): boolean {
+  override ignoreEvent(): boolean {
     return true;
   }
 }
 
-class HorizontalRuleWidget extends Decoration.widget({
-  widget: new (class extends (class {} as { new (): WidgetType }) {})(),
-}).spec.widget.constructor {
-  eq(): boolean {
+class HorizontalRuleWidget extends WidgetType {
+  readonly kind = "horizontal-rule";
+
+  override eq(): boolean {
     return true;
   }
 
-  toDOM(): HTMLElement {
+  override toDOM(): HTMLElement {
     const node = document.createElement("span");
     node.className = "cm-livePreview-hr";
     node.setAttribute("aria-hidden", "true");
     return node;
   }
 
-  ignoreEvent(): boolean {
+  override ignoreEvent(): boolean {
     return true;
   }
 }
@@ -640,6 +637,218 @@ function buildInlineLinkDecorations(state: EditorState): DecorationSet {
   return builder.finish();
 }
 
+type TableAlignment = "center" | "left" | "right";
+
+interface ParsedTableBlock {
+  readonly alignments: readonly TableAlignment[];
+  readonly from: number;
+  readonly headers: readonly string[];
+  readonly nextLine: number;
+  readonly rows: readonly (readonly string[])[];
+  readonly to: number;
+}
+
+function parseTableCells(lineText: string): string[] | null {
+  if (!lineText.includes("|")) {
+    return null;
+  }
+
+  const trimmed = lineText.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const withoutLeading = trimmed.startsWith("|")
+    ? trimmed.slice(1)
+    : trimmed;
+  const withoutEdges = withoutLeading.endsWith("|")
+    ? withoutLeading.slice(0, -1)
+    : withoutLeading;
+  const cells = withoutEdges.split("|").map((cell) => cell.trim());
+
+  if (cells.length === 0 || cells.every((cell) => cell.length === 0)) {
+    return null;
+  }
+
+  return cells;
+}
+
+function parseAlignmentRow(separatorText: string): TableAlignment[] | null {
+  const cells = parseTableCells(separatorText);
+  if (!cells || cells.length === 0) {
+    return null;
+  }
+
+  const alignments: TableAlignment[] = [];
+  for (const cell of cells) {
+    const marker = cell.replace(/\s+/g, "");
+    if (!/^:?-{3,}:?$/.test(marker)) {
+      return null;
+    }
+
+    if (marker.startsWith(":") && marker.endsWith(":")) {
+      alignments.push("center");
+    } else if (marker.endsWith(":")) {
+      alignments.push("right");
+    } else {
+      alignments.push("left");
+    }
+  }
+
+  return alignments;
+}
+
+function normalizeTableRow(row: readonly string[], columnCount: number): string[] {
+  const normalized = row.slice(0, columnCount);
+  while (normalized.length < columnCount) {
+    normalized.push("");
+  }
+  return normalized;
+}
+
+function parseTableBlock(
+  state: EditorState,
+  startLineNumber: number,
+): ParsedTableBlock | null {
+  if (startLineNumber + 1 > state.doc.lines) {
+    return null;
+  }
+
+  const headerLine = state.doc.line(startLineNumber);
+  const separatorLine = state.doc.line(startLineNumber + 1);
+  const headers = parseTableCells(headerLine.text);
+  const alignments = parseAlignmentRow(separatorLine.text);
+  if (!headers || !alignments || headers.length === 0) {
+    return null;
+  }
+
+  const columnCount = Math.min(headers.length, alignments.length);
+  if (columnCount === 0) {
+    return null;
+  }
+
+  const normalizedHeaders = normalizeTableRow(headers, columnCount);
+  const normalizedAlignments = alignments.slice(0, columnCount);
+  const rows: string[][] = [];
+
+  let lineNumber = startLineNumber + 2;
+  let blockEndLine = startLineNumber + 1;
+  while (lineNumber <= state.doc.lines) {
+    const rowLine = state.doc.line(lineNumber);
+    const rowCells = parseTableCells(rowLine.text);
+    if (!rowCells) {
+      break;
+    }
+
+    rows.push(normalizeTableRow(rowCells, columnCount));
+    blockEndLine = lineNumber;
+    lineNumber += 1;
+  }
+
+  const blockEnd = state.doc.line(blockEndLine);
+  return {
+    alignments: normalizedAlignments,
+    from: headerLine.from,
+    headers: normalizedHeaders,
+    nextLine: lineNumber,
+    rows,
+    to: blockEnd.to,
+  };
+}
+
+class InlineTableWidget extends WidgetType {
+  readonly kind = "table";
+
+  constructor(
+    readonly headers: readonly string[],
+    readonly rows: readonly (readonly string[])[],
+    readonly alignments: readonly TableAlignment[],
+  ) {
+    super();
+  }
+
+  eq(other: WidgetType): boolean {
+    return (
+      other instanceof InlineTableWidget &&
+      JSON.stringify(other.headers) === JSON.stringify(this.headers) &&
+      JSON.stringify(other.rows) === JSON.stringify(this.rows) &&
+      JSON.stringify(other.alignments) === JSON.stringify(this.alignments)
+    );
+  }
+
+  toDOM(): HTMLElement {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm-livePreview-tableWrapper";
+
+    const table = document.createElement("table");
+    table.className = "cm-livePreview-table";
+
+    const head = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    this.headers.forEach((header, index) => {
+      const cell = document.createElement("th");
+      cell.className = `cm-livePreview-tableCell cm-livePreview-tableCell-${this.alignments[index]}`;
+      cell.textContent = header;
+      headRow.appendChild(cell);
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
+
+    if (this.rows.length > 0) {
+      const body = document.createElement("tbody");
+      for (const row of this.rows) {
+        const rowElement = document.createElement("tr");
+        row.forEach((value, index) => {
+          const cell = document.createElement("td");
+          cell.className = `cm-livePreview-tableCell cm-livePreview-tableCell-${this.alignments[index]}`;
+          cell.textContent = value;
+          rowElement.appendChild(cell);
+        });
+        body.appendChild(rowElement);
+      }
+      table.appendChild(body);
+    }
+
+    wrapper.appendChild(table);
+    return wrapper;
+  }
+}
+
+function buildTableDecorations(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
+
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; ) {
+    const tableBlock = parseTableBlock(state, lineNumber);
+    if (!tableBlock) {
+      lineNumber += 1;
+      continue;
+    }
+
+    if (rangeTouchesActiveLine(state, activeLine, tableBlock.from, tableBlock.to)) {
+      lineNumber = tableBlock.nextLine;
+      continue;
+    }
+
+    builder.add(
+      tableBlock.from,
+      tableBlock.to,
+      Decoration.replace({
+        block: true,
+        inclusive: false,
+        widget: new InlineTableWidget(
+          tableBlock.headers,
+          tableBlock.rows,
+          tableBlock.alignments,
+        ),
+      }),
+    );
+    lineNumber = tableBlock.nextLine;
+  }
+
+  return builder.finish();
+}
+
 const headingPreviewTheme = EditorView.baseTheme({
   ".cm-livePreview-heading": {
     fontWeight: "600",
@@ -689,6 +898,30 @@ const inlineEmphasisTheme = EditorView.baseTheme({
   },
 });
 
+const taskBlockquoteHrTheme = EditorView.baseTheme({
+  ".cm-livePreview-blockquote-line": {
+    borderLeft: "3px solid #cbd5e1",
+    color: "#475569",
+    paddingLeft: "0.75rem",
+  },
+  ".cm-livePreview-task-checkbox": {
+    color: "#0f766e",
+    display: "inline-block",
+    marginRight: "0.35rem",
+    width: "1.1em",
+  },
+  ".cm-livePreview-task-content": {
+    textDecoration: "none",
+  },
+  ".cm-livePreview-hr": {
+    borderTop: "1px solid #d1d5db",
+    display: "block",
+    height: "0",
+    margin: "0.45em 0",
+    width: "100%",
+  },
+});
+
 const inlineLinkTheme = EditorView.baseTheme({
   ".cm-livePreview-link": {
     color: "#2563eb",
@@ -716,6 +949,36 @@ const inlineLinkTheme = EditorView.baseTheme({
   ".cm-livePreview-imageAlt": {
     color: "#6b7280",
     fontSize: "0.75em",
+  },
+});
+
+const tablePreviewTheme = EditorView.baseTheme({
+  ".cm-livePreview-tableWrapper": {
+    margin: "0.35rem 0",
+    overflowX: "auto",
+  },
+  ".cm-livePreview-table": {
+    borderCollapse: "collapse",
+    fontSize: "0.95em",
+    minWidth: "18rem",
+    width: "100%",
+  },
+  ".cm-livePreview-tableCell": {
+    border: "1px solid #e5e7eb",
+    padding: "0.3rem 0.5rem",
+  },
+  ".cm-livePreview-table th.cm-livePreview-tableCell": {
+    backgroundColor: "#f8fafc",
+    fontWeight: "650",
+  },
+  ".cm-livePreview-tableCell-left": {
+    textAlign: "left",
+  },
+  ".cm-livePreview-tableCell-center": {
+    textAlign: "center",
+  },
+  ".cm-livePreview-tableCell-right": {
+    textAlign: "right",
   },
 });
 
@@ -777,6 +1040,18 @@ export const inlineEmphasisDecorations = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+export const taskBlockquoteHrDecorations = StateField.define<DecorationSet>({
+  create: buildTaskBlockquoteHrDecorations,
+  update(currentDecorations, transaction) {
+    if (!transaction.docChanged && !transaction.selection) {
+      return currentDecorations;
+    }
+
+    return buildTaskBlockquoteHrDecorations(transaction.state);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 export const inlineLinkDecorations = StateField.define<DecorationSet>({
   create: buildInlineLinkDecorations,
   update(currentDecorations, transaction) {
@@ -785,6 +1060,18 @@ export const inlineLinkDecorations = StateField.define<DecorationSet>({
     }
 
     return buildInlineLinkDecorations(transaction.state);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+export const tablePreviewDecorations = StateField.define<DecorationSet>({
+  create: buildTableDecorations,
+  update(currentDecorations, transaction) {
+    if (!transaction.docChanged && !transaction.selection) {
+      return currentDecorations;
+    }
+
+    return buildTableDecorations(transaction.state);
   },
   provide: (field) => EditorView.decorations.from(field),
 });
@@ -800,10 +1087,14 @@ export function livePreview(): Extension {
     markdownTreeField,
     headingPreviewDecorations,
     inlineEmphasisDecorations,
+    taskBlockquoteHrDecorations,
     inlineLinkDecorations,
+    tablePreviewDecorations,
     headingPreviewTheme,
     inlineEmphasisTheme,
+    taskBlockquoteHrTheme,
     inlineLinkTheme,
+    tablePreviewTheme,
   ];
 }
 

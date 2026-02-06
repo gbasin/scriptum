@@ -8,6 +8,8 @@ import {
   inlineLinkDecorations,
   isLineActive,
   livePreview,
+  tablePreviewDecorations,
+  taskBlockquoteHrDecorations,
 } from "./extension.js";
 
 describe("livePreview", () => {
@@ -172,6 +174,52 @@ describe("livePreview", () => {
 
     expect(hasInlineLinkDecorationOnLine(state, 1)).toBe(false);
   });
+
+  it("renders blockquote styling on unfocused lines", () => {
+    const source = ["active", "> quoted line"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    const classes = collectTaskBlockquoteHrClasses(state);
+    expect(classes.has("cm-livePreview-blockquote-line")).toBe(true);
+    expect(hasTaskBlockquoteHrDecorationOnLine(state, 1)).toBe(false);
+    expect(hasTaskBlockquoteHrDecorationOnLine(state, 2)).toBe(true);
+  });
+
+  it("renders task list checkbox widgets on unfocused lines", () => {
+    const source = ["active", "- [ ] todo", "- [x] done"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    const widgets = collectTaskCheckboxStates(state);
+    expect(widgets).toEqual([false, true]);
+  });
+
+  it("renders horizontal rules on unfocused lines and keeps active line raw", () => {
+    const source = ["active", "", "---"].join("\n");
+    const inactiveHrState = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+    expect(collectTaskBlockquoteHrWidgetKinds(inactiveHrState)).toContain(
+      "horizontal-rule",
+    );
+    expect(hasTaskBlockquoteHrDecorationOnLine(inactiveHrState, 3)).toBe(true);
+
+    const activeHrState = EditorState.create({
+      doc: source,
+      selection: { anchor: source.indexOf("---") },
+      extensions: [livePreview()],
+    });
+    expect(hasTaskBlockquoteHrDecorationOnLine(activeHrState, 3)).toBe(false);
+  });
 });
 
 function collectHeadingClasses(state: EditorState): Set<string> {
@@ -274,6 +322,80 @@ function collectInlineWidgetKinds(state: EditorState): string[] {
 function hasInlineLinkDecorationOnLine(state: EditorState, lineNumber: number): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(inlineLinkDecorations);
+  let foundDecoration = false;
+
+  decorations.between(line.from, line.to, () => {
+    foundDecoration = true;
+  });
+
+  return foundDecoration;
+}
+
+function collectTaskBlockquoteHrClasses(state: EditorState): Set<string> {
+  const classes = new Set<string>();
+  const decorations = state.field(taskBlockquoteHrDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const spec = (value as {
+      spec?: { class?: unknown; attributes?: { class?: unknown } };
+    }).spec;
+    const className =
+      typeof spec?.class === "string"
+        ? spec.class
+        : typeof spec?.attributes?.class === "string"
+          ? spec.attributes.class
+          : null;
+
+    if (!className) {
+      return;
+    }
+
+    for (const token of className.split(/\s+/)) {
+      if (token.startsWith("cm-livePreview-")) {
+        classes.add(token);
+      }
+    }
+  });
+
+  return classes;
+}
+
+function collectTaskCheckboxStates(state: EditorState): boolean[] {
+  const states: boolean[] = [];
+  const decorations = state.field(taskBlockquoteHrDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const widget = (value.spec as { widget?: { kind?: unknown; checked?: unknown } }).widget;
+    if (!widget || widget.kind !== "task-checkbox") {
+      return;
+    }
+    states.push(Boolean(widget.checked));
+  });
+
+  return states;
+}
+
+function collectTaskBlockquoteHrWidgetKinds(state: EditorState): string[] {
+  const kinds: string[] = [];
+  const decorations = state.field(taskBlockquoteHrDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
+    if (!widget || typeof widget.kind !== "string") {
+      return;
+    }
+    kinds.push(widget.kind);
+  });
+
+  return kinds;
+}
+
+function hasTaskBlockquoteHrDecorationOnLine(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
+  const line = state.doc.line(lineNumber);
+  const decorations = state.field(taskBlockquoteHrDecorations);
   let foundDecoration = false;
 
   decorations.between(line.from, line.to, () => {
