@@ -51,5 +51,8 @@ tower = "0.5"
 jsonwebtoken = "9"
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "uuid", "chrono", "json"] }
 
+# Unicode normalization
+unicode-normalization = "0.1"
+
 # Internal crates
 scriptum-common = { path = "crates/common" }
