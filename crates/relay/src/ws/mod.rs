@@ -2,6 +2,7 @@ use crate::auth::{
     jwt::JwtAccessTokenService,
     middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
 };
+use crate::awareness::AwarenessStore;
 use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
 use crate::error::{ErrorCode, RelayError};
 use crate::protocol;
@@ -45,88 +46,6 @@ pub struct SyncSessionRouterState {
     ws_base_url: Arc<str>,
 }
 
-// ── Awareness store ─────────────────────────────────────────────────
-
-/// Tracks per-doc awareness (cursors, presence, names) from each session.
-///
-/// Key: (workspace_id, doc_id, session_id)
-/// Value: list of peer awareness entries from that session.
-#[derive(Debug, Clone, Default)]
-pub struct AwarenessStore {
-    state: Arc<RwLock<HashMap<(Uuid, Uuid), HashMap<Uuid, Vec<serde_json::Value>>>>>,
-}
-
-impl AwarenessStore {
-    /// Update awareness for a session's contribution to a doc.
-    pub async fn update(
-        &self,
-        workspace_id: Uuid,
-        doc_id: Uuid,
-        session_id: Uuid,
-        peers: Vec<serde_json::Value>,
-    ) {
-        let mut guard = self.state.write().await;
-        let doc_state = guard.entry((workspace_id, doc_id)).or_default();
-        if peers.is_empty() {
-            doc_state.remove(&session_id);
-        } else {
-            doc_state.insert(session_id, peers);
-        }
-    }
-
-    /// Remove all awareness for a session (on disconnect).
-    pub async fn remove_session(
-        &self,
-        workspace_id: Uuid,
-        doc_ids: &[Uuid],
-        session_id: Uuid,
-    ) {
-        let mut guard = self.state.write().await;
-        for doc_id in doc_ids {
-            if let Some(doc_state) = guard.get_mut(&(workspace_id, *doc_id)) {
-                doc_state.remove(&session_id);
-                if doc_state.is_empty() {
-                    guard.remove(&(workspace_id, *doc_id));
-                }
-            }
-        }
-    }
-
-    /// Get aggregated awareness for a doc (all sessions' peers merged).
-    pub async fn aggregate(
-        &self,
-        workspace_id: Uuid,
-        doc_id: Uuid,
-    ) -> Vec<serde_json::Value> {
-        let guard = self.state.read().await;
-        guard
-            .get(&(workspace_id, doc_id))
-            .map(|doc_state| {
-                doc_state.values().flatten().cloned().collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Get aggregated awareness excluding a specific session (for broadcast).
-    pub async fn aggregate_excluding(
-        &self,
-        workspace_id: Uuid,
-        doc_id: Uuid,
-        exclude_session: Uuid,
-    ) -> Vec<serde_json::Value> {
-        let guard = self.state.read().await;
-        guard
-            .get(&(workspace_id, doc_id))
-            .map(|doc_state| {
-                doc_state
-                    .iter()
-                    .filter(|(sid, _)| **sid != exclude_session)
-                    .flat_map(|(_, peers)| peers.iter().cloned())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
 
 #[derive(Clone)]
 pub enum WorkspaceMembershipStore {
@@ -1322,10 +1241,11 @@ impl SyncSessionStore {
 mod tests {
     use super::{
         handle_awareness_update, handle_hello_message, handle_subscribe_message,
-        handle_yjs_update_message, router, AwarenessStore, CreateSyncSessionResponse,
+        handle_yjs_update_message, router, CreateSyncSessionResponse,
         DocSyncStore, SessionTokenValidation, SyncSessionStore, WorkspaceMembershipStore,
         HEARTBEAT_INTERVAL_MS, HEARTBEAT_TIMEOUT_MS, MAX_FRAME_BYTES,
     };
+    use crate::awareness::AwarenessStore;
     use crate::auth::{jwt::JwtAccessTokenService, middleware::WorkspaceRole};
     use axum::{
         body::{to_bytes, Body},
