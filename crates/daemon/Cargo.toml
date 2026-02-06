@@ -22,4 +22,5 @@ yrs = { workspace = true, features = ["sync"] }
 [dev-dependencies]
 futures-util = "0.3"
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = "0.28"
