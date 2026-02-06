@@ -160,15 +160,15 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 7. ~~Conflict framing~~ **RESOLVED** — "Conflict-free data, coordinated editing" + intent/leases + reconciliation UI
 
 ### Before Phase 3 (blocks git sync)
-8. **Git leader election protocol** → relay-mediated, distributed. Specific protocol (heartbeat/lease/Raft-lite) TBD.
+8. ~~Git leader election protocol~~ **RESOLVED** — lease-based via relay (TTL 60s, auto-renew, failover on expiry)
 
 ### Before Phase 4 (blocks agent integration)
 9. ~~Agent name policy~~ **RESOLVED** — duplicates allowed, shared state
 10. ~~MCP subscribe notification delivery~~ **RESOLVED** — polling with change token, no push over stdio
 
 ### Before Phase 5 (blocks polish)
-11. **Full-text search index** → SQLite FTS5 vs Tantivy
-12. **Backlinks parsing/resolution** → extract links, resolve to doc IDs, update on edit
+11. ~~Full-text search index~~ **RESOLVED** — SQLite FTS5 for V1, Tantivy later if needed
+12. **Backlinks parsing/resolution** → extract links, resolve to doc IDs, update on edit (only remaining pre-implementation design item)
 13. ~~CRDT GC / retention policy~~ **RESOLVED**
 14. ~~Reconciliation UI trigger heuristics~~ **RESOLVED** — >50% section changed by 2+ editors in 30s, inline resolution
 

@@ -2435,60 +2435,135 @@ Playwright configured to retain on failure: trace, screenshot diffs, video (opti
 
 # Part 6: Planning
 
-## Development Phases
+## Phase 0: Integration Spike (Sequential — 1 engineer)
 
-### Phase 0: Integration Spike (Week 0-1)
+Must complete before any parallel work begins. Validates the core architecture.
+
 - [ ] **Critical path validation**: CodeMirror (JS) edits a doc via y-websocket connecting to daemon's local WS server. CLI (Rust) edits the same doc via y-crdt. Both converge. Persistence works across daemon restarts. This spike de-risks the Yjs-in-daemon architecture before building anything else.
 
-### Phase 1: Foundation (Weeks 1-4)
-- [ ] Daemon with local WebSocket server (Yjs-in-daemon model)
-- [ ] Tauri app scaffold with React + CodeMirror 6 editor connecting to daemon via ws://localhost
-- [ ] Build custom Live Preview CM6 extension (hybrid rendering: active line raw markdown, unfocused lines rich text). Reference: codemirror-markdown-hybrid (MIT)
-- [ ] Yjs integration with CodeMirror 6 via y-codemirror.next → y-websocket → daemon
-- [ ] File watcher pipeline (patch-based diff-to-Yjs with always-write-to-disk policy)
+---
+
+## Phases 1-2: Foundation + Collaboration (4 parallel tracks)
+
+### Track A: Daemon (Rust)
+- [ ] CRDT engine (y-crdt Rust bindings)
+- [ ] Local WebSocket server — dual endpoints: `/yjs` (Yjs binary sync protocol) + `/rpc` (JSON-RPC)
+- [ ] Document memory management (hybrid subscribe + LRU, 512MB threshold)
+- [ ] Socket-activated startup (fork+exec, PID file, 5s timeout)
+- [ ] File watcher pipeline (patch-based diff-to-Yjs, always-write-to-disk)
+- [ ] Section parser (pulldown-cmark, ATX headings only, slug-based IDs)
+- [ ] SQLite meta.db (documents_local, agent_sessions, agent_recent_edits, outbox)
+- [ ] WAL + snapshot persistence (fsync before ack, snapshot every 1000 updates)
+- [ ] Intent/lease storage (in-memory + SQLite, TTL-only lifecycle)
+- [ ] Outbox queue (exponential backoff, 10k update / 1GiB bounds)
 - [ ] Golden file tests for diff-to-Yjs edge cases
-- [ ] Fixture mode + test harness API (`__SCRIPTUM_TEST__`) — build this into the scaffold early so UI testing is tight from day one
-- [ ] Playwright smoke suite: 5-10 golden screens (editor core, sidebar, empty states) + ARIA snapshots
-- [ ] Basic workspace management (create, open, list documents)
-- [ ] Markdown rendering + editing (GFM support)
 
-### Phase 2: Collaboration (Weeks 5-8)
-- [ ] WebSocket relay server (Rust/Axum)
-- [ ] y-websocket provider for document sync (daemon ↔ relay)
-- [ ] WebRTC provider (y-webrtc) for P2P optimization (relay is primary)
-- [ ] Presence/awareness (live cursors, online indicators)
-- [ ] Section awareness layer
-- [ ] Intent/lease system (advisory claims, TTL, overlap warnings)
-- [ ] Reconciliation UI (concurrent rewrite detection → side-by-side view)
-- [ ] Dual attribution model (CRDT-level origin tags + server-side update log)
-- [ ] Basic web app (first-class: standalone editing without desktop, relay-backed CRDT state)
+### Track B: Relay Server (Rust/Axum)
+- [ ] Axum scaffold + REST API (auth, workspaces, members, documents)
+- [ ] OAuth 2.1 + PKCE (GitHub provider), JWT access tokens, rotating refresh tokens
+- [ ] WebSocket sync protocol (`scriptum-sync.v1`: hello, subscribe, yjs_update, ack, snapshot, awareness)
+- [ ] Full Y.Doc management in memory (y-crdt Rust, load on subscribe, unload inactive)
+- [ ] Update sequencer (in-memory atomic counter per doc, batch flush to PostgreSQL)
+- [ ] PostgreSQL schema + migrations (all 14 tables)
+- [ ] Snapshot compaction (every 1000 updates or 10 min, retain latest-2)
+- [ ] Awareness aggregation (presence, cursors, lease state)
+- [ ] Dual attribution logging (annotate updates with authenticated user/agent ID)
+- [ ] Error envelope, idempotency keys, conditional writes, CORS
 
-### Phase 3: Git & AI (Weeks 9-12)
-- [ ] Git sync engine (gitoxide or libgit2)
-- [ ] Git leader election protocol (relay-mediated, distributed among daemons)
-- [ ] AI commit message generation (Claude API)
-- [ ] Semantic commit groups (lease release, comment resolve, checkpoint as primary triggers; idle timer as fallback)
+### Track C: Editor Package (TypeScript)
+- [ ] Single monolithic CM6 live preview extension (reference: codemirror-markdown-hybrid)
+- [ ] Per-element rendering: headings, bold/italic, links, images, code blocks, tables, task lists, blockquotes, horizontal rules
+- [ ] Active line = raw markdown, unfocused lines = rich text preview
+- [ ] Collaboration: y-codemirror.next integration, remote cursors with name labels (Google Docs-style)
+- [ ] Selection highlights (per-collaborator color, deterministic from name hash)
+- [ ] Lease badge rendering: `[agent-name editing]` inline badge next to section heading
+- [ ] Reconciliation inline UI: detect trigger (>50% section changed by 2+ editors in 30s), show both versions with Keep A / Keep B / Keep Both
+- [ ] Slash commands: `/table`, `/code`, `/image`, `/callout`
+
+### Track D: App Shell (TypeScript/React)
+- [ ] React scaffold + routing (shared between desktop and web)
+- [ ] Sidebar: Linear-style minimal (workspace dropdown, document tree, tags, agents section)
+- [ ] Tab bar + breadcrumb navigation (Obsidian-style)
+- [ ] Status bar (sync indicator: green/yellow/red, cursor position, active editor count)
+- [ ] Cmd+K command palette (fast navigation)
+- [ ] Zustand state management (Yjs reactive updates → React)
+- [ ] Fixture mode + test harness API (`__SCRIPTUM_TEST__`) — build early
+- [ ] Playwright smoke suite: 5-10 golden screens + ARIA snapshots
+- [ ] Auth flow for web (GitHub OAuth callback, session persistence)
+- [ ] Offline: IndexedDB CRDT store for web, yellow banner, reconnect progress
+
+---
+
+## Phase 3: Git Sync + CLI (3 parallel tracks)
+
+### Track E: Git Sync Worker (Rust, inside daemon)
+- [ ] Shell out to `git` CLI (uses existing user auth — SSH keys, credential helpers, `gh auth`)
+- [ ] Git leader election (lease-based via relay: TTL 60s, auto-renew, failover on expiry)
+- [ ] Semantic commit groups (primary triggers: lease release, comment resolve, checkpoint; idle 30s fallback)
+- [ ] AI commit message generation (Claude Haiku, deterministic fallback)
+- [ ] Co-authored-by trailers from dual attribution model
+- [ ] Redaction policy (disabled | redacted | full) before sending diff to Claude API
 - [ ] `scriptum blame` command (CRDT-based per-line/section attribution)
+
+### Track F: CLI (Rust)
+- [ ] clap CLI scaffold, socket-activated daemon auto-start
+- [ ] All commands → daemon JSON-RPC: `read`, `edit`, `tree`, `sections`, `search`, `diff`, `ls`, `blame`, `claim`, `bundle`
+- [ ] Agent state commands: `whoami`, `status`, `conflicts`, `agents`
+- [ ] `--section` edit semantics: replace section body (heading preserved)
+- [ ] Output format: TTY auto-detect (human text vs JSON)
+- [ ] Exit codes: 0=success, 1=error, 2=usage, 10=daemon down, 11=auth, 12=conflict, 13=network
+- [ ] `scriptum setup claude` — install hooks into `.claude/settings.json`
+
+### Track G: Desktop App (Tauri)
+- [ ] Tauri 2.0 scaffold
+- [ ] Embedded daemon (linked as Rust library, in-process)
+- [ ] Wire up editor package + app shell
+- [ ] Desktop-specific: file dialogs, menu bar, keyboard shortcuts, system tray
+- [ ] Auto-update (Tauri updater with user consent)
 - [ ] Git history browsing in the UI
 
-### Phase 4: Agent Integration (Weeks 13-16)
-- [ ] `scriptum` CLI tool (Rust) - connects to daemon via local WS / Unix socket
-- [ ] CLI commands: `read`, `edit`, `tree`, `sections`, `search`, `diff`, `ls`, `blame`, `claim`, `bundle`
-- [ ] Agent state commands: `whoami`, `status`, `conflicts`, `agents` (inspired by Niwa)
-- [ ] Agent state persistence in daemon (survives context switches; duplicate names share state)
-- [ ] MCP server for Claude Code / Cursor (TypeScript, stdio transport)
-- [ ] MCP tools: `scriptum_read`, `scriptum_edit`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`, `scriptum_claim`, `scriptum_bundle`
-- [ ] Context bundling: `scriptum_bundle(doc, section, include=[...], token_budget=N)`
-- [ ] Claude Code hooks: SessionStart, PreCompact, PreToolUse, PostToolUse, Stop (ported from Niwa)
-- [ ] `scriptum setup claude` command to install hooks
-- [ ] Agent attribution in UI (name badges, contribution indicators)
+---
 
-### Phase 5: Polish & Launch (Weeks 17-20)
-- [ ] Permissions & sharing
-- [ ] Search (full-text across documents — choose FTS5 vs Tantivy)
-- [ ] Tags, backlinks (parsing, resolution, update-on-edit), wiki-style linking
-- [ ] Commenting / inline threads
-- [ ] Character-level time travel UI (scrub/replay, powered by dual attribution + WAL)
+## Phase 4: Agent Integration (2 parallel tracks)
+
+### Track H: MCP Server (TypeScript)
+- [ ] All MCP tools → daemon JSON-RPC: `scriptum_read`, `scriptum_edit`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`, `scriptum_claim`, `scriptum_bundle`
+- [ ] MCP resources: `scriptum://docs/{id}`, `scriptum://docs/{id}/sections`, `scriptum://workspace`, `scriptum://agents`
+- [ ] Polling change token (no push over stdio). `scriptum_status` returns `change_token`.
+- [ ] Agent name from MCP client config (fallback: `mcp-agent`)
+- [ ] stdio transport
+
+### Track I: Agent Polish
+- [ ] Context bundling: `scriptum_bundle` with tiktoken-rs (cl100k_base) token counting, truncation priority: comments → backlinks → children → parents
+- [ ] Claude Code hooks: SessionStart, PreCompact, PreToolUse, PostToolUse, Stop
+- [ ] Agent attribution UI (name badges, contribution indicators, per-section "last edited by")
+- [ ] End-to-end agent flow testing (Claude Code + MCP → daemon → CRDT → file → git)
+
+---
+
+## Phase 5: Polish & Launch (3 parallel tracks)
+
+### Track J: History & Replay
+- [ ] Replay engine: snapshot + sequential WAL replay (max 1000 ops per scrub, ~50ms)
+- [ ] Timeline slider UI (Obsidian-style horizontal slider at bottom of editor)
+- [ ] Author-colored highlights during scrub (collaboration cursor colors)
+- [ ] Diff toggle: "colored authorship" vs "diff from current" views
+- [ ] Restore to version
+
+### Track K: Search + Backlinks
+- [ ] Full-text search index (SQLite FTS5, behind abstraction layer)
+- [ ] Search panel (Cmd+Shift+F, Obsidian-style: file matches, highlighted snippets, filters)
+- [ ] Backlink parsing (`[[wiki-style]]` link extraction from markdown)
+- [ ] Backlink resolution (link text → document ID, update on edit/rename)
+- [ ] Backlinks panel in right sidebar
+
+### Track L: Comments + Permissions + Launch
+- [ ] Comment threads (relay DB + REST endpoints)
+- [ ] Inline comment UI (Notion-style popover anchored to selection, threaded replies, resolve/collapse)
+- [ ] RBAC enforcement (owner/editor/viewer on every route + WebSocket subscribe)
+- [ ] Document ACL overrides
+- [ ] Share links (128-bit token, hashed storage, password-optional, max uses, expiry)
+- [ ] Settings page (tabbed: General, Git Sync, Agents, Permissions, Appearance)
 - [ ] Documentation & onboarding
 - [ ] Performance optimization & load testing
 - [ ] Property-based diff-to-Yjs tests (nightly)
@@ -2509,11 +2584,11 @@ Playwright configured to retain on failure: trace, screenshot diffs, video (opti
 
 6. **Pricing model**: Open-source relay server + hosted option. Per-user? Per-workspace? Free tier?
 
-7. **Full-text search index**: SQLite FTS5 vs Tantivy. Needs decision before Phase 5.
+7. ~~**Full-text search index**~~ **RESOLVED**: SQLite FTS5 for V1 (zero additional deps, already using SQLite via meta.db). Swap to Tantivy later if search quality becomes a user complaint. Search is behind an abstraction layer either way.
 
 8. **Backlinks parsing/resolution**: Table exists but no parsing, link resolution, or update-on-edit logic. Needs design before Phase 5.
 
-9. **Git leader election protocol**: Relay-mediated leader election among daemons is decided, but the specific protocol (heartbeat-based, lease-based, Raft-lite) needs design before Phase 3.
+9. ~~**Git leader election protocol**~~ **RESOLVED**: Lease-based via relay. Daemon acquires a `git-leader` lease from relay (TTL 60s, auto-renew on heartbeat). If lease holder disconnects, lease expires, another daemon claims it. One row in relay DB per workspace. Simple, relay already manages state.
 
 10. ~~**Reconciliation UI trigger heuristics**~~ **RESOLVED**: >50% section changed by 2+ editors within 30s. Inline resolution (Notion-style keep A/B/both).
 
