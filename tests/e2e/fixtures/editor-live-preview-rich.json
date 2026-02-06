@@ -1,0 +1,15 @@
+{
+  "name": "editor-live-preview-rich",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "default",
+    "docContent": "# Active raw heading\n## Inactive rendered heading\n\n- plain list item\n- [ ] task open\n- [x] task done\n\n[Scriptum](https://scriptum.dev) and <https://example.com>\n\n| Name | Role | Score |\n| :--- | ---: | ---: |\n| Ada | Agent | 42 |\n\n```ts\nconst answer = 42;\n```\n",
+    "syncState": "synced",
+    "gitStatus": { "dirty": false, "ahead": 0, "behind": 0 }
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "synced",
+    "remotePeerCount": 0
+  }
+}

@@ -1,0 +1,50 @@
+- complementary "Sidebar":
+  - region "Workspace switcher":
+    - text: ""
+    - combobox "Workspace dropdown":
+      - option "No workspaces yet" [selected]
+    - button "Create new workspace"
+    - list "Workspace list"
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - navigation "Open document tabs":
+      - button "doc-smoke"
+      - button "Close doc-smoke"
+    - navigation "Document breadcrumb": ws-smoke / doc-smoke
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "/# Active raw heading ## Inactive rendered heading - plain list item - \\[ \\] task open - \\[x\\] task done \\[Scriptum\\]\\(https:\\/\\/scriptum\\.dev\\) and <https:\\/\\/example\\.com> \\| Name \\| Role \\| Score \\| \\| :--- \\| ---: \\| ---: \\| \\| Ada \\| Agent \\| \\d+ \\| ```ts const answer = \\d+; ```/"
+      - textbox:
+        - link "Scriptum":
+          - /url: https://scriptum.dev
+        - link "https://example.com":
+          - /url: https://example.com
+        - table:
+          - rowgroup:
+            - row "Name Role Score":
+              - columnheader "Name"
+              - columnheader "Role"
+              - columnheader "Score"
+          - rowgroup:
+            - row /Ada Agent \d+/:
+              - cell "Ada"
+              - cell "Agent"
+              - cell /\d+/
+    - region "Comment threads":
+      - heading "Comments" [level=2]
+      - paragraph: No comments yet.
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - paragraph: No collaborators connected.
+    - status "Sync state": "Sync: Synced"
+    - text: "Ln 1, Col 1 Editors: 1"
+- region "Smoke fixture probe":
+  - heading "Smoke Fixture Probe" [level=2]
+  - paragraph: fixture=default
+  - paragraph: sync=synced
+  - paragraph: cursor=0:0
+  - paragraph: peers=none
+  - paragraph: git=dirty:false ahead:0 behind:0

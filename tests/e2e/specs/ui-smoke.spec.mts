@@ -49,6 +49,7 @@ declare global {
 }
 
 const smokeFixtures = loadSmokeFixtures();
+const LIVE_PREVIEW_FIXTURE_STYLE_ID = "__scriptum-live-preview-stabilize";
 
 test.describe("ui smoke fixtures @smoke", () => {
   for (const fixture of smokeFixtures) {
@@ -72,6 +73,11 @@ test.describe("ui smoke fixtures @smoke", () => {
         expect(stateSnapshot?.remotePeers.length ?? 0).toBe(
           fixture.expectations.remotePeerCount,
         );
+      }
+
+      if (fixture.name === "editor-live-preview-rich") {
+        await stabilizeLivePreviewFixture(page);
+        await assertLivePreviewRawVsRich(page);
       }
 
       await expect(page).toHaveScreenshot(`${fixture.name}.png`, {
@@ -153,4 +159,77 @@ async function applyFixtureState(
     `;
     document.body.appendChild(probe);
   }, state ?? null);
+}
+
+async function stabilizeLivePreviewFixture(page: Page): Promise<void> {
+  await page.evaluate((styleId) => {
+    document.getElementById(styleId)?.remove();
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      [data-testid="editor-host"] {
+        margin-inline: auto;
+        max-width: 760px;
+        width: 100%;
+      }
+      [data-testid="editor-host"] .cm-cursor,
+      [data-testid="editor-host"] .cm-dropCursor {
+        animation: none !important;
+      }
+      [data-testid="editor-host"] .cm-editor,
+      [data-testid="editor-host"] .cm-scroller {
+        scroll-behavior: auto !important;
+      }
+      [data-testid="editor-host"] .cm-content {
+        font-family: "Scriptum Test Mono", "SF Mono", Menlo, Monaco, monospace !important;
+        max-width: 720px;
+        min-width: 0;
+        white-space: pre-wrap;
+      }
+    `.trim();
+    (document.head ?? document.documentElement).appendChild(style);
+  }, LIVE_PREVIEW_FIXTURE_STYLE_ID);
+}
+
+async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
+  const probe = page.getByTestId("editor-host");
+  await expect(probe.locator(".cm-editor")).toBeVisible();
+
+  const snapshot = await probe.locator(".cm-content .cm-line").evaluateAll(
+    (lineNodes) => {
+      const firstLine = lineNodes.at(0)?.textContent?.trim() ?? "";
+      const secondLine = lineNodes.at(1)?.textContent?.trim() ?? "";
+
+      return {
+        firstLine,
+        secondLine,
+        hasCodeBlock: Boolean(
+          document.querySelector('[data-testid="editor-host"] .cm-livePreview-codeBlock'),
+        ),
+        hasHeadingH2: Boolean(
+          document.querySelector('[data-testid="editor-host"] .cm-livePreview-heading-h2'),
+        ),
+        hasLink: Boolean(
+          document.querySelector('[data-testid="editor-host"] .cm-livePreview-link'),
+        ),
+        hasTable: Boolean(
+          document.querySelector('[data-testid="editor-host"] .cm-livePreview-table'),
+        ),
+        hasTaskCheckbox: Boolean(
+          document.querySelector('[data-testid="editor-host"] .cm-livePreview-task-checkbox'),
+        ),
+      };
+    },
+  );
+
+  expect(snapshot.firstLine).toContain("# Active raw heading");
+  expect(snapshot.firstLine.startsWith("# ")).toBe(true);
+  expect(snapshot.secondLine).toContain("Inactive rendered heading");
+  expect(snapshot.secondLine.startsWith("## ")).toBe(false);
+
+  expect(snapshot.hasHeadingH2).toBe(true);
+  expect(snapshot.hasTaskCheckbox).toBe(true);
+  expect(snapshot.hasLink).toBe(true);
+  expect(snapshot.hasTable).toBe(true);
+  expect(snapshot.hasCodeBlock).toBe(true);
 }

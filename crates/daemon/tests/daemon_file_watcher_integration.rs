@@ -103,8 +103,17 @@ fn setup_harness(tmp: &tempfile::TempDir) -> TestHarness {
     // Start pipeline in background.
     let doc_mgr_clone = doc_manager.clone();
     tokio::spawn(async move {
-        run_pipeline(raw_rx, event_tx, doc_mgr_clone, resolver, hash_store, config, shutdown_rx)
-            .await;
+        run_pipeline(
+            raw_rx,
+            event_tx,
+            doc_mgr_clone,
+            resolver,
+            hash_store,
+            None,
+            config,
+            shutdown_rx,
+        )
+        .await;
     });
 
     // Set up RPC state for doc.read testing.

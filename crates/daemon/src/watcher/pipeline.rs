@@ -5,7 +5,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::{Mutex as StdMutex};
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::mpsc;
@@ -21,6 +23,35 @@ use crate::engine::ydoc::YDoc;
 use super::debounce::{DebounceConfig, Debouncer};
 use super::hash;
 use super::{FsEventKind, RawFsEvent};
+
+/// Suppresses watcher events briefly after daemon-initiated writes.
+///
+/// This prevents feedback loops where a remote CRDT update writes to disk and
+/// the watcher immediately re-processes the same content as a local edit.
+#[derive(Debug, Default)]
+pub struct WatcherPauseController {
+    paused_until: StdMutex<std::collections::HashMap<PathBuf, Instant>>,
+}
+
+impl WatcherPauseController {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Pause watcher processing for `path` for `duration`.
+    pub fn pause_path_for(&self, path: &Path, duration: Duration) {
+        let mut guard = self.paused_until.lock().expect("watcher pause lock poisoned");
+        guard.insert(path.to_path_buf(), Instant::now() + duration);
+    }
+
+    /// Returns true when the path is currently paused.
+    pub fn is_paused(&self, path: &Path) -> bool {
+        let now = Instant::now();
+        let mut guard = self.paused_until.lock().expect("watcher pause lock poisoned");
+        guard.retain(|_, until| *until > now);
+        guard.get(path).is_some_and(|until| *until > now)
+    }
+}
 
 /// How we resolve an absolute file path to a document identity.
 pub trait PathResolver: Send + Sync {
@@ -81,6 +112,7 @@ pub async fn run_pipeline(
     doc_manager: Arc<tokio::sync::Mutex<DocManager>>,
     resolver: Arc<dyn PathResolver>,
     hash_store: Arc<dyn HashStore>,
+    pause_controller: Option<Arc<WatcherPauseController>>,
     config: PipelineConfig,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
@@ -118,8 +150,24 @@ pub async fn run_pipeline(
         // Drain any events that have passed the debounce window.
         let ready = debouncer.drain_ready();
         for event in ready {
-            let result =
-                process_event(&event, &doc_manager, resolver.as_ref(), hash_store.as_ref()).await;
+            let result = if let Some(controller) = pause_controller.as_deref() {
+                process_event_with_pause(
+                    &event,
+                    &doc_manager,
+                    resolver.as_ref(),
+                    hash_store.as_ref(),
+                    Some(controller),
+                )
+                .await
+            } else {
+                process_event(
+                    &event,
+                    &doc_manager,
+                    resolver.as_ref(),
+                    hash_store.as_ref(),
+                )
+                .await
+            };
 
             let pipeline_event = match result {
                 Ok(Some(pe)) => pe,
@@ -148,6 +196,23 @@ async fn process_event(
     resolver: &dyn PathResolver,
     hash_store: &dyn HashStore,
 ) -> Result<Option<PipelineEvent>> {
+    process_event_with_pause(event, doc_manager, resolver, hash_store, None).await
+}
+
+async fn process_event_with_pause(
+    event: &RawFsEvent,
+    doc_manager: &Arc<tokio::sync::Mutex<DocManager>>,
+    resolver: &dyn PathResolver,
+    hash_store: &dyn HashStore,
+    pause_controller: Option<&WatcherPauseController>,
+) -> Result<Option<PipelineEvent>> {
+    if matches!(event.kind, FsEventKind::Create | FsEventKind::Modify)
+        && pause_controller.is_some_and(|controller| controller.is_paused(&event.path))
+    {
+        trace!(path = %event.path.display(), "skipping watcher event for paused path");
+        return Ok(None);
+    }
+
     let (workspace_id, doc_id) = resolver
         .resolve(&event.path)
         .ok_or_else(|| anyhow!("path not in any workspace: {}", event.path.display()))?;
@@ -197,6 +262,65 @@ async fn process_event(
             }))
         }
     }
+}
+
+/// Apply a remote CRDT update and materialize it to the markdown file on disk.
+///
+/// Returns `Ok(true)` when the file was written, `Ok(false)` when on-disk
+/// content already matched the CRDT-rendered markdown.
+pub async fn apply_remote_update_to_disk(
+    doc_id: Uuid,
+    path: &Path,
+    update: &[u8],
+    doc_manager: &Arc<tokio::sync::Mutex<DocManager>>,
+    hash_store: &dyn HashStore,
+    pause_controller: Option<&WatcherPauseController>,
+    watcher_pause_duration: Duration,
+) -> Result<bool> {
+    let doc = {
+        let mut manager = doc_manager.lock().await;
+        manager.subscribe_or_create(doc_id)
+    };
+
+    doc.apply_update(update).context("failed to apply remote CRDT update")?;
+    let rendered_markdown = doc.get_text_string("content");
+
+    {
+        let mut manager = doc_manager.lock().await;
+        let _ = manager.unsubscribe(doc_id);
+    }
+
+    let existing_markdown = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to read current markdown file `{}`", path.display())
+            })
+        }
+    };
+
+    if existing_markdown == rendered_markdown {
+        return Ok(false);
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create parent directory `{}` for remote write", parent.display())
+        })?;
+    }
+
+    if let Some(controller) = pause_controller {
+        controller.pause_path_for(path, watcher_pause_duration);
+    }
+
+    std::fs::write(path, rendered_markdown.as_bytes())
+        .with_context(|| format!("failed to write remote markdown to `{}`", path.display()))?;
+
+    let new_hash = hash::sha256_hex(rendered_markdown.as_bytes());
+    hash_store.set_hash(&doc_id.to_string(), &new_hash)?;
+
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -420,6 +544,84 @@ mod tests {
         assert_eq!(stored, Some(hash::sha256_hex(b"content")));
     }
 
+    #[tokio::test]
+    async fn remote_update_writes_markdown_to_disk() {
+        let (ws_id, doc_id, _path, _resolver, hash_store, doc_mgr) = setup();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file_path = tmp.path().join("remote.md");
+        let mut resolver = MockResolver::new(ws_id);
+        resolver.add(file_path.to_str().unwrap(), doc_id);
+        let resolver: Arc<dyn PathResolver> = Arc::new(resolver);
+
+        let remote_doc = YDoc::new();
+        remote_doc.insert_text("content", 0, "# Remote\n\nMerged from relay.\n");
+        let remote_update = remote_doc.encode_state();
+
+        let wrote = apply_remote_update_to_disk(
+            doc_id,
+            &file_path,
+            &remote_update,
+            &doc_mgr,
+            hash_store.as_ref(),
+            None,
+            Duration::from_millis(250),
+        )
+        .await
+        .unwrap();
+        assert!(wrote, "remote update should write markdown file");
+
+        let on_disk = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(on_disk, "# Remote\n\nMerged from relay.\n");
+
+        // A watcher modify event for the same content should be a no-op via hash match.
+        let event = RawFsEvent { kind: FsEventKind::Modify, path: file_path };
+        let result =
+            process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn paused_path_skips_followup_watcher_event_after_remote_write() {
+        let (ws_id, doc_id, _path, _resolver, hash_store, doc_mgr) = setup();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file_path = tmp.path().join("paused.md");
+        let mut resolver = MockResolver::new(ws_id);
+        resolver.add(file_path.to_str().unwrap(), doc_id);
+        let resolver: Arc<dyn PathResolver> = Arc::new(resolver);
+        let pause_controller = WatcherPauseController::new();
+
+        let remote_doc = YDoc::new();
+        remote_doc.insert_text("content", 0, "# Paused\n");
+        let remote_update = remote_doc.encode_state();
+
+        let wrote = apply_remote_update_to_disk(
+            doc_id,
+            &file_path,
+            &remote_update,
+            &doc_mgr,
+            hash_store.as_ref(),
+            Some(&pause_controller),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert!(wrote);
+
+        let event = RawFsEvent { kind: FsEventKind::Modify, path: file_path };
+        let result = process_event_with_pause(
+            &event,
+            &doc_mgr,
+            resolver.as_ref(),
+            hash_store.as_ref(),
+            Some(&pause_controller),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none(), "paused path should suppress watcher feedback event");
+    }
+
     // ── Pipeline integration test ──────────────────────────────────
 
     #[tokio::test]
@@ -458,6 +660,7 @@ mod tests {
                 doc_mgr_clone,
                 resolver_arc,
                 hash_store_arc,
+                None,
                 config,
                 shutdown_rx,
             )
