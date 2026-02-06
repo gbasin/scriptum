@@ -74,6 +74,20 @@ scriptum/
 
 Spec-only phase — no code yet. See [SPEC.md](SPEC.md) for the complete specification.
 
+## Relay Docker Dev
+
+Start local relay + PostgreSQL:
+
+```bash
+docker compose -f docker/compose.yml up --build
+```
+
+Relay health check:
+
+```bash
+curl http://localhost:8080/healthz
+```
+
 ## License
 
 TBD

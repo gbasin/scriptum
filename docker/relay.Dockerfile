@@ -2,7 +2,7 @@
 # Stage 1: Build the Rust binary.
 # Stage 2: Minimal runtime image.
 
-FROM rust:1.83-bookworm AS builder
+FROM rust:1-bookworm AS builder
 
 WORKDIR /app
 
@@ -36,7 +36,7 @@ RUN cargo build --release -p scriptum-relay
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 1001 relay && \
@@ -47,11 +47,14 @@ COPY --from=builder /app/target/release/scriptum-relay /usr/local/bin/scriptum-r
 USER relay
 
 ENV RUST_LOG=info
-ENV LISTEN_ADDR=0.0.0.0:8080
+ENV SCRIPTUM_RELAY_HOST=0.0.0.0
+ENV SCRIPTUM_RELAY_PORT=8080
+ENV SCRIPTUM_RELAY_LOG_FILTER=info
+ENV SCRIPTUM_RELAY_WS_BASE_URL=ws://0.0.0.0:8080
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/usr/local/bin/scriptum-relay", "--health-check"] || exit 1
+    CMD curl --fail --silent http://127.0.0.1:${SCRIPTUM_RELAY_PORT}/healthz > /dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/scriptum-relay"]
