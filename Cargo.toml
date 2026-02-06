@@ -23,6 +23,7 @@ tokio = { version = "1", features = ["full"] }
 # Error handling
 anyhow = "1"
 thiserror = "2"
+clap = { version = "4", features = ["derive"] }
 
 # Logging / tracing
 tracing = "0.1"
