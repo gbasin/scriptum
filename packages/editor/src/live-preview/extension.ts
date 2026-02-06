@@ -1,5 +1,11 @@
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { EditorState, StateField, type Extension } from "@codemirror/state";
+import {
+  EditorState,
+  RangeSetBuilder,
+  StateField,
+  type Extension,
+} from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 import type { Tree } from "@lezer/common";
 
 export interface MarkdownTreeAnalysis {
@@ -7,6 +13,8 @@ export interface MarkdownTreeAnalysis {
   readonly length: number;
   readonly topLevelNodeCount: number;
 }
+
+const HEADING_PATTERN = /^(#{1,6})(\s+)(.*)$/;
 
 function activeLineFromState(state: EditorState): number {
   return state.doc.lineAt(state.selection.main.head).number;
@@ -23,6 +31,106 @@ function countTopLevelNodes(tree: Tree): number {
 
   return count;
 }
+
+function headingLevelFromLine(text: string): number | null {
+  const match = HEADING_PATTERN.exec(text);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].length;
+}
+
+function buildHeadingDecorations(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
+
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    if (lineNumber === activeLine) {
+      continue;
+    }
+
+    const line = state.doc.line(lineNumber);
+    const headingLevel = headingLevelFromLine(line.text);
+    if (!headingLevel) {
+      continue;
+    }
+
+    const match = HEADING_PATTERN.exec(line.text);
+    if (!match) {
+      continue;
+    }
+
+    const markerLength = match[1].length + match[2].length;
+    const contentStart = line.from + markerLength;
+
+    builder.add(
+      line.from,
+      line.from,
+      Decoration.line({
+        class: `cm-livePreview-heading-line cm-livePreview-heading-line-h${headingLevel}`,
+      }),
+    );
+
+    if (markerLength > 0) {
+      builder.add(
+        line.from,
+        contentStart,
+        Decoration.replace({
+          inclusive: false,
+        }),
+      );
+    }
+
+    if (contentStart < line.to) {
+      builder.add(
+        contentStart,
+        line.to,
+        Decoration.mark({
+          class: `cm-livePreview-heading cm-livePreview-heading-h${headingLevel}`,
+        }),
+      );
+    }
+  }
+
+  return builder.finish();
+}
+
+const headingPreviewTheme = EditorView.baseTheme({
+  ".cm-livePreview-heading": {
+    fontWeight: "600",
+    letterSpacing: "-0.01em",
+  },
+  ".cm-livePreview-heading-h1": {
+    fontSize: "1.9em",
+    fontWeight: "700",
+    lineHeight: "1.15",
+  },
+  ".cm-livePreview-heading-h2": {
+    fontSize: "1.55em",
+    fontWeight: "680",
+    lineHeight: "1.2",
+  },
+  ".cm-livePreview-heading-h3": {
+    fontSize: "1.35em",
+    lineHeight: "1.25",
+  },
+  ".cm-livePreview-heading-h4": {
+    fontSize: "1.2em",
+    lineHeight: "1.3",
+  },
+  ".cm-livePreview-heading-h5": {
+    fontSize: "1.05em",
+    lineHeight: "1.35",
+  },
+  ".cm-livePreview-heading-h6": {
+    fontSize: "0.95em",
+    fontWeight: "650",
+    lineHeight: "1.35",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+  },
+});
 
 export function getMarkdownNodes(source: string): MarkdownTreeAnalysis {
   const tree = markdownLanguage.parser.parse(source);
@@ -58,14 +166,33 @@ export const markdownTreeField = StateField.define<MarkdownTreeAnalysis>({
   },
 });
 
+export const headingPreviewDecorations = StateField.define<DecorationSet>({
+  create: buildHeadingDecorations,
+  update(currentDecorations, transaction) {
+    if (!transaction.docChanged && !transaction.selection) {
+      return currentDecorations;
+    }
+
+    return buildHeadingDecorations(transaction.state);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 export function isLineActive(state: EditorState, lineNumber: number): boolean {
   return state.field(activeLines) === lineNumber;
 }
 
 export function livePreview(): Extension {
-  return [markdown(), activeLines, markdownTreeField];
+  return [
+    markdown(),
+    activeLines,
+    markdownTreeField,
+    headingPreviewDecorations,
+    headingPreviewTheme,
+  ];
 }
 
 export const activeLineField = activeLines;
 export const analyzeMarkdownTree = getMarkdownNodes;
 export const livePreviewExtension = livePreview;
+export const parseHeadingLevel = headingLevelFromLine;
