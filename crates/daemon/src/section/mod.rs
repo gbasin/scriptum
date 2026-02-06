@@ -1,3 +1,5 @@
+pub mod overlap;
+
 // Section awareness: heading tree rebuild and diff on CRDT updates.
 //
 // On each document update the markdown is re-parsed into a section tree
