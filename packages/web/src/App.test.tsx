@@ -1,6 +1,11 @@
 import { renderToString } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+
+// Mock RequireAuth to pass through children — auth guard is tested separately.
+vi.mock("./components/RequireAuth", () => ({
+  RequireAuth: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
 import { AppRoutes } from "./App";
 

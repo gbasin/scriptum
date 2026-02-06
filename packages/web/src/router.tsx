@@ -1,5 +1,6 @@
 import { createBrowserRouter, type RouteObject } from "react-router-dom";
 import { Layout } from "./components/Layout";
+import { RequireAuth } from "./components/RequireAuth";
 import { AuthCallbackRoute } from "./routes/auth-callback";
 import { DocumentRoute } from "./routes/document";
 import { IndexRoute } from "./routes/index";
@@ -10,7 +11,11 @@ export const appRoutes: RouteObject[] = [
   { id: "index", path: "/", element: <IndexRoute /> },
   {
     id: "app-layout",
-    element: <Layout />,
+    element: (
+      <RequireAuth>
+        <Layout />
+      </RequireAuth>
+    ),
     children: [
       {
         id: "workspace",
