@@ -1531,6 +1531,91 @@ struct GitConfigureParams {
     policy: GitSyncPolicy,
 }
 
+// ── Workspace RPC handlers ──────────────────────────────────────────
+
+async fn handle_workspace_list(request: Request, state: &RpcServerState) -> Response {
+    let params: WorkspaceListParams = match request.params {
+        Some(p) => match serde_json::from_value(p) {
+            Ok(p) => p,
+            Err(e) => {
+                return invalid_params_response(
+                    request.id,
+                    format!("failed to decode workspace.list params: {e}"),
+                );
+            }
+        },
+        None => WorkspaceListParams { offset: 0, limit: default_workspace_list_limit() },
+    };
+
+    let result = state.workspace_list(params.offset, params.limit).await;
+    Response::success(request.id, json!(result))
+}
+
+async fn handle_workspace_open(request: Request, state: &RpcServerState) -> Response {
+    let Some(params) = request.params else {
+        return invalid_params_response(request.id, "workspace.open requires params".to_string());
+    };
+
+    let params: WorkspaceOpenParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return invalid_params_response(
+                request.id,
+                format!("failed to decode workspace.open params: {e}"),
+            );
+        }
+    };
+
+    match state.workspace_open(params.workspace_id).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => Response::error(
+            request.id,
+            RpcError {
+                code: INTERNAL_ERROR,
+                message: reason,
+                data: None,
+            },
+        ),
+    }
+}
+
+async fn handle_workspace_create(request: Request, state: &RpcServerState) -> Response {
+    let Some(params) = request.params else {
+        return invalid_params_response(
+            request.id,
+            "workspace.create requires params".to_string(),
+        );
+    };
+
+    let params: WorkspaceCreateParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return invalid_params_response(
+                request.id,
+                format!("failed to decode workspace.create params: {e}"),
+            );
+        }
+    };
+
+    match state.workspace_create(params.name, params.root_path).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => {
+            if reason.contains("must not be empty") || reason.contains("must be an absolute path") {
+                invalid_params_response(request.id, reason)
+            } else {
+                Response::error(
+                    request.id,
+                    RpcError {
+                        code: INTERNAL_ERROR,
+                        message: reason,
+                        data: None,
+                    },
+                )
+            }
+        }
+    }
+}
+
 // ── Git RPC handlers ────────────────────────────────────────────────
 
 fn handle_git_status(request: Request, state: &RpcServerState) -> Response {
@@ -2447,5 +2532,191 @@ mod tests {
             assert!(response.error.is_none(), "policy {policy_str}: {response:?}");
             assert_eq!(mock.get_policy(), expected);
         }
+    }
+
+    // ── workspace.list tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn workspace_list_returns_empty_initially() {
+        let state = RpcServerState::default();
+        let request = Request::new("workspace.list", None, RequestId::Number(100));
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        assert_eq!(result["items"].as_array().unwrap().len(), 0);
+        assert_eq!(result["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn workspace_list_returns_seeded_workspaces() {
+        let state = RpcServerState::default();
+        let ws_a = Uuid::new_v4();
+        let ws_b = Uuid::new_v4();
+        state.seed_workspace(ws_a, "Alpha", "/tmp/alpha").await;
+        state.seed_workspace(ws_b, "Beta", "/tmp/beta").await;
+
+        // Seed a doc in workspace A so doc_count is reflected.
+        state.seed_doc(ws_a, Uuid::new_v4(), "notes.md", "Notes", "# Notes\n").await;
+
+        let request = Request::new("workspace.list", None, RequestId::Number(101));
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(result["total"], 2);
+
+        // Sorted by name: Alpha before Beta.
+        assert_eq!(items[0]["name"], "Alpha");
+        assert_eq!(items[0]["doc_count"], 1);
+        assert_eq!(items[1]["name"], "Beta");
+        assert_eq!(items[1]["doc_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn workspace_list_respects_pagination() {
+        let state = RpcServerState::default();
+        for i in 0..5 {
+            state.seed_workspace(Uuid::new_v4(), format!("WS-{i:02}"), format!("/tmp/ws-{i}")).await;
+        }
+
+        let request = Request::new(
+            "workspace.list",
+            Some(json!({ "offset": 2, "limit": 2 })),
+            RequestId::Number(102),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(result["total"], 5);
+    }
+
+    // ── workspace.open tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn workspace_open_returns_workspace_info() {
+        let state = RpcServerState::default();
+        let ws_id = Uuid::new_v4();
+        state.seed_workspace(ws_id, "MyProject", "/projects/my-project").await;
+        state.seed_doc(ws_id, Uuid::new_v4(), "readme.md", "README", "# README\n").await;
+        state.seed_doc(ws_id, Uuid::new_v4(), "notes.md", "Notes", "# Notes\n").await;
+
+        let request = Request::new(
+            "workspace.open",
+            Some(json!({ "workspace_id": ws_id })),
+            RequestId::Number(110),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        assert_eq!(result["workspace_id"], json!(ws_id));
+        assert_eq!(result["name"], "MyProject");
+        assert_eq!(result["root_path"], "/projects/my-project");
+        assert_eq!(result["doc_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn workspace_open_rejects_unknown_id() {
+        let state = RpcServerState::default();
+        let request = Request::new(
+            "workspace.open",
+            Some(json!({ "workspace_id": Uuid::new_v4() })),
+            RequestId::Number(111),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INTERNAL_ERROR);
+        assert!(error.message.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn workspace_open_rejects_missing_params() {
+        let state = RpcServerState::default();
+        let request = Request::new("workspace.open", None, RequestId::Number(112));
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+    }
+
+    // ── workspace.create tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn workspace_create_initializes_directory_and_registers() {
+        let state = RpcServerState::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_str().unwrap().to_string();
+
+        let request = Request::new(
+            "workspace.create",
+            Some(json!({ "name": "New Project", "root_path": root })),
+            RequestId::Number(120),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        assert_eq!(result["name"], "New Project");
+        assert_eq!(result["root_path"], json!(root));
+        assert!(result["workspace_id"].as_str().is_some());
+        assert!(result["created_at"].as_str().is_some());
+
+        // Verify .scriptum/workspace.toml was created on disk.
+        let toml_path = tmp.path().join(".scriptum").join("workspace.toml");
+        assert!(toml_path.exists(), ".scriptum/workspace.toml should exist");
+
+        // Verify workspace is now listed.
+        let list_req = Request::new("workspace.list", None, RequestId::Number(121));
+        let list_resp = dispatch_request(list_req, &state).await;
+        let list_result = list_resp.result.expect("result");
+        assert_eq!(list_result["total"], 1);
+        assert_eq!(list_result["items"][0]["name"], "New Project");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_rejects_empty_name() {
+        let state = RpcServerState::default();
+        let request = Request::new(
+            "workspace.create",
+            Some(json!({ "name": "  ", "root_path": "/tmp/x" })),
+            RequestId::Number(122),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert!(error.data.unwrap()["reason"].as_str().unwrap().contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn workspace_create_rejects_relative_path() {
+        let state = RpcServerState::default();
+        let request = Request::new(
+            "workspace.create",
+            Some(json!({ "name": "Bad", "root_path": "relative/path" })),
+            RequestId::Number(123),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert!(error.data.unwrap()["reason"].as_str().unwrap().contains("absolute path"));
+    }
+
+    #[tokio::test]
+    async fn workspace_create_rejects_missing_params() {
+        let state = RpcServerState::default();
+        let request = Request::new("workspace.create", None, RequestId::Number(124));
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
     }
 }
