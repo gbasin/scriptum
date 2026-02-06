@@ -363,6 +363,74 @@ Core architectural decisions:
 | AI commits | **Claude API** | Generate commit messages from diffs |
 | Scheduling | **Built into daemon** | Timer-based, triggers on save/idle |
 
+### Build & Dev Tooling
+
+**Monorepo Structure**:
+
+| Layer | Tool | Rationale |
+|-------|------|-----------|
+| Orchestration | **Turborepo** | Task caching, dependency-aware builds, parallel execution across TS packages |
+| Rust workspace | **Cargo workspace** | Native Rust multi-crate management (daemon, CLI, relay share code) |
+| TS package manager | **pnpm** | Fast, strict, disk-efficient. Turborepo's recommended pairing |
+
+```
+scriptum/
+├── turbo.json                  # Turborepo pipeline config
+├── Cargo.toml                  # Cargo workspace root
+├── crates/
+│   ├── daemon/                 # scriptumd (Yjs engine, file watcher, WS server)
+│   ├── cli/                    # scriptum CLI
+│   ├── relay/                  # Relay server (Axum)
+│   └── common/                 # Shared Rust: CRDT ops, section parser, protocol types
+├── packages/
+│   ├── web/                    # Web app (React + CodeMirror 6)
+│   ├── desktop/                # Tauri shell (wraps web + daemon)
+│   ├── mcp-server/             # MCP server (TypeScript, stdio)
+│   ├── editor/                 # Shared CM6 extensions (live preview, collaboration)
+│   └── shared/                 # Shared TS types, API client, protocol definitions
+└── .github/workflows/          # CI
+```
+
+**TypeScript Tooling**:
+
+| Concern | Tool | Rationale |
+|---------|------|-----------|
+| Lint + Format | **Biome** | Single Rust-based tool, ~100x faster than ESLint+Prettier. Handles both linting and formatting with minimal config |
+| Test runner | **Vitest** | Vite-native, fast HMR-aware watch mode, Jest-compatible API, native ESM. Already using Vite for build |
+| Type checking | **tsc --noEmit** | Standard TypeScript compiler. Biome handles style, tsc handles types |
+| Bundling | **Vite** | Already chosen for desktop/web. Handles dev server, HMR, production builds |
+
+**Rust Tooling**:
+
+| Concern | Tool | Rationale |
+|---------|------|-----------|
+| Lint | **clippy** | Standard Rust linter, catches common mistakes and non-idiomatic code |
+| Format | **rustfmt** | Standard Rust formatter, zero-config |
+| Test runner | **cargo-nextest** | Parallel test execution, up to 3x faster than `cargo test`. Better output, retries, JUnit XML for CI |
+| Coverage | **cargo-llvm-cov** | Source-based coverage via LLVM instrumentation. Accurate, fast |
+| Audit | **cargo-deny** | License checking, vulnerability scanning, duplicate crate detection |
+
+**CI (GitHub Actions)**:
+
+| Job | Trigger | Contents |
+|-----|---------|----------|
+| **Lint & Format** | Every push/PR | `biome check`, `cargo clippy`, `cargo fmt --check`, `tsc --noEmit` |
+| **Test (TS)** | Every push/PR | `vitest run` across all TS packages (Turborepo cached) |
+| **Test (Rust)** | Every push/PR | `cargo nextest run` across all crates |
+| **Golden file tests** | Every push/PR | Diff-to-Yjs edge case suite |
+| **Property tests** | Nightly | CRDT convergence + diff-to-Yjs randomized scenarios |
+| **Integration** | Every PR | Daemon+watcher, relay+WS, git worker end-to-end |
+| **Security** | Every PR | `cargo deny check`, dependency audit, SAST |
+| **Build artifacts** | Release tags | Tauri desktop (macOS/Linux/Windows), CLI binaries, Docker relay image |
+
+**Release & Versioning**:
+
+| Concern | Tool | Rationale |
+|---------|------|-----------|
+| Changelogs | **changesets** | Per-package versioning, grouped changelogs, PR-based workflow |
+| Desktop distribution | **Tauri updater** | Built-in auto-update with user consent |
+| Relay deployment | **Docker** | Containerized relay server, deployed via CI |
+
 ---
 
 ## System Architecture
@@ -2091,11 +2159,72 @@ Every paging alert must have an associated runbook before going to production.
 | **Golden file** | Diff-to-Yjs edge cases: multi-hunk patches, overlapping edits, Unicode, empty sections, large replacements | Every commit |
 | **Integration** | Daemon+watcher, relay+WS, git worker, snapshot/recovery | Every PR |
 | **Contract** | REST vs OpenAPI spec, WS frame schemas, JSON-RPC, MCP parity | Every PR |
+| **UI visual** | Playwright screenshot baselines for key screens (editor, sidebar, presence, overlaps, sync status). Chromium canonical; strict pixel threshold. | Every PR |
+| **UI structural** | Playwright ARIA snapshots for all views — machine-readable accessibility tree baselines that agents can diff textually | Every PR |
+| **UI layout/token** | Computed geometry + CSS token assertions for critical elements (spacing, typography, design system compliance) | Every PR |
 | **Security** | AuthZ bypass, path traversal, XSS, token replay, brute-force | Every PR + periodic pen test |
 | **Load** | 1000 sessions, 50 updates/sec/doc, 1hr soak | Weekly / pre-release |
 | **Compatibility** | N and N-1 client/server version matrix | Every release |
 
-**Release gate**: No P0/P1 bugs open, contract and security tests at 100%, SLO benchmarks pass.
+**Release gate**: No P0/P1 bugs open, contract and security tests at 100%, SLO benchmarks pass, UI visual + structural baselines pass.
+
+### UI Testing & Visual Regression
+
+The highest-risk UI surfaces in Scriptum (CodeMirror hybrid live preview, presence overlays, CRDT sync states) require more than unit tests — they need visual and structural verification that agents can run in a tight loop.
+
+**Three correctness contracts:**
+
+1. **Visual (pixel regression)**: Screenshot baselines for every key screen state. Playwright `toHaveScreenshot()` against Chromium as the canonical environment. Strict pixel threshold (zero diff for canonical, slightly looser for secondary engines if needed).
+2. **Structural (ARIA tree)**: Playwright ARIA snapshots (`toMatchAriaSnapshot`) for every view. Produces a stable YAML artifact that agents can reason about textually — no image inspection needed. Also enforces accessibility correctness.
+3. **Layout/design tokens**: A small Playwright helper extracts a JSON "layout contract" for critical elements (bounding boxes, font size/weight, key Tailwind CSS variables) and snapshots it with `toMatchSnapshot`. Catches "button shifted 4px" issues without relying purely on pixel diffs, and gives agents an interpretable textual diff.
+
+**Fixture mode (test-only):**
+
+The app exposes a fixture mode (enabled via environment variable, stripped from production builds) that makes UI states fully deterministic:
+
+- Disables all CSS animations/transitions and CodeMirror caret blinking
+- Freezes `Date.now()` and locale/timezone formatting
+- Removes randomness from IDs, avatar colors, relative timestamps ("3 min ago" → fixed)
+- Pins fonts (bundled with app, not OS-dependent) for cross-platform screenshot stability
+- Uses fixed viewport sizes and device scale factors
+
+**Test harness API** (available in fixture mode only):
+
+```typescript
+// Set complex UI states instantly without slow click-paths
+window.__SCRIPTUM_TEST__ = {
+  loadFixture(name: string): void           // Load a named fixture (e.g., 'overlap-warning')
+  setDocContent(markdown: string): void     // Set document content directly
+  setCursor(pos: {line: number, ch: number}): void
+  spawnRemotePeer(peer: {name: string, type: 'human'|'agent', cursor: {line: number, ch: number}, section?: string}): void
+  setGitStatus(status: {dirty: boolean, ahead: number, behind: number, lastCommit?: string}): void
+  setSyncState(state: 'synced'|'offline'|'reconnecting'|'error'): void
+  setCommentThreads(threads: CommentThread[]): void
+}
+```
+
+This is the difference between tests that take 8 minutes and flake, and tests that take 30-90 seconds and are stable enough for agents to rely on.
+
+**High-risk UI surfaces requiring golden baselines:**
+
+1. **CodeMirror hybrid live preview**: Fixtures with representative markdown (headings, lists, tables, links, code, task lists). Assert "active line shows raw markdown" vs "inactive line renders rich" via visual baseline + DOM assertion. Stabilization: disable caret blink, disable smooth scroll, pin monospace font, fix editor width and wrap mode.
+2. **Presence + section overlap overlays**: Spawn remote peers with deterministic colors/positions. Assert cursor labels render correctly, presence list shows correct names/types, section overlap severity changes (info vs warning), attribution badges render correctly (agent vs human).
+3. **Sync/offline state indicators**: Deterministic sync states (offline banner, reconnecting, synced indicator, conflict/overlap warnings, git commit pending/last commit display).
+
+**Tauri desktop testing strategy:**
+
+- **Visual correctness**: Proved on the web build with Playwright (Chromium). Tauri on macOS uses WKWebView which has no WebDriver support — do not attempt macOS desktop visual tests.
+- **Desktop-specific correctness**: WebDriver tests on Windows/Linux for Tauri-only features: file dialogs, daemon IPC wiring, file watcher integration, window/menu shortcuts.
+
+**Agent-friendly test commands:**
+
+| Command | Scope | Target |
+|---------|-------|--------|
+| `pnpm test:ui:smoke` | 10-20 key fixtures + ARIA snapshots (Chromium only) | < 2 min |
+| `pnpm test:ui` | Full Playwright suite (Chromium + optional WebKit) | < 10 min |
+| `pnpm test:ui:update` | Update baselines (only when explicitly invoked) | — |
+
+Playwright configured to retain on failure: trace, screenshot diffs, video (optional). Agents get exact visual diffs to iterate against.
 
 ---
 
@@ -2164,6 +2293,8 @@ Every paging alert must have an associated runbook before going to production.
 - [ ] Yjs integration with CodeMirror 6 via y-codemirror.next → y-websocket → daemon
 - [ ] File watcher pipeline (patch-based diff-to-Yjs with always-write-to-disk policy)
 - [ ] Golden file tests for diff-to-Yjs edge cases
+- [ ] Fixture mode + test harness API (`__SCRIPTUM_TEST__`) — build this into the scaffold early so UI testing is tight from day one
+- [ ] Playwright smoke suite: 5-10 golden screens (editor core, sidebar, empty states) + ARIA snapshots
 - [ ] Basic workspace management (create, open, list documents)
 - [ ] Markdown rendering + editing (GFM support)
 
