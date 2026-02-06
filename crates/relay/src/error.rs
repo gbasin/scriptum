@@ -18,6 +18,7 @@ tokio::task_local! {
 pub enum ErrorCode {
     ValidationFailed,
     AuthInvalidToken,
+    AuthInvalidRedirect,
     AuthForbidden,
     NotFound,
     DocPathConflict,
@@ -35,6 +36,7 @@ impl ErrorCode {
         match self {
             Self::ValidationFailed => "VALIDATION_FAILED",
             Self::AuthInvalidToken => "AUTH_INVALID_TOKEN",
+            Self::AuthInvalidRedirect => "AUTH_INVALID_REDIRECT",
             Self::AuthForbidden => "AUTH_FORBIDDEN",
             Self::NotFound => "NOT_FOUND",
             Self::DocPathConflict => "DOC_PATH_CONFLICT",
@@ -52,6 +54,7 @@ impl ErrorCode {
         match self {
             Self::ValidationFailed => StatusCode::BAD_REQUEST,
             Self::AuthInvalidToken => StatusCode::UNAUTHORIZED,
+            Self::AuthInvalidRedirect => StatusCode::BAD_REQUEST,
             Self::AuthForbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::DocPathConflict => StatusCode::CONFLICT,
@@ -79,6 +82,7 @@ impl ErrorCode {
         match self {
             Self::ValidationFailed => "request validation failed",
             Self::AuthInvalidToken => "invalid authentication token",
+            Self::AuthInvalidRedirect => "invalid oauth redirect URI",
             Self::AuthForbidden => "caller lacks required permission",
             Self::NotFound => "requested resource not found",
             Self::DocPathConflict => "resource already exists",

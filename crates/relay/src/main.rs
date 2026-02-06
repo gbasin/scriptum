@@ -21,10 +21,9 @@ use axum::{
 use std::{sync::Arc, time::Instant};
 use tokio::net::TcpListener;
 use tracing::{error, info};
-use uuid::Uuid;
-use ws::SyncSessionStore;
+use ws::{DocSyncStore, SyncSessionStore};
 
-use crate::auth::jwt::JwtAccessTokenService;
+use crate::auth::{jwt::JwtAccessTokenService, oauth::OAuthState};
 use crate::error::{
     attach_request_id_header, request_id_from_headers_or_generate, with_request_id_scope,
     ErrorCode, RelayError,
@@ -44,11 +43,15 @@ async fn main() -> anyhow::Result<()> {
     let jwt_service =
         Arc::new(JwtAccessTokenService::new(&jwt_secret).context("invalid relay JWT secret")?);
     let session_store = Arc::new(SyncSessionStore::default());
+    let doc_store = Arc::new(DocSyncStore::default());
+    let oauth_state = OAuthState::from_env();
     let ws_base_url =
         std::env::var("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("ws://{addr}"));
     let app = build_router(
         Arc::clone(&jwt_service),
         session_store,
+        doc_store,
+        oauth_state,
         ws_base_url,
         api::build_router_from_env(jwt_service)
             .await
@@ -70,13 +73,16 @@ async fn main() -> anyhow::Result<()> {
 fn build_router(
     jwt_service: Arc<JwtAccessTokenService>,
     session_store: Arc<SyncSessionStore>,
+    doc_store: Arc<DocSyncStore>,
+    oauth_state: OAuthState,
     ws_base_url: String,
     api_router: Router,
 ) -> Router {
     apply_middleware(
         Router::new()
             .route("/healthz", get(healthz))
-            .merge(ws::router(jwt_service, session_store, ws_base_url))
+            .merge(auth::oauth::router(oauth_state))
+            .merge(ws::router(jwt_service, session_store, doc_store, ws_base_url))
             .merge(api_router),
     )
 }
@@ -166,7 +172,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{apply_middleware, build_router, MAX_REQUEST_BODY_BYTES};
-    use crate::{auth::jwt::JwtAccessTokenService, ws::SyncSessionStore};
+    use crate::{
+        auth::{jwt::JwtAccessTokenService, oauth::OAuthState},
+        error::REQUEST_ID_HEADER,
+        ws::{DocSyncStore, SyncSessionStore},
+    };
 
     fn test_router() -> Router {
         let jwt_service = Arc::new(
@@ -174,7 +184,15 @@ mod tests {
                 .expect("test jwt service should initialize"),
         );
         let session_store = Arc::new(SyncSessionStore::default());
-        build_router(jwt_service, session_store, "ws://localhost:8080".to_string(), Router::new())
+        let doc_store = Arc::new(DocSyncStore::default());
+        build_router(
+            jwt_service,
+            session_store,
+            doc_store,
+            OAuthState::from_env(),
+            "ws://localhost:8080".to_string(),
+            Router::new(),
+        )
     }
 
     #[tokio::test]
@@ -205,6 +223,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/panic")
+                    .header(REQUEST_ID_HEADER, "req-panic-123")
                     .body(Body::empty())
                     .expect("panic request should build"),
             )
@@ -212,6 +231,16 @@ mod tests {
             .expect("panic request should return a response");
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.headers().get(REQUEST_ID_HEADER).unwrap(), "req-panic-123");
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("panic response body should read");
+        let parsed: Value =
+            serde_json::from_slice(&body).expect("panic response body should be valid json");
+        assert_eq!(parsed["error"]["code"], "INTERNAL_ERROR");
+        assert_eq!(parsed["error"]["retryable"], true);
+        assert_eq!(parsed["error"]["request_id"], "req-panic-123");
     }
 
     #[tokio::test]
@@ -236,5 +265,40 @@ mod tests {
             .expect("echo request should return a response");
 
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn missing_bearer_auth_uses_structured_error_envelope() {
+        let workspace_id = Uuid::new_v4();
+        let payload = format!(
+            "{{\"protocol\":\"scriptum-sync.v1\",\"client_id\":\"{}\",\"device_id\":\"{}\"}}",
+            Uuid::new_v4(),
+            Uuid::new_v4()
+        );
+
+        let response = test_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/sync-sessions"))
+                    .header(REQUEST_ID_HEADER, "req-auth-123")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload))
+                    .expect("sync-session request should build"),
+            )
+            .await
+            .expect("sync-session request should return response");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers().get(REQUEST_ID_HEADER).unwrap(), "req-auth-123");
+
+        let body =
+            to_bytes(response.into_body(), usize::MAX).await.expect("auth error body should read");
+        let parsed: Value =
+            serde_json::from_slice(&body).expect("auth error body should be valid json");
+        assert_eq!(parsed["error"]["code"], "AUTH_INVALID_TOKEN");
+        assert_eq!(parsed["error"]["retryable"], false);
+        assert_eq!(parsed["error"]["request_id"], "req-auth-123");
+        assert!(parsed["error"]["details"].is_object());
     }
 }

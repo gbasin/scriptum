@@ -18,6 +18,7 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 yrs = { workspace = true }
 chrono = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 tokio-tungstenite = "0.28"

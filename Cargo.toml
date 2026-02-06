@@ -51,6 +51,7 @@ tower = "0.5"
 # Relay auth + database
 jsonwebtoken = "9"
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+url = "2"
 
 # Unicode normalization
 unicode-normalization = "0.1"
