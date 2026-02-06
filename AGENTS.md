@@ -42,7 +42,7 @@ Multiple agents work concurrently in the same worktree and branch.
 - **Only fix what you broke.** If tests fail that are unrelated to your changes, leave them — another agent likely has that in progress.
 - Run tests scoped to your work (e.g. the module you changed), not the full suite, unless asked.
 - If pre-existing failures block your work, create a `br` issue — don't try to fix them.
-- Claim work with `br update <id> --status=in_progress` so other agents can see it's taken.
+- **ALWAYS claim work with `br update <id> --status=in_progress` BEFORE starting.** This is not optional — see Workflow Pattern below.
 - Expect files to change under you. Re-read before editing if your context is stale.
 - Keep commits small and focused — avoid touching files outside your task to minimize merge pain.
 
@@ -104,8 +104,12 @@ br sync --status      # Check sync status
 
 ### Workflow Pattern
 
-1. **Start**: Run `bv --robot-next` to get the highest-impact actionable task
-2. **Claim**: Use `br update <id> --status=in_progress`
+1. **Pick**: Run `bv --robot-next` to get the highest-impact actionable task
+2. **Claim IMMEDIATELY — before reading any code or planning**:
+   ```bash
+   br update <id> --status=in_progress
+   ```
+   ⚠️ **DO NOT proceed until this succeeds.** Other agents run `bv --robot-next` concurrently — if you don't claim first, two agents will pick the same task.
 3. **Work**: Implement the task
 4. **Complete**: Use `br close <id>`
 5. **Sync**: Always run `br sync --flush-only` at session end
