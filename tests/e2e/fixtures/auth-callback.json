@@ -1,0 +1,7 @@
+{
+  "name": "auth-callback",
+  "route": "/auth-callback",
+  "expectations": {
+    "heading": "Auth Callback"
+  }
+}

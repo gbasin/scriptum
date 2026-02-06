@@ -1,0 +1,7 @@
+{
+  "name": "settings-page",
+  "route": "/settings",
+  "expectations": {
+    "heading": "Settings"
+  }
+}

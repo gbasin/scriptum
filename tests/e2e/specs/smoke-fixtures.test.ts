@@ -2,15 +2,36 @@ import { describe, expect, it } from "vitest";
 import { loadSmokeFixtures } from "./smoke-fixtures.mts";
 
 describe("loadSmokeFixtures", () => {
-  it("loads 5-10 fixtures with coverage across editor/sidebar/presence/sync", () => {
+  it("loads 5-10 fixtures with required UI coverage", () => {
     const fixtures = loadSmokeFixtures();
-    const names = fixtures.map((fixture) => fixture.name);
+    const syncStates = new Set(
+      fixtures
+        .map((fixture) => fixture.expectations.syncState)
+        .filter((state): state is NonNullable<typeof state> => state !== undefined),
+    );
 
     expect(fixtures.length).toBeGreaterThanOrEqual(5);
     expect(fixtures.length).toBeLessThanOrEqual(10);
-    expect(names.some((name) => name.includes("workspace"))).toBe(true);
-    expect(names.some((name) => name.includes("editor"))).toBe(true);
-    expect(names.some((name) => name.includes("presence"))).toBe(true);
-    expect(names.some((name) => name.includes("sync"))).toBe(true);
+    expect(
+      fixtures.some(
+        (fixture) =>
+          fixture.route.startsWith("/workspace/") &&
+          fixture.route.includes("/document/"),
+      ),
+    ).toBe(true);
+    expect(
+      fixtures.some(
+        (fixture) =>
+          fixture.route.startsWith("/workspace/") &&
+          !fixture.route.includes("/document/"),
+      ),
+    ).toBe(true);
+    expect(fixtures.some((fixture) => fixture.route === "/settings")).toBe(true);
+    expect(fixtures.some((fixture) => fixture.route === "/auth-callback")).toBe(true);
+
+    expect(syncStates.has("synced")).toBe(true);
+    expect(syncStates.has("offline")).toBe(true);
+    expect(syncStates.has("reconnecting")).toBe(true);
+    expect(syncStates.has("error")).toBe(true);
   });
 });

@@ -80,4 +80,45 @@ function validateFixtureSet(fixtures: SmokeFixture[]): void {
     }
     seenNames.add(fixture.name);
   }
+
+  const hasDocumentEditorFixture = fixtures.some(
+    (fixture) =>
+      fixture.route.startsWith("/workspace/") && fixture.route.includes("/document/"),
+  );
+  if (!hasDocumentEditorFixture) {
+    throw new Error("fixture set must cover a document editor route");
+  }
+
+  const hasSidebarFixture = fixtures.some(
+    (fixture) =>
+      fixture.route.startsWith("/workspace/") && !fixture.route.includes("/document/"),
+  );
+  if (!hasSidebarFixture) {
+    throw new Error("fixture set must cover a workspace sidebar route");
+  }
+
+  if (!fixtures.some((fixture) => fixture.route === "/settings")) {
+    throw new Error("fixture set must include the settings route");
+  }
+
+  if (!fixtures.some((fixture) => fixture.route === "/auth-callback")) {
+    throw new Error("fixture set must include the auth-callback route");
+  }
+
+  const requiredSyncStates: SyncState[] = [
+    "synced",
+    "offline",
+    "reconnecting",
+    "error",
+  ];
+  const availableSyncStates = new Set(
+    fixtures
+      .map((fixture) => fixture.expectations.syncState)
+      .filter((state): state is SyncState => state !== undefined),
+  );
+  for (const state of requiredSyncStates) {
+    if (!availableSyncStates.has(state)) {
+      throw new Error(`fixture set must include sync state: ${state}`);
+    }
+  }
 }
