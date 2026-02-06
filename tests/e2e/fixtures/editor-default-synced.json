@@ -1,0 +1,16 @@
+{
+  "name": "editor-default-synced",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "default",
+    "docContent": "# Smoke Fixture\n\n- first\n- second\n\n`inline`",
+    "cursor": { "line": 2, "ch": 3 },
+    "syncState": "synced",
+    "gitStatus": { "dirty": false, "ahead": 0, "behind": 0 }
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "synced",
+    "remotePeerCount": 0
+  }
+}

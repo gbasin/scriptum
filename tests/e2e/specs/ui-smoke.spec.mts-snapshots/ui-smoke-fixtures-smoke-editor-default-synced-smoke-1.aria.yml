@@ -1,0 +1,20 @@
+- complementary "Sidebar":
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: synced"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Smoke Fixture - first - second `inline`"
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - paragraph: No collaborators connected.
+- region "Smoke fixture probe":
+  - heading "Smoke Fixture Probe" [level=2]
+  - paragraph: fixture=default
+  - paragraph: sync=synced
+  - paragraph: cursor=2:3
+  - paragraph: peers=none
+  - paragraph: git=dirty:false ahead:0 behind:0

@@ -1,0 +1,12 @@
+{
+  "name": "presence-overlap-warning",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "overlap-warning"
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "reconnecting",
+    "remotePeerCount": 1
+  }
+}

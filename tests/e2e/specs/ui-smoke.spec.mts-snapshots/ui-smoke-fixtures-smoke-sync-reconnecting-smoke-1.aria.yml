@@ -1,0 +1,21 @@
+- complementary "Sidebar":
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: reconnecting"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Reconnecting Connection is being restored."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - list:
+        - listitem: Alex (human)
+- region "Smoke fixture probe":
+  - heading "Smoke Fixture Probe" [level=2]
+  - paragraph: fixture=default
+  - paragraph: sync=reconnecting
+  - paragraph: cursor=0:0
+  - paragraph: peers=Alex:human@1:2
+  - paragraph: git=dirty:true ahead:1 behind:1

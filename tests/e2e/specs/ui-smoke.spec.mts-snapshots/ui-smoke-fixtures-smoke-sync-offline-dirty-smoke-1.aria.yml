@@ -1,0 +1,20 @@
+- complementary "Sidebar":
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: offline"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Offline Draft Pending local edits."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - paragraph: No collaborators connected.
+- region "Smoke fixture probe":
+  - heading "Smoke Fixture Probe" [level=2]
+  - paragraph: fixture=default
+  - paragraph: sync=offline
+  - paragraph: cursor=0:0
+  - paragraph: peers=none
+  - paragraph: git=dirty:true ahead:2 behind:0

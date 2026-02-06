@@ -1,0 +1,21 @@
+- complementary "Sidebar":
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: error"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Sync Error Relay auth failed."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - list:
+        - listitem: Relay Agent (agent)
+- region "Smoke fixture probe":
+  - heading "Smoke Fixture Probe" [level=2]
+  - paragraph: fixture=default
+  - paragraph: sync=error
+  - paragraph: cursor=0:0
+  - paragraph: peers=Relay Agent:agent@2:4
+  - paragraph: git=dirty:true ahead:3 behind:0

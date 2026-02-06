@@ -1,0 +1,20 @@
+{
+  "name": "sync-offline-dirty",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "default",
+    "docContent": "# Offline Draft\n\nPending local edits.",
+    "syncState": "offline",
+    "gitStatus": {
+      "dirty": true,
+      "ahead": 2,
+      "behind": 0,
+      "lastCommit": "abc123"
+    }
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "offline",
+    "remotePeerCount": 0
+  }
+}

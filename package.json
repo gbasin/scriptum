@@ -5,11 +5,15 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "test:ui:smoke": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --grep @smoke",
+    "test:ui": "pnpm exec playwright test -c tests/e2e/playwright.config.mts",
+    "test:ui:update": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --update-snapshots",
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check ."
   },
   "devDependencies": {
+    "@playwright/test": "1.57.0",
     "@biomejs/biome": "latest",
     "turbo": "latest",
     "vitest": "latest"

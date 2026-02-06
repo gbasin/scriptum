@@ -1,0 +1,21 @@
+- complementary "Sidebar":
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: reconnecting"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Overlap Warning ## Shared Section Two collaborators are editing this section."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - list:
+        - listitem: Relay Agent (agent)
+- region "Smoke fixture probe":
+  - heading "Smoke Fixture Probe" [level=2]
+  - paragraph: fixture=overlap-warning
+  - paragraph: sync=reconnecting
+  - paragraph: cursor=2:0
+  - paragraph: peers=Relay Agent:agent@2:5
+  - paragraph: git=dirty:true ahead:1 behind:0

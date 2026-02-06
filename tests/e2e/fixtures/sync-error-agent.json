@@ -1,0 +1,28 @@
+{
+  "name": "sync-error-agent",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "default",
+    "docContent": "# Sync Error\n\nRelay auth failed.",
+    "syncState": "error",
+    "gitStatus": {
+      "dirty": true,
+      "ahead": 3,
+      "behind": 0,
+      "lastCommit": "deadbeef"
+    },
+    "remotePeers": [
+      {
+        "name": "Relay Agent",
+        "type": "agent",
+        "cursor": { "line": 2, "ch": 4 },
+        "section": "Sync Error"
+      }
+    ]
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "error",
+    "remotePeerCount": 1
+  }
+}

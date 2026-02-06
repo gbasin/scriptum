@@ -1,0 +1,23 @@
+{
+  "name": "sync-reconnecting",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "default",
+    "docContent": "# Reconnecting\n\nConnection is being restored.",
+    "syncState": "reconnecting",
+    "gitStatus": { "dirty": true, "ahead": 1, "behind": 1 },
+    "remotePeers": [
+      {
+        "name": "Alex",
+        "type": "human",
+        "cursor": { "line": 1, "ch": 2 },
+        "section": "Reconnecting"
+      }
+    ]
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "reconnecting",
+    "remotePeerCount": 1
+  }
+}

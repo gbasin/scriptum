@@ -1,0 +1,4 @@
+- complementary "Sidebar":
+  - heading "Sidebar" [level=2]
+  - paragraph: Navigation and context panels.
+- main "Editor area": "Workspace: ws-smoke"

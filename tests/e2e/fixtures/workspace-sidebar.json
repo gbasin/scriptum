@@ -1,0 +1,7 @@
+{
+  "name": "workspace-sidebar",
+  "route": "/workspace/ws-smoke",
+  "expectations": {
+    "heading": "Workspace: ws-smoke"
+  }
+}
