@@ -5,6 +5,7 @@ mod awareness;
 mod db;
 mod error;
 mod leader;
+mod protocol;
 mod sync;
 mod ws;
 
@@ -44,6 +45,9 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(JwtAccessTokenService::new(&jwt_secret).context("invalid relay JWT secret")?);
     let session_store = Arc::new(SyncSessionStore::default());
     let doc_store = Arc::new(DocSyncStore::default());
+    let membership_store = ws::WorkspaceMembershipStore::from_env()
+        .await
+        .context("failed to initialize websocket workspace membership store")?;
     let oauth_state = OAuthState::from_env();
     let ws_base_url =
         std::env::var("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("ws://{addr}"));
@@ -51,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&jwt_service),
         session_store,
         doc_store,
+        membership_store,
         oauth_state,
         ws_base_url,
         api::build_router_from_env(jwt_service)
@@ -74,6 +79,7 @@ fn build_router(
     jwt_service: Arc<JwtAccessTokenService>,
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    membership_store: ws::WorkspaceMembershipStore,
     oauth_state: OAuthState,
     ws_base_url: String,
     api_router: Router,
@@ -82,7 +88,7 @@ fn build_router(
         Router::new()
             .route("/healthz", get(healthz))
             .merge(auth::oauth::router(oauth_state))
-            .merge(ws::router(jwt_service, session_store, doc_store, ws_base_url))
+            .merge(ws::router(jwt_service, session_store, doc_store, membership_store, ws_base_url))
             .merge(api_router),
     )
 }
@@ -175,7 +181,7 @@ mod tests {
     use crate::{
         auth::{jwt::JwtAccessTokenService, oauth::OAuthState},
         error::REQUEST_ID_HEADER,
-        ws::{DocSyncStore, SyncSessionStore},
+        ws::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore},
     };
 
     fn test_router() -> Router {
@@ -189,6 +195,7 @@ mod tests {
             jwt_service,
             session_store,
             doc_store,
+            WorkspaceMembershipStore::for_tests(),
             OAuthState::from_env(),
             "ws://localhost:8080".to_string(),
             Router::new(),

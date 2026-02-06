@@ -1,8 +1,11 @@
 use crate::auth::{
     jwt::JwtAccessTokenService,
-    middleware::{require_bearer_auth, AuthenticatedUser},
+    middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
 };
+use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
 use crate::error::{ErrorCode, RelayError};
+use crate::protocol;
+use anyhow::Context;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -19,12 +22,13 @@ use scriptum_common::protocol::ws::WsMessage;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    env,
     sync::Arc,
 };
 use tokio::sync::{mpsc, RwLock};
+use tracing::error;
 use uuid::Uuid;
 
-const SUPPORTED_PROTOCOL: &str = "scriptum-sync.v1";
 const HEARTBEAT_INTERVAL_MS: u32 = 15_000;
 const MAX_FRAME_BYTES: u32 = 262_144;
 const SESSION_TOKEN_TTL_MINUTES: i64 = 15;
@@ -34,7 +38,84 @@ const RESUME_TOKEN_TTL_MINUTES: i64 = 10;
 pub struct SyncSessionRouterState {
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    membership_store: WorkspaceMembershipStore,
     ws_base_url: Arc<str>,
+}
+
+#[derive(Clone)]
+pub enum WorkspaceMembershipStore {
+    Postgres(sqlx::PgPool),
+    #[cfg_attr(not(test), allow(dead_code))]
+    Memory(Arc<RwLock<HashMap<(Uuid, Uuid), WorkspaceRole>>>),
+}
+
+impl WorkspaceMembershipStore {
+    pub async fn from_env() -> anyhow::Result<Self> {
+        let database_url = env::var("SCRIPTUM_RELAY_DATABASE_URL")
+            .context("SCRIPTUM_RELAY_DATABASE_URL must be set for WebSocket RBAC")?;
+        let pool = create_pg_pool(&database_url, PoolConfig::from_env())
+            .await
+            .context("failed to initialize relay PostgreSQL pool for websocket RBAC")?;
+        check_pool_health(&pool)
+            .await
+            .context("relay PostgreSQL health check failed for websocket RBAC")?;
+
+        Ok(Self::Postgres(pool))
+    }
+
+    async fn role_for_user(
+        &self,
+        workspace_id: Uuid,
+        user_id: Uuid,
+    ) -> anyhow::Result<Option<WorkspaceRole>> {
+        match self {
+            Self::Postgres(pool) => {
+                let role = sqlx::query_scalar::<_, String>(
+                    r#"
+                    SELECT wm.role
+                    FROM workspace_members AS wm
+                    INNER JOIN workspaces AS w
+                        ON w.id = wm.workspace_id
+                    WHERE wm.workspace_id = $1
+                      AND wm.user_id = $2
+                      AND wm.status = 'active'
+                      AND w.deleted_at IS NULL
+                    "#,
+                )
+                .bind(workspace_id)
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .context("failed to query workspace role for websocket session")?
+                .map(|role| {
+                    WorkspaceRole::from_db_value(&role).ok_or_else(|| {
+                        anyhow::anyhow!("invalid workspace role '{role}' in database")
+                    })
+                })
+                .transpose()?;
+
+                Ok(role)
+            }
+            Self::Memory(store) => Ok(store.read().await.get(&(workspace_id, user_id)).copied()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self::Memory(Arc::new(RwLock::new(HashMap::new())))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn grant_for_tests(
+        &self,
+        workspace_id: Uuid,
+        user_id: Uuid,
+        role: WorkspaceRole,
+    ) {
+        if let Self::Memory(store) = self {
+            store.write().await.insert((workspace_id, user_id), role);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -123,11 +204,13 @@ pub fn router(
     jwt_service: Arc<JwtAccessTokenService>,
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    membership_store: WorkspaceMembershipStore,
     ws_base_url: String,
 ) -> Router {
     let state = SyncSessionRouterState {
         session_store,
         doc_store,
+        membership_store,
         ws_base_url: Arc::<str>::from(ws_base_url),
     };
     let auth_layer = middleware::from_fn_with_state(jwt_service, require_bearer_auth);
@@ -147,13 +230,29 @@ pub async fn create_sync_session(
     State(state): State<SyncSessionRouterState>,
     Json(payload): Json<CreateSyncSessionRequest>,
 ) -> impl IntoResponse {
-    if payload.protocol != SUPPORTED_PROTOCOL {
-        return RelayError::new(ErrorCode::ValidationFailed, "unsupported sync protocol")
-            .into_response();
+    if let Err(upgrade_error) = protocol::require_supported(&payload.protocol) {
+        return upgrade_error.into_response();
     }
 
     if workspace_id != user.workspace_id {
         return RelayError::new(ErrorCode::AuthForbidden, "workspace mismatch").into_response();
+    }
+
+    let role = match state.membership_store.role_for_user(workspace_id, user.user_id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => {
+            return RelayError::new(ErrorCode::AuthForbidden, "caller lacks workspace access")
+                .into_response();
+        }
+        Err(error) => {
+            error!(error = ?error, user_id = %user.user_id, workspace_id = %workspace_id, "failed to evaluate workspace membership");
+            return RelayError::from_code(ErrorCode::InternalError).into_response();
+        }
+    };
+
+    if !role.allows(WorkspaceRole::Viewer) {
+        return RelayError::new(ErrorCode::AuthForbidden, "caller lacks required role")
+            .into_response();
     }
 
     let session_id = Uuid::new_v4();
@@ -209,14 +308,16 @@ pub async fn ws_upgrade(
 
     let session_store = state.session_store.clone();
     let doc_store = state.doc_store.clone();
+    let membership_store = state.membership_store.clone();
     ws.max_frame_size(MAX_FRAME_BYTES as usize).on_upgrade(move |socket| async move {
-        handle_socket(session_store, doc_store, session_id, socket).await;
+        handle_socket(session_store, doc_store, membership_store, session_id, socket).await;
     })
 }
 
 async fn handle_socket(
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    membership_store: WorkspaceMembershipStore,
     session_id: Uuid,
     mut socket: WebSocket,
 ) {
@@ -322,6 +423,7 @@ async fn handle_socket(
                                 match handle_subscribe_message(
                                     &session_store,
                                     &doc_store,
+                                    &membership_store,
                                     session_id,
                                     doc_id,
                                     last_server_seq,
@@ -459,6 +561,7 @@ async fn handle_hello_message(
 async fn handle_subscribe_message(
     session_store: &SyncSessionStore,
     doc_store: &DocSyncStore,
+    membership_store: &WorkspaceMembershipStore,
     session_id: Uuid,
     doc_id: Uuid,
     last_server_seq: Option<i64>,
@@ -482,6 +585,44 @@ async fn handle_subscribe_message(
             doc_id: Some(doc_id),
         });
     };
+
+    if let Some(actor_user_id) = session_store.actor_user_for_session(session_id).await {
+        let role = match membership_store.role_for_user(workspace_id, actor_user_id).await {
+            Ok(Some(role)) => role,
+            Ok(None) => {
+                return Err(WsMessage::Error {
+                    code: ErrorCode::AuthForbidden.as_str().to_string(),
+                    message: "caller lacks workspace access".to_string(),
+                    retryable: false,
+                    doc_id: Some(doc_id),
+                });
+            }
+            Err(error) => {
+                error!(
+                    error = ?error,
+                    session_id = %session_id,
+                    actor_user_id = %actor_user_id,
+                    workspace_id = %workspace_id,
+                    "failed to evaluate websocket subscribe permissions",
+                );
+                return Err(WsMessage::Error {
+                    code: ErrorCode::InternalError.as_str().to_string(),
+                    message: ErrorCode::InternalError.default_message().to_string(),
+                    retryable: true,
+                    doc_id: Some(doc_id),
+                });
+            }
+        };
+
+        if !role.allows(WorkspaceRole::Viewer) {
+            return Err(WsMessage::Error {
+                code: ErrorCode::AuthForbidden.as_str().to_string(),
+                message: "caller lacks required role".to_string(),
+                retryable: false,
+                doc_id: Some(doc_id),
+            });
+        }
+    }
 
     if !session_store.track_subscription(session_id, doc_id).await {
         return Err(WsMessage::Error {
@@ -926,6 +1067,10 @@ impl SyncSessionStore {
         self.sessions.read().await.get(&session_id).map(|session| session.workspace_id)
     }
 
+    async fn actor_user_for_session(&self, session_id: Uuid) -> Option<Uuid> {
+        self.sessions.read().await.get(&session_id).and_then(|session| session.actor_user_id)
+    }
+
     async fn token_for_session(&self, session_id: Uuid) -> Option<String> {
         self.sessions.read().await.get(&session_id).map(|session| session.session_token.clone())
     }
@@ -944,9 +1089,9 @@ mod tests {
     use super::{
         handle_hello_message, handle_subscribe_message, handle_yjs_update_message, router,
         CreateSyncSessionResponse, DocSyncStore, SessionTokenValidation, SyncSessionStore,
-        HEARTBEAT_INTERVAL_MS, MAX_FRAME_BYTES,
+        WorkspaceMembershipStore, HEARTBEAT_INTERVAL_MS, MAX_FRAME_BYTES,
     };
-    use crate::auth::jwt::JwtAccessTokenService;
+    use crate::auth::{jwt::JwtAccessTokenService, middleware::WorkspaceRole};
     use axum::{
         body::{to_bytes, Body},
         http::{header::AUTHORIZATION, Method, Request, StatusCode},
@@ -972,10 +1117,12 @@ mod tests {
             JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
         );
         let session_store = Arc::new(SyncSessionStore::default());
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let app = router(
             jwt_service.clone(),
             session_store,
             Arc::new(DocSyncStore::default()),
+            membership_store,
             "ws://localhost:8080".to_string(),
         );
 
@@ -1001,20 +1148,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_sync_session_requires_workspace_membership() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let workspace_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let app = router(
+            jwt_service.clone(),
+            Arc::new(SyncSessionStore::default()),
+            Arc::new(DocSyncStore::default()),
+            WorkspaceMembershipStore::for_tests(),
+            "ws://localhost:8080".to_string(),
+        );
+        let token = jwt_service
+            .issue_workspace_token(user_id, workspace_id)
+            .expect("access token should be created");
+        let payload = r#"{"protocol":"scriptum-sync.v1","client_id":"11111111-1111-1111-1111-111111111111","device_id":"22222222-2222-2222-2222-222222222222"}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/sync-sessions"))
+                    .header("content-type", "application/json")
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(payload))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should return a response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
     async fn create_sync_session_returns_expected_contract() {
         let jwt_service = Arc::new(
             JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
         );
         let session_store = Arc::new(SyncSessionStore::default());
+        let membership_store = WorkspaceMembershipStore::for_tests();
+        let user_id = Uuid::new_v4();
         let app = router(
             jwt_service.clone(),
             session_store.clone(),
             Arc::new(DocSyncStore::default()),
+            membership_store.clone(),
             "ws://localhost:8080".to_string(),
         );
         let workspace_id = Uuid::new_v4();
+        membership_store.grant_for_tests(workspace_id, user_id, WorkspaceRole::Viewer).await;
         let token = jwt_service
-            .issue_workspace_token(Uuid::new_v4(), workspace_id)
+            .issue_workspace_token(user_id, workspace_id)
             .expect("access token should be created");
         let payload = format!(
             "{{\"protocol\":\"scriptum-sync.v1\",\"client_id\":\"{}\",\"device_id\":\"{}\"}}",
@@ -1195,6 +1381,7 @@ mod tests {
     async fn subscribe_tracks_subscription_and_sends_snapshot_and_updates() {
         let session_store = SyncSessionStore::default();
         let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let session_id = Uuid::new_v4();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
@@ -1234,10 +1421,16 @@ mod tests {
             )
             .await;
 
-        let messages =
-            handle_subscribe_message(&session_store, &doc_store, session_id, doc_id, Some(5))
-                .await
-                .expect("subscribe should succeed");
+        let messages = handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            Some(5),
+        )
+        .await
+        .expect("subscribe should succeed");
 
         assert_eq!(messages.len(), 3);
         match &messages[0] {
@@ -1276,6 +1469,7 @@ mod tests {
     async fn subscribe_rejects_negative_last_server_seq() {
         let session_store = SyncSessionStore::default();
         let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let session_id = Uuid::new_v4();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
@@ -1293,10 +1487,16 @@ mod tests {
             )
             .await;
 
-        let error =
-            handle_subscribe_message(&session_store, &doc_store, session_id, doc_id, Some(-1))
-                .await
-                .expect_err("subscribe should reject negative cursor");
+        let error = handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            Some(-1),
+        )
+        .await
+        .expect_err("subscribe should reject negative cursor");
 
         match error {
             WsMessage::Error { code, doc_id: message_doc_id, .. } => {
@@ -1308,9 +1508,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscribe_requires_workspace_membership_for_authenticated_actor() {
+        let session_store = SyncSessionStore::default();
+        let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
+        let session_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let actor_user_id = Uuid::new_v4();
+
+        session_store
+            .create_session_with_actor(
+                session_id,
+                workspace_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+                Some(actor_user_id),
+                None,
+            )
+            .await;
+
+        let error = handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect_err("subscribe should fail without membership");
+
+        match error {
+            WsMessage::Error { code, doc_id: message_doc_id, .. } => {
+                assert_eq!(code, "AUTH_FORBIDDEN");
+                assert_eq!(message_doc_id, Some(doc_id));
+            }
+            other => panic!("expected forbidden error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn yjs_update_applies_and_returns_ack() {
         let session_store = SyncSessionStore::default();
         let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let session_id = Uuid::new_v4();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
@@ -1329,9 +1575,16 @@ mod tests {
                 Utc::now() + Duration::minutes(10),
             )
             .await;
-        handle_subscribe_message(&session_store, &doc_store, session_id, doc_id, None)
-            .await
-            .expect("subscribe should succeed");
+        handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect("subscribe should succeed");
 
         let result = handle_yjs_update_message(
             &session_store,
@@ -1384,6 +1637,7 @@ mod tests {
     async fn yjs_update_deduplicates_client_update_id() {
         let session_store = SyncSessionStore::default();
         let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let session_id = Uuid::new_v4();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
@@ -1402,9 +1656,16 @@ mod tests {
                 Utc::now() + Duration::minutes(10),
             )
             .await;
-        handle_subscribe_message(&session_store, &doc_store, session_id, doc_id, None)
-            .await
-            .expect("subscribe should succeed");
+        handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect("subscribe should succeed");
 
         handle_yjs_update_message(
             &session_store,
@@ -1448,6 +1709,7 @@ mod tests {
     async fn yjs_update_rejects_future_base_server_seq() {
         let session_store = SyncSessionStore::default();
         let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let session_id = Uuid::new_v4();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
@@ -1464,9 +1726,16 @@ mod tests {
                 Utc::now() + Duration::minutes(10),
             )
             .await;
-        handle_subscribe_message(&session_store, &doc_store, session_id, doc_id, None)
-            .await
-            .expect("subscribe should succeed");
+        handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect("subscribe should succeed");
 
         let error = handle_yjs_update_message(
             &session_store,
@@ -1494,6 +1763,7 @@ mod tests {
     async fn yjs_update_captures_session_attribution_in_update_log() {
         let session_store = SyncSessionStore::default();
         let doc_store = DocSyncStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
         let session_id = Uuid::new_v4();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
@@ -1501,6 +1771,7 @@ mod tests {
         let client_update_id = Uuid::new_v4();
         let actor_user_id = Uuid::new_v4();
         let actor_agent_id = "claude-reviewer".to_string();
+        membership_store.grant_for_tests(workspace_id, actor_user_id, WorkspaceRole::Editor).await;
 
         session_store
             .create_session_with_actor(
@@ -1516,9 +1787,16 @@ mod tests {
                 Some(actor_agent_id.clone()),
             )
             .await;
-        handle_subscribe_message(&session_store, &doc_store, session_id, doc_id, None)
-            .await
-            .expect("subscribe should succeed");
+        handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect("subscribe should succeed");
 
         handle_yjs_update_message(
             &session_store,
@@ -1539,5 +1817,65 @@ mod tests {
             .expect("attribution should be stored");
         assert_eq!(attribution.user_id, Some(actor_user_id));
         assert_eq!(attribution.agent_id, Some(actor_agent_id));
+    }
+
+    #[tokio::test]
+    async fn create_sync_session_rejects_unsupported_protocol_with_upgrade_required() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let session_store = Arc::new(SyncSessionStore::default());
+        let membership_store = WorkspaceMembershipStore::for_tests();
+        let user_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        membership_store.grant_for_tests(workspace_id, user_id, WorkspaceRole::Editor).await;
+
+        let app = router(
+            jwt_service.clone(),
+            session_store,
+            Arc::new(DocSyncStore::default()),
+            membership_store,
+            "ws://localhost:8080".to_string(),
+        );
+
+        let token = jwt_service
+            .issue_workspace_token(user_id, workspace_id)
+            .expect("access token should be created");
+
+        let payload = format!(
+            "{{\"protocol\":\"scriptum-sync.v99\",\"client_id\":\"{}\",\"device_id\":\"{}\"}}",
+            Uuid::new_v4(),
+            Uuid::new_v4()
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/sync-sessions"))
+                    .header("content-type", "application/json")
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(payload))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should return a response");
+
+        assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+
+        let body = response_body(response).await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("response should be valid json");
+        assert_eq!(parsed["error"]["code"], "UPGRADE_REQUIRED");
+        assert_eq!(parsed["error"]["retryable"], false);
+        assert_eq!(
+            parsed["error"]["details"]["requested_version"],
+            "scriptum-sync.v99"
+        );
+        assert!(parsed["error"]["details"]["supported_versions"]
+            .as_array()
+            .expect("supported_versions should be an array")
+            .iter()
+            .any(|v| v == "scriptum-sync.v1"));
     }
 }

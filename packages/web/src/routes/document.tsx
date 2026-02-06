@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { StatusBar } from "../components/StatusBar";
 import type { ScriptumTestState } from "../test/harness";
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
@@ -24,6 +25,7 @@ export function DocumentRoute() {
   const [fixtureState, setFixtureState] = useState<ScriptumTestState>(() =>
     readFixtureState(),
   );
+  const activeEditors = fixtureState.remotePeers.length + 1;
 
   useEffect(() => {
     const api = window.__SCRIPTUM_TEST__;
@@ -40,9 +42,6 @@ export function DocumentRoute() {
       <h1 data-testid="document-title">
         Document: {workspaceId ?? "unknown"}/{documentId ?? "unknown"}
       </h1>
-      <p aria-label="Sync state" data-testid="sync-state" role="status">
-        Sync: {fixtureState.syncState}
-      </p>
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>
@@ -63,6 +62,12 @@ export function DocumentRoute() {
           </ul>
         )}
       </section>
+
+      <StatusBar
+        syncState={fixtureState.syncState}
+        cursor={fixtureState.cursor}
+        activeEditors={activeEditors}
+      />
     </section>
   );
 }

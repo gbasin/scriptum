@@ -1,16 +1,23 @@
 use std::{collections::HashMap, env, sync::Arc};
 
 use anyhow::{Context, Result};
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Argon2,
+};
 use axum::{
-    extract::{Extension, Json, Path, Query, State},
+    extract::{Extension, FromRequestParts, Json, Path, Query, Request, State},
     http::{header::IF_MATCH, HeaderMap, StatusCode},
-    middleware,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::RngCore;
 use scriptum_common::types::Workspace;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{
     types::chrono::{DateTime, Utc},
     PgPool,
@@ -21,7 +28,7 @@ use uuid::Uuid;
 use crate::{
     auth::{
         jwt::JwtAccessTokenService,
-        middleware::{require_bearer_auth, AuthenticatedUser},
+        middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
     },
     db::pool::{check_pool_health, create_pg_pool, PoolConfig},
     error::{ErrorCode, RelayError},
@@ -75,6 +82,7 @@ impl WorkspaceRecord {
 struct MemoryWorkspaceStore {
     workspaces: HashMap<Uuid, MemoryWorkspace>,
     memberships: HashMap<(Uuid, Uuid), MemoryMembership>,
+    share_links: HashMap<Uuid, MemoryShareLink>,
 }
 
 #[derive(Clone)]
@@ -93,6 +101,23 @@ struct MemoryMembership {
     status: String,
 }
 
+#[derive(Clone)]
+struct MemoryShareLink {
+    id: Uuid,
+    workspace_id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    token_hash: Vec<u8>,
+    password_hash: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    use_count: i32,
+    disabled: bool,
+    created_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Deserialize, Serialize)]
 struct CreateWorkspaceRequest {
     name: String,
@@ -103,6 +128,16 @@ struct CreateWorkspaceRequest {
 struct UpdateWorkspaceRequest {
     name: Option<String>,
     slug: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct CreateShareLinkRequest {
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    password: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +157,26 @@ struct WorkspacesPageEnvelope {
     next_cursor: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ShareLinkEnvelope {
+    share_link: ShareLink,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ShareLink {
+    id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    use_count: i32,
+    disabled: bool,
+    created_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+    url_once: String,
+}
+
 #[derive(Clone)]
 struct WorkspaceCursor {
     created_at: DateTime<Utc>,
@@ -133,6 +188,38 @@ struct WorkspacePage {
     next_cursor: Option<String>,
 }
 
+#[derive(Clone)]
+struct ShareLinkRecord {
+    id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    use_count: i32,
+    disabled: bool,
+    created_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+impl ShareLinkRecord {
+    fn into_share_link(self, url_once: String) -> ShareLink {
+        ShareLink {
+            id: self.id,
+            target_type: self.target_type,
+            target_id: self.target_id,
+            permission: self.permission,
+            expires_at: self.expires_at,
+            max_uses: self.max_uses,
+            use_count: self.use_count,
+            disabled: self.disabled,
+            created_at: self.created_at,
+            revoked_at: self.revoked_at,
+            url_once,
+        }
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct WorkspaceRow {
     id: Uuid,
@@ -141,6 +228,37 @@ struct WorkspaceRow {
     role: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ShareLinkRow {
+    id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    use_count: i32,
+    disabled: bool,
+    created_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+impl From<ShareLinkRow> for ShareLinkRecord {
+    fn from(value: ShareLinkRow) -> Self {
+        Self {
+            id: value.id,
+            target_type: value.target_type,
+            target_id: value.target_id,
+            permission: value.permission,
+            expires_at: value.expires_at,
+            max_uses: value.max_uses,
+            use_count: value.use_count,
+            disabled: value.disabled,
+            created_at: value.created_at,
+            revoked_at: value.revoked_at,
+        }
+    }
 }
 
 impl From<WorkspaceRow> for WorkspaceRecord {
@@ -240,10 +358,21 @@ fn build_router_with_store(
     jwt_service: Arc<JwtAccessTokenService>,
 ) -> Router {
     let state = ApiState { store };
+    let viewer_role_layer =
+        middleware::from_fn_with_state(state.clone(), require_workspace_viewer_role);
+    let editor_role_layer =
+        middleware::from_fn_with_state(state.clone(), require_workspace_editor_role);
+    let owner_role_layer =
+        middleware::from_fn_with_state(state.clone(), require_workspace_owner_role);
 
     Router::new()
         .route("/v1/workspaces", post(create_workspace).get(list_workspaces))
-        .route("/v1/workspaces/{id}", get(get_workspace).patch(update_workspace))
+        .route("/v1/workspaces/{id}", get(get_workspace).route_layer(viewer_role_layer))
+        .route("/v1/workspaces/{id}", patch(update_workspace).route_layer(owner_role_layer))
+        .route(
+            "/v1/workspaces/{id}/share-links",
+            post(create_share_link).route_layer(editor_role_layer),
+        )
         .with_state(state)
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
 }
@@ -318,6 +447,105 @@ async fn update_workspace(
     Ok(Json(WorkspaceEnvelope { workspace }))
 }
 
+async fn create_share_link(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(workspace_id): Path<Uuid>,
+    Json(mut payload): Json<CreateShareLinkRequest>,
+) -> Result<(StatusCode, Json<ShareLinkEnvelope>), ApiError> {
+    validate_share_link_request(workspace_id, &payload)?;
+
+    if payload.password.as_deref().is_some_and(|value| value.trim().is_empty()) {
+        payload.password = None;
+    }
+
+    let token = generate_share_link_token();
+    let token_hash = hash_share_link_token(&token);
+    let password_hash = payload.password.as_deref().map(hash_share_link_password).transpose()?;
+    let share_link = state
+        .store
+        .create_share_link(workspace_id, user.user_id, payload, token_hash, password_hash)
+        .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ShareLinkEnvelope {
+            share_link: share_link.into_share_link(build_share_link_url(&token)),
+        }),
+    ))
+}
+
+async fn require_workspace_viewer_role(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    request: Request,
+    next: Next,
+) -> Response {
+    require_workspace_role(state, user, request, next, WorkspaceRole::Viewer).await
+}
+
+async fn require_workspace_editor_role(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    request: Request,
+    next: Next,
+) -> Response {
+    require_workspace_role(state, user, request, next, WorkspaceRole::Editor).await
+}
+
+async fn require_workspace_owner_role(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    request: Request,
+    next: Next,
+) -> Response {
+    require_workspace_role(state, user, request, next, WorkspaceRole::Owner).await
+}
+
+async fn require_workspace_role(
+    state: ApiState,
+    user: AuthenticatedUser,
+    request: Request,
+    next: Next,
+    required_role: WorkspaceRole,
+) -> Response {
+    let (mut request, workspace_id) = match extract_workspace_id(request).await {
+        Ok(result) => result,
+        Err(error) => return error.into_response(),
+    };
+
+    let role = match state.store.workspace_role_for_user(user.user_id, workspace_id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => {
+            return ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access")
+                .into_response();
+        }
+        Err(error) => return error.into_response(),
+    };
+
+    if !role.allows(required_role) {
+        return ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks required role").into_response();
+    }
+
+    request.extensions_mut().insert(role);
+    next.run(request).await
+}
+
+async fn extract_workspace_id(request: Request) -> Result<(Request, Uuid), ApiError> {
+    let (mut parts, body) = request.into_parts();
+    let Path(path_params) = Path::<HashMap<String, String>>::from_request_parts(&mut parts, &())
+        .await
+        .map_err(|_| ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access"))?;
+    let raw_workspace_id = path_params
+        .get("workspace_id")
+        .or_else(|| path_params.get("id"))
+        .ok_or_else(|| ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access"))?;
+    let workspace_id = Uuid::parse_str(raw_workspace_id)
+        .map_err(|_| ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access"))?;
+
+    Ok((Request::from_parts(parts, body), workspace_id))
+}
+
 impl WorkspaceStore {
     async fn create_workspace(
         &self,
@@ -351,6 +579,53 @@ impl WorkspaceStore {
         match self {
             Self::Postgres(pool) => get_workspace_pg(pool, user_id, workspace_id).await,
             Self::Memory(store) => get_workspace_memory(store, user_id, workspace_id).await,
+        }
+    }
+
+    async fn workspace_role_for_user(
+        &self,
+        user_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<WorkspaceRole>, ApiError> {
+        match self {
+            Self::Postgres(pool) => workspace_role_for_user_pg(pool, user_id, workspace_id).await,
+            Self::Memory(store) => {
+                workspace_role_for_user_memory(store, user_id, workspace_id).await
+            }
+        }
+    }
+
+    async fn create_share_link(
+        &self,
+        workspace_id: Uuid,
+        user_id: Uuid,
+        payload: CreateShareLinkRequest,
+        token_hash: Vec<u8>,
+        password_hash: Option<String>,
+    ) -> Result<ShareLinkRecord, ApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                create_share_link_pg(
+                    pool,
+                    workspace_id,
+                    user_id,
+                    payload,
+                    token_hash,
+                    password_hash,
+                )
+                .await
+            }
+            Self::Memory(store) => {
+                create_share_link_memory(
+                    store,
+                    workspace_id,
+                    user_id,
+                    payload,
+                    token_hash,
+                    password_hash,
+                )
+                .await
+            }
         }
     }
 
@@ -467,6 +742,89 @@ async fn get_workspace_pg(
         Some(row) => Ok(row.into()),
         None => resolve_missing_workspace_access(pool, workspace_id).await,
     }
+}
+
+async fn workspace_role_for_user_pg(
+    pool: &PgPool,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, ApiError> {
+    let role = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT wm.role
+        FROM workspace_members AS wm
+        INNER JOIN workspaces AS w
+            ON w.id = wm.workspace_id
+        WHERE wm.workspace_id = $1
+          AND wm.user_id = $2
+          AND wm.status = 'active'
+          AND w.deleted_at IS NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .map(|role| {
+        WorkspaceRole::from_db_value(&role).ok_or_else(|| {
+            ApiError::internal(anyhow::anyhow!("invalid workspace role '{role}' in database"))
+        })
+    })
+    .transpose()?;
+
+    Ok(role)
+}
+
+async fn create_share_link_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    payload: CreateShareLinkRequest,
+    token_hash: Vec<u8>,
+    password_hash: Option<String>,
+) -> Result<ShareLinkRecord, ApiError> {
+    let row = sqlx::query_as::<_, ShareLinkRow>(
+        r#"
+        INSERT INTO share_links (
+            workspace_id,
+            target_type,
+            target_id,
+            permission,
+            token_hash,
+            password_hash,
+            expires_at,
+            max_uses,
+            created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING
+            id,
+            target_type,
+            target_id,
+            permission,
+            expires_at,
+            max_uses,
+            use_count,
+            disabled,
+            created_at,
+            revoked_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(payload.target_type)
+    .bind(payload.target_id)
+    .bind(payload.permission)
+    .bind(token_hash)
+    .bind(password_hash)
+    .bind(payload.expires_at)
+    .bind(payload.max_uses)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(row.into())
 }
 
 async fn update_workspace_pg(
@@ -690,6 +1048,92 @@ async fn get_workspace_memory(
     })
 }
 
+async fn workspace_role_for_user_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, ApiError> {
+    let state = store.read().await;
+    let Some(workspace) = state.workspaces.get(&workspace_id) else {
+        return Ok(None);
+    };
+    if workspace.deleted_at.is_some() {
+        return Ok(None);
+    }
+
+    let Some(member) = state.memberships.get(&(workspace_id, user_id)) else {
+        return Ok(None);
+    };
+    if member.status != "active" {
+        return Ok(None);
+    }
+
+    let role = WorkspaceRole::from_db_value(&member.role).ok_or_else(|| {
+        ApiError::internal(anyhow::anyhow!(
+            "invalid workspace role '{}' in memory store",
+            member.role
+        ))
+    })?;
+
+    Ok(Some(role))
+}
+
+async fn create_share_link_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    payload: CreateShareLinkRequest,
+    token_hash: Vec<u8>,
+    password_hash: Option<String>,
+) -> Result<ShareLinkRecord, ApiError> {
+    let mut state = store.write().await;
+    let Some(workspace) = state.workspaces.get(&workspace_id) else {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    };
+    if workspace.deleted_at.is_some() {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    }
+
+    let Some(member) = state.memberships.get(&(workspace_id, user_id)) else {
+        return Err(ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access"));
+    };
+    if member.status != "active" {
+        return Err(ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access"));
+    }
+
+    let share_link_id = Uuid::new_v4();
+    let now = Utc::now();
+    let share_link = MemoryShareLink {
+        id: share_link_id,
+        workspace_id,
+        target_type: payload.target_type,
+        target_id: payload.target_id,
+        permission: payload.permission,
+        token_hash,
+        password_hash,
+        expires_at: payload.expires_at,
+        max_uses: payload.max_uses,
+        use_count: 0,
+        disabled: false,
+        created_at: now,
+        revoked_at: None,
+    };
+    state.share_links.insert(share_link_id, share_link.clone());
+
+    Ok(ShareLinkRecord {
+        id: share_link.id,
+        target_type: share_link.target_type,
+        target_id: share_link.target_id,
+        permission: share_link.permission,
+        expires_at: share_link.expires_at,
+        max_uses: share_link.max_uses,
+        use_count: share_link.use_count,
+        disabled: share_link.disabled,
+        created_at: share_link.created_at,
+        revoked_at: share_link.revoked_at,
+    })
+}
+
 async fn update_workspace_memory(
     store: &Arc<RwLock<MemoryWorkspaceStore>>,
     user_id: Uuid,
@@ -843,6 +1287,62 @@ fn validate_slug(slug: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn validate_share_link_request(
+    workspace_id: Uuid,
+    payload: &CreateShareLinkRequest,
+) -> Result<(), ApiError> {
+    if payload.target_type != "workspace" && payload.target_type != "document" {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "target_type must be one of: workspace, document",
+        ));
+    }
+    if payload.permission != "view" && payload.permission != "edit" {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "permission must be one of: view, edit",
+        ));
+    }
+    if payload.target_type == "workspace" && payload.target_id != workspace_id {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "workspace share links must target the workspace id from the route",
+        ));
+    }
+    if payload.max_uses.is_some_and(|value| value <= 0) {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "max_uses must be greater than 0"));
+    }
+    if payload.expires_at.is_some_and(|value| value <= Utc::now()) {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "expires_at must be in the future"));
+    }
+
+    Ok(())
+}
+
+fn generate_share_link_token() -> String {
+    let mut bytes = [0_u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn hash_share_link_token(token: &str) -> Vec<u8> {
+    Sha256::digest(token.as_bytes()).to_vec()
+}
+
+fn hash_share_link_password(password: &str) -> Result<String, ApiError> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|error| ApiError::internal(anyhow::anyhow!(error.to_string())))
+}
+
+fn build_share_link_url(token: &str) -> String {
+    let base = env::var("SCRIPTUM_RELAY_SHARE_LINK_BASE_URL")
+        .unwrap_or_else(|_| "https://scriptum.local/share".to_owned());
+    format!("{}/{}", base.trim_end_matches('/'), token)
+}
+
 fn map_sqlx_error(error: sqlx::Error) -> ApiError {
     if let sqlx::Error::Database(database_error) = &error {
         if database_error.code().as_deref() == Some("23505") {
@@ -856,7 +1356,8 @@ fn map_sqlx_error(error: sqlx::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_router_with_store, CreateWorkspaceRequest, WorkspaceEnvelope, WorkspaceStore,
+        build_router_with_store, CreateWorkspaceRequest, MemoryMembership, MemoryWorkspace,
+        MemoryWorkspaceStore, ShareLinkEnvelope, WorkspaceEnvelope, WorkspaceStore,
         WorkspacesPageEnvelope,
     };
     use crate::auth::jwt::JwtAccessTokenService;
@@ -864,8 +1365,11 @@ mod tests {
         body::{to_bytes, Body},
         http::{header::AUTHORIZATION, Method, Request, StatusCode},
     };
+    use chrono::Utc;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
     use std::sync::Arc;
+    use tokio::sync::RwLock;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -914,6 +1418,143 @@ mod tests {
             .expect("request should return response");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn patch_workspace_requires_owner_role() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let user_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let now = Utc::now();
+        let store = Arc::new(RwLock::new(MemoryWorkspaceStore::default()));
+
+        {
+            let mut guard = store.write().await;
+            guard.workspaces.insert(
+                workspace_id,
+                MemoryWorkspace {
+                    id: workspace_id,
+                    slug: "rbac".to_owned(),
+                    name: "RBAC".to_owned(),
+                    created_at: now,
+                    updated_at: now,
+                    deleted_at: None,
+                },
+            );
+            guard.memberships.insert(
+                (workspace_id, user_id),
+                MemoryMembership { role: "viewer".to_owned(), status: "active".to_owned() },
+            );
+        }
+
+        let router =
+            build_router_with_store(WorkspaceStore::Memory(store), Arc::clone(&jwt_service));
+        let token = bearer_token(&jwt_service, user_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/v1/workspaces/{workspace_id}"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "name": "RBAC Updated" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("patch request should return response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn create_share_link_hashes_token_and_password() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let user_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let now = Utc::now();
+        let store = Arc::new(RwLock::new(MemoryWorkspaceStore::default()));
+
+        {
+            let mut guard = store.write().await;
+            guard.workspaces.insert(
+                workspace_id,
+                MemoryWorkspace {
+                    id: workspace_id,
+                    slug: "shared".to_owned(),
+                    name: "Shared".to_owned(),
+                    created_at: now,
+                    updated_at: now,
+                    deleted_at: None,
+                },
+            );
+            guard.memberships.insert(
+                (workspace_id, user_id),
+                MemoryMembership { role: "editor".to_owned(), status: "active".to_owned() },
+            );
+        }
+
+        let router = build_router_with_store(
+            WorkspaceStore::Memory(store.clone()),
+            Arc::clone(&jwt_service),
+        );
+        let token = bearer_token(&jwt_service, user_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "target_type": "workspace",
+                            "target_id": workspace_id,
+                            "permission": "view",
+                            "max_uses": 10,
+                            "password": "super-secret"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("share link request should return response");
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: ShareLinkEnvelope = read_json(response).await;
+        assert_eq!(body.share_link.target_type, "workspace");
+        assert_eq!(body.share_link.target_id, workspace_id);
+        assert_eq!(body.share_link.permission, "view");
+        assert_eq!(body.share_link.max_uses, Some(10));
+        assert!(!body.share_link.url_once.is_empty());
+
+        let token = body
+            .share_link
+            .url_once
+            .rsplit('/')
+            .next()
+            .expect("share link URL should contain token");
+        let guard = store.read().await;
+        let stored = guard
+            .share_links
+            .get(&body.share_link.id)
+            .expect("share link should be persisted in memory store");
+        assert_eq!(stored.workspace_id, workspace_id);
+        assert_eq!(stored.token_hash, Sha256::digest(token.as_bytes()).to_vec());
+        assert_eq!(stored.max_uses, Some(10));
+        assert_eq!(stored.use_count, 0);
+        assert!(!stored.disabled);
+        assert!(stored
+            .password_hash
+            .as_deref()
+            .is_some_and(|value| value.starts_with("$argon2id$")));
     }
 
     #[tokio::test]

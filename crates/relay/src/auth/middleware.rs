@@ -16,6 +16,28 @@ pub struct AuthenticatedUser {
     pub workspace_id: uuid::Uuid,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WorkspaceRole {
+    Viewer,
+    Editor,
+    Owner,
+}
+
+impl WorkspaceRole {
+    pub fn from_db_value(value: &str) -> Option<Self> {
+        match value {
+            "viewer" => Some(Self::Viewer),
+            "editor" => Some(Self::Editor),
+            "owner" => Some(Self::Owner),
+            _ => None,
+        }
+    }
+
+    pub fn allows(self, required: Self) -> bool {
+        self >= required
+    }
+}
+
 pub async fn require_bearer_auth(
     State(jwt_service): State<Arc<JwtAccessTokenService>>,
     mut request: Request,
