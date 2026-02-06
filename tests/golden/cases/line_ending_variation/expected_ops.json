@@ -1,0 +1,17 @@
+[
+  {
+    "op": "delete",
+    "index": 3,
+    "len": 1
+  },
+  {
+    "op": "delete",
+    "index": 8,
+    "len": 1
+  },
+  {
+    "op": "delete",
+    "index": 15,
+    "len": 1
+  }
+]

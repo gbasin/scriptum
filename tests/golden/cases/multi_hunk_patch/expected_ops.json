@@ -1,0 +1,12 @@
+[
+  {
+    "op": "insert",
+    "index": 6,
+    "text": "BETA!\n"
+  },
+  {
+    "op": "insert",
+    "index": 17,
+    "text": "OMEGA\n"
+  }
+]

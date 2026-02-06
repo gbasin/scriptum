@@ -3,3 +3,6 @@
 
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
+
+# Preserve explicit CRLF bytes for golden line-ending fixtures.
+tests/golden/cases/line_ending_variation/*.md -text

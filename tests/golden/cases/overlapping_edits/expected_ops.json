@@ -1,0 +1,12 @@
+[
+  {
+    "op": "delete",
+    "index": 2,
+    "len": 5
+  },
+  {
+    "op": "insert",
+    "index": 7,
+    "text": "XYZZ"
+  }
+]

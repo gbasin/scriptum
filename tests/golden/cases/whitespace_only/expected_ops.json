@@ -1,0 +1,12 @@
+[
+  {
+    "op": "insert",
+    "index": 5,
+    "text": " "
+  },
+  {
+    "op": "insert",
+    "index": 11,
+    "text": "\t"
+  }
+]

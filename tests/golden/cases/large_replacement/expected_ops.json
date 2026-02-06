@@ -1,0 +1,12 @@
+[
+  {
+    "op": "delete",
+    "index": 6,
+    "len": 80
+  },
+  {
+    "op": "insert",
+    "index": 86,
+    "text": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+  }
+]
