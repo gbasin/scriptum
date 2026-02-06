@@ -1,4 +1,5 @@
-// scriptumd: local collaboration daemon
+// scriptumd: standalone mode entry point.
+
 fn main() {
     println!("scriptumd");
 }

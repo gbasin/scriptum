@@ -34,5 +34,17 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# CRDT
+yrs = "0.21"
+
+# File watching
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+
+# Local database
+rusqlite = { version = "0.33", features = ["bundled"] }
+
+# HTTP / WebSocket server
+axum = { version = "0.8", features = ["ws"] }
+
 # Internal crates
 scriptum-common = { path = "crates/common" }
