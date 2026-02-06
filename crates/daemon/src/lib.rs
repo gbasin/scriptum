@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod engine;
 pub mod git;
+pub mod history;
 pub mod outbox;
 pub mod rpc;
 pub mod search;

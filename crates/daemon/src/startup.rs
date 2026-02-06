@@ -72,19 +72,17 @@ fn dirs_path() -> Result<PathBuf> {
 
 fn home_dir() -> Option<PathBuf> {
     // Prefer $HOME, fallback to platform-specific lookup
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(unix)]
-            {
-                // fallback: getpwuid
-                None
-            }
-            #[cfg(not(unix))]
-            {
-                None
-            }
-        })
+    std::env::var_os("HOME").map(PathBuf::from).or_else(|| {
+        #[cfg(unix)]
+        {
+            // fallback: getpwuid
+            None
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    })
 }
 
 /// Check if a daemon is already running by connecting to the socket.

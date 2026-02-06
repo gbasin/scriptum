@@ -19,32 +19,22 @@ impl YDoc {
 
     /// Create a document with a specific client ID (for deterministic testing).
     pub fn with_client_id(client_id: u64) -> Self {
-        let options = yrs::Options {
-            client_id,
-            ..Default::default()
-        };
-        Self {
-            doc: Doc::with_options(options),
-        }
+        let options = yrs::Options { client_id, ..Default::default() };
+        Self { doc: Doc::with_options(options) }
     }
 
     /// Load a document from a binary state (full snapshot).
     pub fn from_state(data: &[u8]) -> Result<Self> {
         let doc = Doc::new();
         let update = Update::decode_v1(data).context("failed to decode Yjs state")?;
-        doc.transact_mut()
-            .apply_update(update)
-            .context("failed to apply Yjs state update")?;
+        doc.transact_mut().apply_update(update).context("failed to apply Yjs state update")?;
         Ok(Self { doc })
     }
 
     /// Apply an incremental binary update to the document.
     pub fn apply_update(&self, data: &[u8]) -> Result<()> {
         let update = Update::decode_v1(data).context("failed to decode Yjs update")?;
-        self.doc
-            .transact_mut()
-            .apply_update(update)
-            .context("failed to apply Yjs update")?;
+        self.doc.transact_mut().apply_update(update).context("failed to apply Yjs update")?;
         Ok(())
     }
 
@@ -181,10 +171,7 @@ mod tests {
         doc_a.apply_update(&diff_b).unwrap();
 
         // Both should converge
-        assert_eq!(
-            doc_a.get_text_string("article"),
-            doc_b.get_text_string("article")
-        );
+        assert_eq!(doc_a.get_text_string("article"), doc_b.get_text_string("article"));
     }
 
     #[test]
