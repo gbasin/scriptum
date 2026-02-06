@@ -16,6 +16,7 @@
     "@codemirror/state": "latest",
     "@codemirror/view": "latest",
     "@scriptum/editor": "workspace:*",
+    "@scriptum/shared": "workspace:*",
     "react": "latest",
     "react-dom": "latest",
     "react-router": "latest",
