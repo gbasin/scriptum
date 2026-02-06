@@ -6,6 +6,7 @@ mod client;
 mod commands;
 mod daemon_launcher;
 pub mod exit_code;
+pub mod output;
 
 #[derive(Parser)]
 #[command(name = "scriptum", about = "Local-first collaborative markdown")]
