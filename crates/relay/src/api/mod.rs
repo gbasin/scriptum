@@ -1,3 +1,4 @@
+pub mod comments;
 pub mod documents;
 
 use std::{collections::HashMap, env, sync::Arc};
@@ -352,7 +353,8 @@ pub async fn build_router_from_env(jwt_service: Arc<JwtAccessTokenService>) -> R
         .await
         .context("relay PostgreSQL health check failed for workspace API")?;
 
-    Ok(build_router_with_store(WorkspaceStore::Postgres(pool), jwt_service))
+    Ok(build_router_with_store(WorkspaceStore::Postgres(pool.clone()), Arc::clone(&jwt_service))
+        .merge(comments::router(pool, jwt_service)))
 }
 
 fn build_router_with_store(
