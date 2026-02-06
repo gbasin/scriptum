@@ -20,6 +20,18 @@ export {
   type RemotePeer,
 } from "./collaboration/cursors";
 export {
+  commentHighlightExtension,
+  commentHighlightState,
+  setCommentHighlightRanges,
+  type CommentDecorationRange,
+  type CommentDecorationStatus,
+} from "./comments/highlight";
+export {
+  commentGutterExtension,
+  commentGutterState,
+  setCommentGutterRanges,
+} from "./comments/gutter";
+export {
   ReconciliationDetector,
   RECONCILIATION_THRESHOLD_RATIO,
   RECONCILIATION_WINDOW_MS,
