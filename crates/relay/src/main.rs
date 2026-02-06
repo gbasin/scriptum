@@ -5,6 +5,7 @@ mod awareness;
 pub mod config;
 mod cors;
 pub mod etag;
+pub mod idempotency;
 mod db;
 mod error;
 mod leader;
