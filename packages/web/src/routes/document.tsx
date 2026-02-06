@@ -1,6 +1,7 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import type { Document as ScriptumDocument } from "@scriptum/shared";
 import {
   commentGutterExtension,
   commentHighlightExtension,
@@ -12,8 +13,12 @@ import {
   type CommentDecorationRange,
 } from "@scriptum/editor";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import { Breadcrumb } from "../components/editor/Breadcrumb";
+import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
 import { StatusBar } from "../components/StatusBar";
+import { useDocumentsStore } from "../store/documents";
+import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
 
 const DEFAULT_DAEMON_WS_BASE_URL =
@@ -272,6 +277,61 @@ export function commentAnchorTopPx(line: number): number {
   return Math.max(12, (Math.max(1, Math.floor(line)) - 1) * 22 + 12);
 }
 
+function documentTitleFromPath(path: string): string {
+  const segments = path
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? path;
+}
+
+export function buildOpenDocumentTabs(
+  openDocuments: readonly ScriptumDocument[],
+  workspaceId: string | undefined,
+  activeDocumentId: string | undefined,
+  activeDocumentPath: string
+): OpenDocumentTab[] {
+  const workspaceOpenDocuments = workspaceId
+    ? openDocuments.filter((document) => document.workspaceId === workspaceId)
+    : [];
+  const tabs = workspaceOpenDocuments.map((document) => ({
+    id: document.id,
+    path: document.path,
+    title: document.title,
+  }));
+
+  if (
+    activeDocumentId &&
+    !tabs.some((tab) => tab.id === activeDocumentId)
+  ) {
+    tabs.unshift({
+      id: activeDocumentId,
+      path: activeDocumentPath,
+      title: documentTitleFromPath(activeDocumentPath),
+    });
+  }
+
+  return tabs;
+}
+
+export function nextDocumentIdAfterClose(
+  tabs: readonly OpenDocumentTab[],
+  closingDocumentId: string
+): string | null {
+  const closingIndex = tabs.findIndex((tab) => tab.id === closingDocumentId);
+  if (closingIndex < 0) {
+    return null;
+  }
+
+  const remainingTabs = tabs.filter((tab) => tab.id !== closingDocumentId);
+  if (remainingTabs.length === 0) {
+    return null;
+  }
+
+  const nextIndex = Math.max(0, closingIndex - 1);
+  return remainingTabs[nextIndex]?.id ?? remainingTabs[0]?.id ?? null;
+}
+
 function readFixtureState(): ScriptumTestState {
   if (typeof window === "undefined" || !window.__SCRIPTUM_TEST__) {
     return DEFAULT_TEST_STATE;
@@ -288,6 +348,14 @@ function makeClientId(prefix: string): string {
 
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
+  const navigate = useNavigate();
+  const closeDocument = useDocumentsStore((state) => state.closeDocument);
+  const documents = useDocumentsStore((state) => state.documents);
+  const openDocuments = useDocumentsStore((state) => state.openDocuments);
+  const setActiveDocumentForWorkspace = useDocumentsStore(
+    (state) => state.setActiveDocumentForWorkspace
+  );
+  const workspaces = useWorkspaceStore((state) => state.workspaces);
   const [fixtureState, setFixtureState] = useState<ScriptumTestState>(() =>
     readFixtureState()
   );
@@ -320,6 +388,33 @@ export function DocumentRoute() {
     () => `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
     [workspaceId, documentId]
   );
+  const currentDocument = useMemo(
+    () =>
+      documentId
+        ? documents.find((candidate) => candidate.id === documentId) ?? null
+        : null,
+    [documentId, documents]
+  );
+  const currentDocumentPath = currentDocument?.path ?? (documentId ?? "unknown");
+  const openTabs = useMemo(
+    () =>
+      buildOpenDocumentTabs(
+        openDocuments,
+        workspaceId,
+        documentId,
+        currentDocumentPath
+      ),
+    [currentDocumentPath, documentId, openDocuments, workspaceId]
+  );
+  const workspaceLabel = useMemo(() => {
+    if (!workspaceId) {
+      return "Unknown workspace";
+    }
+    return (
+      workspaces.find((workspace) => workspace.id === workspaceId)?.name ??
+      workspaceId
+    );
+  }, [workspaceId, workspaces]);
   const commentRanges = useMemo(
     () => commentRangesFromThreads(inlineCommentThreads),
     [inlineCommentThreads]
@@ -365,6 +460,13 @@ export function DocumentRoute() {
     fixtureState.cursor,
     fixtureState.syncState,
   ]);
+
+  useEffect(() => {
+    if (!workspaceId || !documentId) {
+      return;
+    }
+    setActiveDocumentForWorkspace(workspaceId, documentId);
+  }, [documentId, setActiveDocumentForWorkspace, workspaceId]);
 
   useEffect(() => {
     const host = editorHostRef.current;
@@ -580,11 +682,45 @@ export function DocumentRoute() {
     setEditingMessageBody("");
   };
 
+  const selectTab = (nextDocumentId: string) => {
+    if (!workspaceId) {
+      return;
+    }
+    setActiveDocumentForWorkspace(workspaceId, nextDocumentId);
+    navigate(`/workspace/${workspaceId}/document/${nextDocumentId}`);
+  };
+
+  const closeTab = (closingDocumentId: string) => {
+    if (!workspaceId) {
+      return;
+    }
+    const nextDocumentId = nextDocumentIdAfterClose(openTabs, closingDocumentId);
+    closeDocument(closingDocumentId);
+
+    if (closingDocumentId !== documentId) {
+      return;
+    }
+
+    setActiveDocumentForWorkspace(workspaceId, nextDocumentId);
+    if (nextDocumentId) {
+      navigate(`/workspace/${workspaceId}/document/${nextDocumentId}`);
+      return;
+    }
+    navigate(`/workspace/${workspaceId}`);
+  };
+
   return (
     <section aria-label="Document workspace">
       <h1 data-testid="document-title">
         Document: {workspaceId ?? "unknown"}/{documentId ?? "unknown"}
       </h1>
+      <TabBar
+        activeDocumentId={documentId ?? null}
+        onCloseTab={closeTab}
+        onSelectTab={selectTab}
+        tabs={openTabs}
+      />
+      <Breadcrumb path={currentDocumentPath} workspaceLabel={workspaceLabel} />
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>

@@ -30,6 +30,8 @@ describe("AppRoutes", () => {
     expect(html).toContain("Document:");
     expect(html).toContain("demo");
     expect(html).toContain("readme");
+    expect(html).toContain("tab-bar");
+    expect(html).toContain("Document breadcrumb");
     expect(html).toContain("Editor");
     expect(html).toContain("Comments");
     expect(html).toContain("No comments yet.");
