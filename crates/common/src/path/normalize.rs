@@ -67,9 +67,7 @@ pub fn normalize_path(input: &str) -> Result<String, PathError> {
         }
         // Reject components that are only whitespace
         if component.trim().is_empty() {
-            return Err(PathError::InvalidComponent(
-                "(whitespace-only component)".to_string(),
-            ));
+            return Err(PathError::InvalidComponent("(whitespace-only component)".to_string()));
         }
     }
 
@@ -94,10 +92,7 @@ mod tests {
 
     #[test]
     fn test_backslash_to_forward() {
-        assert_eq!(
-            normalize_path("docs\\notes\\file.md").unwrap(),
-            "docs/notes/file.md"
-        );
+        assert_eq!(normalize_path("docs\\notes\\file.md").unwrap(), "docs/notes/file.md");
     }
 
     #[test]
@@ -107,10 +102,7 @@ mod tests {
 
     #[test]
     fn test_collapse_consecutive_slashes() {
-        assert_eq!(
-            normalize_path("docs///nested//file.md").unwrap(),
-            "docs/nested/file.md"
-        );
+        assert_eq!(normalize_path("docs///nested//file.md").unwrap(), "docs/nested/file.md");
     }
 
     #[test]
@@ -151,10 +143,7 @@ mod tests {
 
     #[test]
     fn test_reject_dot_component() {
-        assert_eq!(
-            normalize_path("docs/./file.md"),
-            Err(PathError::Traversal(".".to_string()))
-        );
+        assert_eq!(normalize_path("docs/./file.md"), Err(PathError::Traversal(".".to_string())));
     }
 
     #[test]
@@ -208,18 +197,12 @@ mod tests {
 
     #[test]
     fn test_hidden_dir_allowed() {
-        assert_eq!(
-            normalize_path(".config/settings.md").unwrap(),
-            ".config/settings.md"
-        );
+        assert_eq!(normalize_path(".config/settings.md").unwrap(), ".config/settings.md");
     }
 
     #[test]
     fn test_dots_in_filename_allowed() {
-        assert_eq!(
-            normalize_path("file.backup.2024.md").unwrap(),
-            "file.backup.2024.md"
-        );
+        assert_eq!(normalize_path("file.backup.2024.md").unwrap(), "file.backup.2024.md");
     }
 
     #[test]

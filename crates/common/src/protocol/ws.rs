@@ -15,10 +15,7 @@ pub enum WsMessage {
     },
 
     /// Server -> Client: handshake acknowledgement.
-    HelloAck {
-        server_time: String,
-        resume_accepted: bool,
-    },
+    HelloAck { server_time: String, resume_accepted: bool },
 
     /// Client -> Server: subscribe to document updates.
     Subscribe {
@@ -37,25 +34,13 @@ pub enum WsMessage {
     },
 
     /// Server -> Client: acknowledgement of a client update.
-    Ack {
-        doc_id: Uuid,
-        client_update_id: Uuid,
-        server_seq: i64,
-        applied: bool,
-    },
+    Ack { doc_id: Uuid, client_update_id: Uuid, server_seq: i64, applied: bool },
 
     /// Server -> Client: full document snapshot.
-    Snapshot {
-        doc_id: Uuid,
-        snapshot_seq: i64,
-        payload_b64: String,
-    },
+    Snapshot { doc_id: Uuid, snapshot_seq: i64, payload_b64: String },
 
     /// Bidirectional: awareness/presence updates.
-    AwarenessUpdate {
-        doc_id: Uuid,
-        peers: Vec<serde_json::Value>,
-    },
+    AwarenessUpdate { doc_id: Uuid, peers: Vec<serde_json::Value> },
 
     /// Server -> Client: error.
     Error {

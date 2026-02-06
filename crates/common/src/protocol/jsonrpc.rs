@@ -51,31 +51,16 @@ pub const INTERNAL_ERROR: i32 = -32603;
 
 impl Request {
     pub fn new(method: impl Into<String>, params: Option<Value>, id: RequestId) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            method: method.into(),
-            params,
-            id,
-        }
+        Self { jsonrpc: "2.0".to_string(), method: method.into(), params, id }
     }
 }
 
 impl Response {
     pub fn success(id: RequestId, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            result: Some(result),
-            error: None,
-            id,
-        }
+        Self { jsonrpc: "2.0".to_string(), result: Some(result), error: None, id }
     }
 
     pub fn error(id: RequestId, error: RpcError) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(error),
-            id,
-        }
+        Self { jsonrpc: "2.0".to_string(), result: None, error: Some(error), id }
     }
 }

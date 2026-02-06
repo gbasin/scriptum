@@ -10,3 +10,5 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 unicode-normalization = { workspace = true }
+yrs = { workspace = true }
+pulldown-cmark = "0.12"
