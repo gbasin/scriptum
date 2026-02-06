@@ -19,3 +19,14 @@ export {
   type RemoteCursorOptions,
   type RemotePeer,
 } from "./collaboration/cursors";
+export {
+  ReconciliationDetector,
+  RECONCILIATION_THRESHOLD_RATIO,
+  RECONCILIATION_WINDOW_MS,
+  shouldTriggerReconciliation,
+  type ReconciliationDetectorOptions,
+  type ReconciliationTrigger,
+  type ReconciliationWindowStats,
+  type SectionEditEvent,
+  type SectionEditHistoryEntry,
+} from "./reconciliation/detector";
