@@ -115,6 +115,151 @@ mod tests {
     use super::*;
     use yrs::{Map, Transact};
 
+    const TEST_TEXT_KEY: &str = "content";
+
+    struct Lcg {
+        state: u64,
+    }
+
+    impl Lcg {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.state = self
+                .state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            self.state
+        }
+
+        fn next_usize(&mut self, upper_exclusive: usize) -> usize {
+            if upper_exclusive == 0 {
+                return 0;
+            }
+            (self.next_u64() as usize) % upper_exclusive
+        }
+    }
+
+    fn sync_docs(source: &YDoc, target: &YDoc) {
+        let target_sv = target.encode_state_vector();
+        let diff = source.encode_diff(&target_sv).expect("state vector should decode");
+        target.apply_update(&diff).expect("diff should apply");
+    }
+
+    fn settle_all(docs: &[YDoc]) {
+        // A couple of all-to-all gossip rounds ensure each doc learns transitive updates.
+        for _ in 0..2 {
+            for i in 0..docs.len() {
+                for j in 0..docs.len() {
+                    if i == j {
+                        continue;
+                    }
+                    sync_docs(&docs[i], &docs[j]);
+                }
+            }
+        }
+    }
+
+    fn random_insert_text(rng: &mut Lcg, min_len: usize, max_len: usize) -> String {
+        let span = max_len.saturating_sub(min_len).saturating_add(1);
+        let len = min_len + rng.next_usize(span);
+        let mut out = String::with_capacity(len);
+        for _ in 0..len {
+            let choice = rng.next_usize(40);
+            let ch = match choice {
+                0..=25 => char::from(b'a' + (choice as u8)),
+                26..=35 => char::from(b'0' + ((choice - 26) as u8)),
+                36 => ' ',
+                37 => '-',
+                38 => '_',
+                _ => '\n',
+            };
+            out.push(ch);
+        }
+        out
+    }
+
+    fn apply_random_edit(doc: &YDoc, rng: &mut Lcg) {
+        let len = doc.text_len(TEST_TEXT_KEY) as usize;
+        if len == 0 {
+            let text = random_insert_text(rng, 1, 12);
+            doc.insert_text(TEST_TEXT_KEY, 0, &text);
+            return;
+        }
+
+        match rng.next_usize(3) {
+            0 => {
+                // Insert
+                let index = rng.next_usize(len + 1) as u32;
+                let text = random_insert_text(rng, 1, 12);
+                doc.insert_text(TEST_TEXT_KEY, index, &text);
+            }
+            1 => {
+                // Delete
+                let start = rng.next_usize(len);
+                let max_delete = len - start;
+                let delete_len = 1 + rng.next_usize(max_delete);
+                doc.remove_text(TEST_TEXT_KEY, start as u32, delete_len as u32);
+            }
+            _ => {
+                // Replace
+                let start = rng.next_usize(len);
+                let max_replace = len - start;
+                let replace_len = 1 + rng.next_usize(max_replace);
+                let text = random_insert_text(rng, 1, 8);
+                doc.replace_text(TEST_TEXT_KEY, start as u32, replace_len as u32, &text);
+            }
+        }
+    }
+
+    fn run_randomized_convergence(seed: u64, clients: usize, ops: usize) {
+        let docs = (0..clients)
+            .map(|idx| YDoc::with_client_id((idx + 1) as u64))
+            .collect::<Vec<_>>();
+
+        let mut rng = Lcg::new(seed);
+
+        for _ in 0..ops {
+            let actor = rng.next_usize(clients);
+            apply_random_edit(&docs[actor], &mut rng);
+
+            // Randomly sync one directed edge to preserve concurrency.
+            if rng.next_usize(4) == 0 {
+                let mut target = rng.next_usize(clients);
+                if target == actor {
+                    target = (target + 1) % clients;
+                }
+                sync_docs(&docs[actor], &docs[target]);
+            }
+
+            // Occasionally gossip a burst of random edges.
+            if rng.next_usize(25) == 0 {
+                let gossip_edges = 1 + rng.next_usize(clients * 2);
+                for _ in 0..gossip_edges {
+                    let from = rng.next_usize(clients);
+                    let mut to = rng.next_usize(clients);
+                    if to == from {
+                        to = (to + 1) % clients;
+                    }
+                    sync_docs(&docs[from], &docs[to]);
+                }
+            }
+        }
+
+        settle_all(&docs);
+
+        let expected = docs[0].get_text_string(TEST_TEXT_KEY);
+        for (idx, doc) in docs.iter().enumerate().skip(1) {
+            let actual = doc.get_text_string(TEST_TEXT_KEY);
+            assert_eq!(
+                actual, expected,
+                "convergence mismatch for seed={seed}, clients={clients}, ops={ops}, client={idx}"
+            );
+        }
+    }
+
     #[test]
     fn test_create_new_doc() {
         let doc = YDoc::new();
@@ -226,5 +371,20 @@ mod tests {
     fn test_invalid_state_returns_error() {
         let result = YDoc::from_state(b"not a valid state");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn randomized_convergence_property_smoke() {
+        for seed in [7_u64, 42, 99, 2026, 65_537] {
+            run_randomized_convergence(seed, 3, 750);
+        }
+    }
+
+    #[test]
+    #[ignore = "nightly: 10k-op randomized convergence scenario"]
+    fn randomized_convergence_property_10k_ops_nightly() {
+        for seed in [3_u64, 17, 1_337] {
+            run_randomized_convergence(seed, 4, 10_000);
+        }
     }
 }
