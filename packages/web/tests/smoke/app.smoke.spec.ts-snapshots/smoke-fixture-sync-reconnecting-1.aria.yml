@@ -1,0 +1,11 @@
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: reconnecting"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Overlap Warning ## Shared Section Two collaborators are editing this section."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - list:
+        - listitem: Relay Agent (agent)

@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "echo \"@scriptum/web lint\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ui:smoke": "playwright test -c playwright.smoke.config.ts"
   },
   "dependencies": {
     "react": "latest",
@@ -21,6 +22,7 @@
     "zustand": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",

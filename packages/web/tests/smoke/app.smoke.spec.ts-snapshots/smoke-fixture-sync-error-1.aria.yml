@@ -1,0 +1,10 @@
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: error"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Smoke: Error Manual retry suggested by status UI."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - paragraph: No collaborators connected.

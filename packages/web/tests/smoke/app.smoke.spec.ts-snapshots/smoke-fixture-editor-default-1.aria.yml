@@ -1,0 +1,10 @@
+- main "Editor area":
+  - region "Document workspace":
+    - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
+    - status "Sync state": "Sync: synced"
+    - region "Editor surface":
+      - heading "Editor" [level=2]
+      - text: "# Smoke: Default Local-first markdown editing baseline."
+    - region "Presence stack":
+      - heading "Presence" [level=2]
+      - paragraph: No collaborators connected.

@@ -8,7 +8,7 @@ function renderAt(path: string): string {
   return renderToString(
     <MemoryRouter initialEntries={[path]}>
       <AppRoutes />
-    </MemoryRouter>
+    </MemoryRouter>,
   );
 }
 
@@ -29,7 +29,10 @@ describe("AppRoutes", () => {
     const html = renderAt("/workspace/demo/document/readme");
     expect(html).toContain("Document:");
     expect(html).toContain("demo");
-    expect(html).toContain("readme</section>");
+    expect(html).toContain("readme");
+    expect(html).toContain("Editor");
+    expect(html).toContain("Presence");
+    expect(html).toContain("Sync:");
   });
 
   it("renders settings route in app layout", () => {

@@ -18,6 +18,8 @@
     "@lezer/common": "latest",
     "@lezer/markdown": "latest",
     "y-codemirror.next": "latest",
+    "y-protocols": "latest",
+    "y-websocket": "latest",
     "yjs": "latest"
   },
   "devDependencies": {
