@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use tokio::io::{self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 #[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(unix)]
+use tokio::sync::broadcast;
 use tracing::warn;
 
 use crate::rpc::methods::{handle_raw_request, RpcServerState};
@@ -23,6 +25,34 @@ pub async fn serve_unix(listener: UnixListener, state: RpcServerState) -> Result
                 warn!(?error, "unix rpc connection failed");
             }
         });
+    }
+}
+
+/// Serve JSON-RPC 2.0 over Unix sockets until a shutdown signal is received.
+#[cfg(unix)]
+pub async fn serve_unix_until_shutdown(
+    listener: UnixListener,
+    state: RpcServerState,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Result<()> {
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                let (stream, _) = result.context("failed to accept unix rpc connection")?;
+                let connection_state = state.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = serve_connection(stream, connection_state).await {
+                        warn!(?error, "unix rpc connection failed");
+                    }
+                });
+            }
+            signal = shutdown_rx.recv() => {
+                match signal {
+                    Ok(_) | Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                    Err(broadcast::error::RecvError::Lagged(_)) => return Ok(()),
+                }
+            }
+        }
     }
 }
 

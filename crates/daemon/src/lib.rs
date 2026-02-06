@@ -6,6 +6,7 @@ pub mod git;
 pub mod history;
 pub mod outbox;
 pub mod rpc;
+pub mod runtime;
 pub mod search;
 pub mod section;
 pub mod startup;

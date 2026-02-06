@@ -10,6 +10,7 @@ use scriptum_common::section::parser::parse_sections;
 use scriptum_common::types::Section;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -17,6 +18,7 @@ use uuid::Uuid;
 pub struct RpcServerState {
     doc_manager: Arc<RwLock<DocManager>>,
     doc_metadata: Arc<RwLock<HashMap<(Uuid, Uuid), DocMetadataRecord>>>,
+    shutdown_notifier: Option<broadcast::Sender<()>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,11 +52,17 @@ impl Default for RpcServerState {
         Self {
             doc_manager: Arc::new(RwLock::new(DocManager::default())),
             doc_metadata: Arc::new(RwLock::new(HashMap::new())),
+            shutdown_notifier: None,
         }
     }
 }
 
 impl RpcServerState {
+    pub fn with_shutdown_notifier(mut self, shutdown_notifier: broadcast::Sender<()>) -> Self {
+        self.shutdown_notifier = Some(shutdown_notifier);
+        self
+    }
+
     pub async fn seed_doc(
         &self,
         workspace_id: Uuid,
@@ -151,6 +159,17 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
                 "ok": true,
             }),
         ),
+        "daemon.shutdown" => {
+            if let Some(notifier) = &state.shutdown_notifier {
+                let _ = notifier.send(());
+            }
+            Response::success(
+                request.id,
+                json!({
+                    "ok": true,
+                }),
+            )
+        }
         "doc.read" => handle_doc_read(request, state).await,
         "rpc.internal_error" => Response::error(
             request.id,
@@ -216,6 +235,7 @@ fn default_metadata(workspace_id: Uuid, doc_id: Uuid) -> DocMetadataRecord {
 mod tests {
     use scriptum_common::protocol::jsonrpc::{Request, RequestId};
     use serde_json::json;
+    use tokio::sync::broadcast;
     use uuid::Uuid;
 
     use super::{dispatch_request, RpcServerState};
@@ -290,5 +310,17 @@ mod tests {
         assert!(response.result.is_none());
         let error = response.error.expect("error should be present");
         assert_eq!(error.code, -32602);
+    }
+
+    #[tokio::test]
+    async fn daemon_shutdown_notifies_runtime_when_configured() {
+        let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+        let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx);
+        let request = Request::new("daemon.shutdown", None, RequestId::Number(4));
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success response: {response:?}");
+        assert_eq!(response.result.expect("result should be populated"), json!({ "ok": true }));
+        shutdown_rx.recv().await.expect("shutdown notification should be sent");
     }
 }
