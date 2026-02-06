@@ -17,10 +17,13 @@ use axum::{
     routing::get,
     Router,
 };
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 use tokio::net::TcpListener;
 use tracing::{error, info};
 use uuid::Uuid;
+use ws::SyncSessionStore;
+
+use crate::auth::jwt::JwtAccessTokenService;
 
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const REQUEST_ID_HEADER: &str = "x-request-id";
@@ -31,8 +34,23 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let app = build_router();
     let addr = "0.0.0.0:8080";
+    let jwt_secret = std::env::var("SCRIPTUM_RELAY_JWT_SECRET")
+        .unwrap_or_else(|_| "scriptum_local_development_jwt_secret_must_be_32_chars".to_string());
+    let jwt_service =
+        Arc::new(JwtAccessTokenService::new(&jwt_secret).context("invalid relay JWT secret")?);
+    let session_store = Arc::new(SyncSessionStore::default());
+    let ws_base_url =
+        std::env::var("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("ws://{addr}"));
+    let app = build_router(
+        Arc::clone(&jwt_service),
+        session_store,
+        ws_base_url,
+        api::build_router_from_env(jwt_service)
+            .await
+            .context("failed to build relay workspace API router")?,
+    );
+
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind relay listener on {addr}"))?;
@@ -45,8 +63,18 @@ async fn main() -> anyhow::Result<()> {
         .context("relay server exited unexpectedly")
 }
 
-fn build_router() -> Router {
-    apply_middleware(Router::new().route("/healthz", get(healthz)))
+fn build_router(
+    jwt_service: Arc<JwtAccessTokenService>,
+    session_store: Arc<SyncSessionStore>,
+    ws_base_url: String,
+    api_router: Router,
+) -> Router {
+    apply_middleware(
+        Router::new()
+            .route("/healthz", get(healthz))
+            .merge(ws::router(jwt_service, session_store, ws_base_url))
+            .merge(api_router),
+    )
 }
 
 fn apply_middleware(router: Router) -> Router {
@@ -127,6 +155,8 @@ async fn request_context_middleware(request: Request<Body>, next: Next) -> Respo
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use axum::{
         body::Body,
         http::{Method, Request, StatusCode},
@@ -136,10 +166,20 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{apply_middleware, build_router, MAX_REQUEST_BODY_BYTES};
+    use crate::{auth::jwt::JwtAccessTokenService, ws::SyncSessionStore};
+
+    fn test_router() -> Router {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new("scriptum_test_secret_that_is_definitely_long_enough")
+                .expect("test jwt service should initialize"),
+        );
+        let session_store = Arc::new(SyncSessionStore::default());
+        build_router(jwt_service, session_store, "ws://localhost:8080".to_string(), Router::new())
+    }
 
     #[tokio::test]
     async fn health_check_has_request_id_header() {
-        let response = build_router()
+        let response = test_router()
             .oneshot(
                 Request::builder()
                     .uri("/healthz")
