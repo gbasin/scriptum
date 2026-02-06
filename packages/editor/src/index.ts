@@ -12,6 +12,7 @@ export {
   type CollaborationSocketProvider,
   type ProviderFactory,
   type ProviderStatus,
+  type WebRtcProviderFactory,
 } from "./collaboration/provider";
 export {
   nameToColor,

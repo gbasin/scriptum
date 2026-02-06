@@ -24,6 +24,10 @@ export type ProviderFactory = (
   input: ProviderFactoryInput,
 ) => CollaborationSocketProvider;
 
+export type WebRtcProviderFactory = (
+  input: ProviderFactoryInput,
+) => CollaborationSocketProvider;
+
 export interface CollaborationProviderOptions {
   readonly url: string;
   readonly room: string;
@@ -31,11 +35,14 @@ export interface CollaborationProviderOptions {
   readonly doc?: Y.Doc;
   readonly connectOnCreate?: boolean;
   readonly providerFactory?: ProviderFactory;
+  readonly webrtcSignalingUrl?: string;
+  readonly webrtcProviderFactory?: WebRtcProviderFactory;
 }
 
 export class CollaborationProvider {
   readonly doc: Y.Doc;
   readonly provider: CollaborationSocketProvider;
+  readonly webrtcProvider: CollaborationSocketProvider | null;
   readonly yText: Y.Text;
 
   private readonly ownsDoc: boolean;
@@ -52,6 +59,14 @@ export class CollaborationProvider {
       url: options.url,
       room: options.room,
     });
+    this.webrtcProvider =
+      options.webrtcProviderFactory && options.webrtcSignalingUrl
+        ? options.webrtcProviderFactory({
+            doc: this.doc,
+            room: options.room,
+            url: options.webrtcSignalingUrl,
+          })
+        : null;
     this.provider.on("status", ({ status }) => {
       this.connected = status === "connected";
     });
@@ -71,11 +86,13 @@ export class CollaborationProvider {
 
   connect(): void {
     this.provider.connect();
+    this.webrtcProvider?.connect();
     this.connected = true;
   }
 
   disconnect(): void {
     this.provider.disconnect();
+    this.webrtcProvider?.disconnect();
     this.connected = false;
   }
 
@@ -86,6 +103,7 @@ export class CollaborationProvider {
 
   destroy(): void {
     this.provider.destroy();
+    this.webrtcProvider?.destroy();
     this.connected = false;
     if (this.ownsDoc) {
       this.doc.destroy();

@@ -12,6 +12,7 @@ import {
   setCommentGutterRanges,
   setCommentHighlightRanges,
   type CommentDecorationRange,
+  type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -29,6 +30,9 @@ import type { ScriptumTestState } from "../test/harness";
 const DEFAULT_DAEMON_WS_BASE_URL =
   (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ??
   "ws://127.0.0.1:39091/yjs";
+const DEFAULT_WEBRTC_SIGNALING_URL =
+  (import.meta.env.VITE_SCRIPTUM_WEBRTC_SIGNALING_URL as string | undefined) ??
+  null;
 const LOCAL_COMMENT_AUTHOR_ID = "local-user";
 const LOCAL_COMMENT_AUTHOR_NAME = "You";
 const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
@@ -384,6 +388,34 @@ function badgeSuffix(name: string): string {
   return normalized || "peer";
 }
 
+function resolveGlobalWebRtcProviderFactory():
+  | WebRtcProviderFactory
+  | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  const candidate = (window as unknown as { WebrtcProvider?: unknown })
+    .WebrtcProvider;
+  if (typeof candidate !== "function") {
+    return undefined;
+  }
+
+  return ({ doc, room, url }) => {
+    const Ctor = candidate as {
+      new (
+        room: string,
+        doc: unknown,
+        options: { signaling: string[]; connect: boolean }
+      ): unknown;
+    };
+    return new Ctor(room, doc, {
+      signaling: [url],
+      connect: false,
+    }) as ReturnType<WebRtcProviderFactory>;
+  };
+}
+
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
@@ -418,6 +450,10 @@ export function DocumentRoute() {
   const pendingChanges = useSyncStore((state) => state.pendingChanges);
   const [cursor, setCursor] = useState(fixtureState.cursor);
   const [daemonWsBaseUrl] = useState(DEFAULT_DAEMON_WS_BASE_URL);
+  const [webrtcSignalingUrl] = useState(DEFAULT_WEBRTC_SIGNALING_URL);
+  const [webrtcProviderFactory] = useState<WebRtcProviderFactory | undefined>(
+    () => resolveGlobalWebRtcProviderFactory()
+  );
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const isApplyingTimelineSnapshotRef = useRef(false);
@@ -571,6 +607,8 @@ export function DocumentRoute() {
       connectOnCreate: false,
       room: roomId,
       url: daemonWsBaseUrl,
+      webrtcSignalingUrl: webrtcSignalingUrl ?? undefined,
+      webrtcProviderFactory,
     });
     collaborationProviderRef.current = provider;
 

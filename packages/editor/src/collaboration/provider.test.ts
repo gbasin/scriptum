@@ -96,4 +96,33 @@ describe("createCollaborationProvider", () => {
     expect(provider.isConnected()).toBe(false);
     expect(fakeProvider.destroyCalls).toBe(1);
   });
+
+  it("keeps relay transport active while enabling optional webrtc optimization", () => {
+    const doc = new Y.Doc();
+    const relayProvider = new FakeProvider(doc);
+    const webrtcProvider = new FakeProvider(doc);
+    const provider = createCollaborationProvider({
+      url: "ws://localhost:1234/yjs",
+      room: "workspace:doc",
+      doc,
+      connectOnCreate: false,
+      providerFactory: () => relayProvider,
+      webrtcSignalingUrl: "wss://signal.example.test",
+      webrtcProviderFactory: () => webrtcProvider,
+    });
+
+    provider.connect();
+    expect(provider.isConnected()).toBe(true);
+    expect(relayProvider.connectCalls).toBe(1);
+    expect(webrtcProvider.connectCalls).toBe(1);
+
+    provider.disconnect();
+    expect(provider.isConnected()).toBe(false);
+    expect(relayProvider.disconnectCalls).toBe(1);
+    expect(webrtcProvider.disconnectCalls).toBe(1);
+
+    provider.destroy();
+    expect(relayProvider.destroyCalls).toBe(1);
+    expect(webrtcProvider.destroyCalls).toBe(1);
+  });
 });
