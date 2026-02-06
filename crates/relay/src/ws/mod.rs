@@ -26,10 +26,12 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{mpsc, RwLock};
-use tracing::error;
+use tokio::time::Instant;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 const HEARTBEAT_INTERVAL_MS: u32 = 15_000;
+const HEARTBEAT_TIMEOUT_MS: u64 = 10_000;
 const MAX_FRAME_BYTES: u32 = 262_144;
 const SESSION_TOKEN_TTL_MINUTES: i64 = 15;
 const RESUME_TOKEN_TTL_MINUTES: i64 = 10;
@@ -466,8 +468,26 @@ async fn handle_socket(
         return;
     }
 
+    // Heartbeat: server pings every HEARTBEAT_INTERVAL_MS, disconnects if no
+    // pong arrives within HEARTBEAT_TIMEOUT_MS.
+    let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_millis(
+        HEARTBEAT_INTERVAL_MS as u64,
+    ));
+    heartbeat_interval.reset(); // skip immediate first tick
+    let mut last_pong = Instant::now();
+    let heartbeat_timeout = std::time::Duration::from_millis(HEARTBEAT_TIMEOUT_MS);
+
     loop {
         tokio::select! {
+            _ = heartbeat_interval.tick() => {
+                if last_pong.elapsed() > heartbeat_timeout {
+                    warn!(session_id = %session_id, "heartbeat timeout, disconnecting");
+                    break;
+                }
+                if socket.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+            }
             maybe_outbound = outbound_receiver.recv() => {
                 match maybe_outbound {
                     Some(outbound_message) => {
@@ -628,6 +648,9 @@ async fn handle_socket(
                         if socket.send(Message::Pong(payload)).await.is_err() {
                             break;
                         }
+                    }
+                    Ok(Message::Pong(_)) => {
+                        last_pong = Instant::now();
                     }
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {}
@@ -1301,7 +1324,7 @@ mod tests {
         handle_awareness_update, handle_hello_message, handle_subscribe_message,
         handle_yjs_update_message, router, AwarenessStore, CreateSyncSessionResponse,
         DocSyncStore, SessionTokenValidation, SyncSessionStore, WorkspaceMembershipStore,
-        HEARTBEAT_INTERVAL_MS, MAX_FRAME_BYTES,
+        HEARTBEAT_INTERVAL_MS, HEARTBEAT_TIMEOUT_MS, MAX_FRAME_BYTES,
     };
     use crate::auth::{jwt::JwtAccessTokenService, middleware::WorkspaceRole};
     use axum::{
@@ -2362,5 +2385,158 @@ mod tests {
         let b_peers = awareness_store.aggregate(workspace_id, doc_b).await;
         assert_eq!(b_peers.len(), 1);
         assert_eq!(b_peers[0]["doc"], "b");
+    }
+
+    // ── Heartbeat constant tests ────────────────────────────────────
+
+    #[test]
+    fn heartbeat_interval_is_15_seconds() {
+        assert_eq!(HEARTBEAT_INTERVAL_MS, 15_000);
+    }
+
+    #[test]
+    fn heartbeat_timeout_is_10_seconds() {
+        assert_eq!(HEARTBEAT_TIMEOUT_MS, 10_000);
+    }
+
+    #[test]
+    fn heartbeat_timeout_is_less_than_interval() {
+        assert!(
+            HEARTBEAT_TIMEOUT_MS < HEARTBEAT_INTERVAL_MS as u64,
+            "timeout must be less than interval to avoid immediate disconnect"
+        );
+    }
+
+    // ── Disconnect cleanup tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn disconnect_clears_subscriptions_and_outbound() {
+        let store = SyncSessionStore::default();
+        let session_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        store
+            .create_session(
+                session_id,
+                workspace_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+
+        // Simulate connection lifecycle.
+        store.mark_connected(session_id).await;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        store.register_outbound(session_id, tx).await;
+        store.track_subscription(session_id, doc_id).await;
+
+        assert!(store.session_is_subscribed(session_id, doc_id).await);
+
+        // Disconnect should clear subscriptions.
+        store.mark_disconnected(session_id).await;
+
+        assert!(!store.session_is_subscribed(session_id, doc_id).await);
+        assert_eq!(store.active_connections(session_id).await, Some(0));
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_awareness_for_subscribed_docs() {
+        let session_store = SyncSessionStore::default();
+        let awareness_store = AwarenessStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
+        let doc_store = DocSyncStore::default();
+        let session_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        session_store
+            .create_session(
+                session_id,
+                workspace_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+
+        // Subscribe and add awareness.
+        session_store.mark_connected(session_id).await;
+        handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect("subscribe should succeed");
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_id,
+                vec![serde_json::json!({"user": "alice", "cursor": 42})],
+            )
+            .await;
+        assert_eq!(awareness_store.aggregate(workspace_id, doc_id).await.len(), 1);
+
+        // Simulate what handle_socket does on disconnect.
+        let subscriptions = session_store
+            .subscriptions_for_session(session_id)
+            .await
+            .unwrap();
+        awareness_store
+            .remove_session(workspace_id, &subscriptions, session_id)
+            .await;
+        session_store.mark_disconnected(session_id).await;
+
+        // Awareness should be cleared.
+        assert_eq!(awareness_store.aggregate(workspace_id, doc_id).await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn disconnect_preserves_other_sessions_awareness() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_a,
+                vec![serde_json::json!({"user": "alice"})],
+            )
+            .await;
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_b,
+                vec![serde_json::json!({"user": "bob"})],
+            )
+            .await;
+
+        // Disconnect session_a.
+        awareness_store
+            .remove_session(workspace_id, &[doc_id], session_a)
+            .await;
+
+        // session_b should still be there.
+        let remaining = awareness_store.aggregate(workspace_id, doc_id).await;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0]["user"], "bob");
     }
 }
