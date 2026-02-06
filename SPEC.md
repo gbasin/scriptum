@@ -57,8 +57,8 @@ Multiple people editing the same document simultaneously.
 - **Character-level CRDT**: Powered by Yjs - merges are conflict-free at the character level
 - **Section awareness**: Overlay on top of CRDT that detects when two editors are in the same markdown section, showing a subtle indicator
 - **Offline support**: Edit offline, changes merge seamlessly when you reconnect
-- **Intent/lease system**: Editors can "claim" a section with a TTL (e.g., `scriptum_claim(section, ttl=10m, note="rewriting auth")`). UI shows "claimed by X" as a soft advisory lock. Other editors see a warning but can still edit — leases are non-blocking. Provides a default coordination path for agents and humans.
-- **Reconciliation UI**: When concurrent large rewrites hit the same section, both versions are preserved and shown side-by-side for the user to choose, merge, or keep both. Prevents the worst CRDT interleaving UX.
+- **Intent/lease system**: Editors can "claim" a section with a TTL (e.g., `scriptum_claim(section, ttl=10m, note="rewriting auth")`). UI shows a colored badge next to the section heading: `## Authentication [claude-1 editing]`. Other editors see a warning but can still edit — leases are advisory, non-blocking. Lifecycle: TTL-only (no explicit release RPC needed). Activity auto-extends TTL. Stored in daemon memory + local SQLite. Cross-device visibility via relay awareness protocol (lightweight, eventual consistency).
+- **Reconciliation UI**: When >50% of a section's characters are changed by 2+ distinct editors within 30 seconds, trigger reconciliation. Both versions shown inline within the document, separated by a subtle divider. "Keep A / Keep B / Keep Both" buttons — resolution happens in the editor, no separate view. Prevents the worst CRDT interleaving UX.
 - **Commenting**: Inline comments on selections, threaded discussions, resolve/unresolve. Comments are for discussion and conversation -- not an approval workflow. No tracked changes or suggesting mode.
 
 ### 3. Local Editing & Sync
@@ -105,15 +105,18 @@ scriptum peek doc.md --section "## Auth"  # Quick read without registering edit 
 - **`read` before `edit`**: Reading a section registers intent, enabling smarter overlap detection
 - **State survives context switches**: Agent state (pending reads, active sections) persists in the daemon, so sub-agents spawned with fresh context can run `scriptum status` to recover state
 - **`--file` flag for complex content**: Avoids shell quoting issues with multi-line markdown
+- **`--section` edit semantics**: `scriptum edit --section "## Auth" --content "..."` replaces everything between the heading and the next same-or-higher-level heading. The heading line itself is preserved.
+- **Output format**: Auto-detected. TTY → human-readable text. Piped/redirected → structured JSON. Agents in non-TTY environments get JSON automatically.
+- **Exit codes**: 0=success, 1=general error, 2=usage error, 10=daemon not running, 11=auth failed, 12=conflict/overlap warning, 13=network error
 
 **MCP Server**:
 - Native integration with Claude Code, Cursor, and any MCP-compatible agent
 - Tools: `scriptum_read`, `scriptum_edit`, `scriptum_list`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`, `scriptum_history`, `scriptum_subscribe`, `scriptum_agents`, `scriptum_claim`, `scriptum_bundle`
 - `scriptum_claim(section_id, ttl, mode, note)`: Claim a section with advisory lease
-- `scriptum_bundle(doc, section_id, include=[parents, children, backlinks, comments], token_budget=N)`: Get optimally-sized context for a section in one call — agents get just enough context, continuously updated
+- `scriptum_bundle(doc, section_id, include=[parents, children, backlinks, comments], token_budget=N)`: Get optimally-sized context for a section in one call. Token counting via tiktoken-rs (cl100k_base) for accurate budget management. Truncation priority: comments first, then backlinks, then children, then parents — section content is never truncated.
 - Resources: `scriptum://docs/{id}`, `scriptum://docs/{id}/sections`, `scriptum://workspace`, `scriptum://agents`
-- Agents receive notifications when sections they're working on change
-- Agent name derived from MCP client config (no manual `--agent` needed)
+- **Change notifications**: Polling-based. `scriptum_status` returns a `change_token`. Agent polls periodically; token changes when watched docs update. No push over stdio — simple, reliable, works with all MCP transports.
+- Agent name derived from MCP client config (no manual `--agent` needed). Falls back to `mcp-agent` if client config has no name.
 
 **Claude Code Hooks** *(directly inspired by Niwa)*:
 ```bash
@@ -175,7 +178,7 @@ Abstract workspace layer that's flexible and intuitive.
 
 Full audit trail of every change.
 
-- **CRDT history (recent, V1)**: Character-level, real-time history for the last 90 days. See exactly who typed what, rewind to any point. Requires: update log with timestamps, stable client-ID-to-user mapping (via dual attribution model), periodic snapshots for feasible replay, scrub/replay UI.
+- **CRDT history (recent, V1)**: Character-level, real-time history for the last 90 days. See exactly who typed what, rewind to any point. **Replay architecture**: Snapshot + sequential replay. Scrubbing to time T = load nearest snapshot before T, replay WAL entries until T. With snapshots every 1000 updates, max 1000 ops to replay (~50ms). Requires: update log with timestamps, stable client-ID-to-user mapping (via dual attribution model).
 - **Git history (permanent)**: Every auto-commit is a permanent snapshot. Browse with familiar git tools.
 - **Timeline view**: Visual timeline of document evolution with contributor avatars
 - **Diff view**: Side-by-side or inline diffs between any two versions
@@ -253,6 +256,132 @@ Control who can access and edit.
 
 ---
 
+## UI/UX Reference Design
+
+Design philosophy: **Obsidian's layout + Notion's polish + Linear's minimalism**. Keyboard-driven, information-dense when needed, clean when not.
+
+### App Layout (Desktop & Web)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ┌─ Sidebar (Linear-style) ─┐  ┌─ Editor Area ────────────────┐│
+│  │                           │  │                               ││
+│  │  [Workspace ▾] dropdown   │  │  ┌─ Tab Bar ───────────────┐ ││
+│  │                           │  │  │ auth.md │ api.md │ + ▾  │ ││
+│  │  ─── Documents ───        │  │  └─────────────────────────┘ ││
+│  │  📄 README.md             │  │                               ││
+│  │  📁 docs/                 │  │  Breadcrumb: docs / auth.md   ││
+│  │    📄 auth.md  ●          │  │                               ││
+│  │    📄 api.md              │  │  ┌─ CodeMirror 6 ──────────┐ ││
+│  │  📁 specs/                │  │  │                          │ ││
+│  │    📄 rfc-001.md          │  │  │  # Authentication       │ ││
+│  │                           │  │  │                          │ ││
+│  │  ─── Tags ───             │  │  │  ## OAuth Flow          │ ││
+│  │  #rfc  #draft  #approved  │  │  │  [claude-1 editing]     │ ││
+│  │                           │  │  │                          │ ││
+│  │  ─── Agents ───           │  │  │  Content here with      │ ││
+│  │  🤖 claude-1 (active)     │  │  │  **live preview** of    │ ││
+│  │  🤖 claude-2 (idle)       │  │  │  unfocused lines...     │ ││
+│  │                           │  │  │                          │ ││
+│  └───────────────────────────┘  │  └──────────────────────────┘ ││
+│                                 │                               ││
+│                                 │  ┌─ Status Bar ─────────────┐ ││
+│                                 │  │ ● Synced │ Ln 42 │ 3 edrs│ ││
+│                                 │  └──────────────────────────┘ ││
+│                                 └───────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key layout decisions**:
+- **Sidebar**: Linear-style minimal. Workspace switcher dropdown at top. Documents grouped by folder. Tags section. Active agents section. Cmd+K command palette for fast navigation.
+- **Editor**: Centered content with Notion-style clean typography (max ~720px content width). Tab bar for open documents (Obsidian-style). Breadcrumb navigation.
+- **Status bar**: Sync status (green dot = synced, yellow = syncing, red = offline), cursor position, active editor count.
+- **Right panel** (toggleable): Document outline, backlinks, comments. Not visible by default.
+
+### Collaboration Presence (Google Docs-style)
+
+- **Colored cursors** with name labels floating next to cursor position. Label auto-hides after 3s of inactivity, reappears on movement.
+- **Avatar stack** in top-right corner showing who's online in this document.
+- **Selection highlights**: Each collaborator's text selection shown in their assigned color (translucent highlight).
+- **Color assignment**: Deterministic from user/agent name hash. Consistent across sessions.
+
+### Section Lease Indicators
+
+- **Inline badge** next to section heading: `## Authentication [claude-1 editing]`
+- Badge color matches the editor's cursor color.
+- Badge shows on hover: "Claimed by claude-1: rewriting auth (expires in 8m)"
+- Badge disappears when lease expires or is released.
+
+### Reconciliation UI (Notion-style inline)
+
+When the reconciliation trigger fires (>50% section changed by 2+ editors in 30s):
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  ## Authentication                                        │
+│                                                           │
+│  ┌─ Version by Gary ────────────────────────────────────┐│
+│  │ OAuth 2.1 with PKCE is the primary auth flow.        ││
+│  │ Users authenticate via GitHub OAuth...                ││
+│  └──────────────────────────────────────────────────────┘│
+│                                                           │
+│  ┌─ Version by claude-1 ───────────────────────────────┐│
+│  │ Authentication uses OAuth 2.1 + PKCE. The flow      ││
+│  │ supports both GitHub and email/password...           ││
+│  └──────────────────────────────────────────────────────┘│
+│                                                           │
+│  [ Keep Gary's ] [ Keep claude-1's ] [ Keep Both ]        │
+│                                                           │
+└──────────────────────────────────────────────────────────┘
+```
+
+- Both versions shown inline, separated by subtle divider with author attribution.
+- Resolution happens in the editor — no separate view or modal.
+- "Keep Both" inserts both versions sequentially with a separator.
+- Resolution triggers a semantic commit.
+
+### Comments (Notion-style inline popover)
+
+- Select text → comment icon appears in right margin.
+- Click → popover anchored to selection with comment input.
+- Threaded replies within the popover.
+- Resolved comments collapse to a subtle indicator (small dot in margin).
+- Yellow highlight on text with active comments.
+
+### Search (Obsidian-style panel)
+
+- **Cmd+Shift+F**: Opens search panel in left sidebar (replaces file tree temporarily).
+- Full-text search across all workspace documents.
+- Results show: file name, matching line with highlighted search term, surrounding context snippet.
+- Click result → opens document at match location.
+- Filters: by tag, by author, by date range.
+
+### Version History / Time Travel (Obsidian-style timeline slider)
+
+- Accessed via document menu or keyboard shortcut.
+- **Horizontal timeline slider** at bottom of editor.
+- Drag slider to scrub through document history. Document content updates in real-time as you scrub.
+- **Author-colored highlights**: As you scrub, text is colored by who wrote it at that point in time (using collaboration cursor colors).
+- **Restore button**: "Restore to this version" creates a new edit reverting to the scrubbed state.
+- **Diff toggle**: Switch between "colored authorship" and "diff from current" views.
+
+### Offline / Sync Status
+
+- **Status bar indicator**: Green dot (synced), yellow dot + "Syncing..." (active sync), red dot + "Offline" (disconnected).
+- **Offline banner** (web only): Yellow banner at top: "You're offline — changes will sync when reconnected." Web app continues editing using IndexedDB as local CRDT store. Changes queue and merge on reconnect.
+- **Desktop offline**: No banner (offline is normal). Status bar shows pending changes count: "● 12 pending". Changes sync automatically on reconnect.
+- **Reconnect progress**: After coming online, status bar shows: "Syncing... 847/1,203 updates" with progress.
+
+### Workspace Management
+
+- **Workspace switching**: Dropdown at top of sidebar. Shows all workspaces with last-accessed timestamp.
+- **New document**: Cmd+N. Creates untitled doc in current folder. Inline rename.
+- **New folder**: Right-click in sidebar → "New Folder".
+- **Document actions**: Right-click context menu: Rename, Move, Delete, Copy Link, Add Tag, Archive.
+- **Settings**: Accessible from sidebar bottom gear icon. Opens a settings page (not modal) with tabbed sections: General, Git Sync, Agents, Permissions, Appearance.
+
+---
+
 # Part 2: Technical Architecture
 
 ## System Overview
@@ -316,8 +445,8 @@ Core architectural decisions:
 |-----------|-----------|-----------|
 | Shell | **Tauri 2.0** | ~10MB binary, Rust backend, native performance, file system access |
 | Frontend | **React 19 + TypeScript** | Ecosystem, component libraries, developer familiarity |
-| Editor | **CodeMirror 6** + custom Live Preview extension | Y.Text native, exact formatting preservation, MIT licensed, Obsidian-style live preview |
-| Yjs Binding | **y-codemirror.next** | Sync, remote cursors, shared undo/redo |
+| Editor | **CodeMirror 6** + custom Live Preview extension (single monolithic CM6 extension) | Y.Text native, exact formatting preservation, MIT licensed, Obsidian-style live preview |
+| Yjs Binding | **y-codemirror.next** → y-websocket → daemon local WS | Sync, remote cursors, shared undo/redo |
 | CRDT | **Yjs** | Battle-tested, CodeMirror 6 integration, efficient binary encoding |
 | Styling | **Tailwind CSS 4** | Utility-first, consistent design, fast iteration |
 | State | **Zustand** | Lightweight, works well with Yjs reactive updates |
@@ -359,9 +488,9 @@ Core architectural decisions:
 ### Git Sync
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
-| Git ops | **gitoxide** (Rust) or **libgit2** | Fast, no git CLI dependency |
+| Git ops | **Shell out to `git` CLI** | Uses existing user auth (SSH keys, credential helpers, `gh auth`). Zero config. Most reliable. Battle-tested by VS Code, GitHub Desktop. |
 | AI commits | **Claude API** | Generate commit messages from diffs |
-| Scheduling | **Built into daemon** | Timer-based, triggers on save/idle |
+| Scheduling | **Built into daemon** | Semantic triggers + idle timer fallback |
 
 ### Build & Dev Tooling
 
@@ -569,11 +698,11 @@ interface SectionEdit {
 }
 ```
 
-**Section parsing approach** (borrowed from Niwa's markdown-it-py strategy):
-- Parse markdown AST to extract heading tokens with line positions
+**Section parsing approach**:
+- **Parser**: pulldown-cmark (Rust). Strict mode: only ATX headings (`#` style) are section boundaries. Headings inside code blocks and HTML are ignored.
 - Build a tree: headings at level N are children of the nearest preceding heading at level N-1
 - Content between headings belongs to the preceding heading's section
-- Section IDs are stable across edits when possible (derived from heading text slug), with Niwa-style `h{level}_{index}` fallback for duplicate headings
+- **Slug algorithm**: lowercase, strip non-alphanumeric, hyphenate spaces. Fallback: `h{level}_{index}` for duplicate headings
 - Re-parse on every CRDT update (fast - just heading extraction, not full render)
 
 **How it integrates with Yjs:**
@@ -636,10 +765,30 @@ The Scriptum daemon (`scriptumd`) is a Rust process that owns all local collabor
 │  - Agent state persistence                                        │
 │  - Git sync scheduling                                            │
 │                                                                   │
-│  IPC:                                                             │
+│  IPC & Networking:                                                │
 │  - Unix socket (macOS/Linux): ~/.scriptum/daemon.sock             │
 │  - Named pipe (Windows): \\.\pipe\scriptum-daemon                 │
-│  - Protocol: JSON-RPC over the socket                             │
+│  - Protocol: JSON-RPC over the socket (CLI, MCP)                  │
+│  - Local WebSocket server (dual endpoints):                       │
+│    - ws://localhost:{port}/yjs — Yjs binary sync protocol         │
+│      (sync step 1/2 + awareness). y-websocket clients connect     │
+│      out of the box. Used by CodeMirror/y-codemirror.next.        │
+│    - ws://localhost:{port}/rpc — JSON-RPC over WebSocket.         │
+│      Same methods as Unix socket, different transport.             │
+│    - Port auto-assigned, written to ~/.scriptum/ws.port           │
+│                                                                   │
+│  Document memory management (hybrid subscribe + LRU):             │
+│  - Active WS subscriptions keep Y.Docs loaded in memory           │
+│  - Last subscriber disconnects → doc enters LRU cache             │
+│  - Eviction only under memory pressure (default 512MB threshold)  │
+│  - Evicted docs persist to snapshot + WAL, reload ~50-200ms       │
+│                                                                   │
+│  Startup & discovery (socket-activated):                          │
+│  - CLI/MCP try to connect to Unix socket                          │
+│  - Connection refused → fork+exec daemon binary                   │
+│  - Daemon creates socket, signals ready by accepting connections  │
+│  - PID file at ~/.scriptum/daemon.pid (diagnostics only)          │
+│  - Timeout: 5s for readiness, then fail with exit code 10         │
 │                                                                   │
 │  Crash recovery:                                                  │
 │  - Load latest snapshot, replay WAL, mark doc degraded if         │
@@ -649,7 +798,7 @@ The Scriptum daemon (`scriptumd`) is a Rust process that owns all local collabor
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Components**: file watcher, CRDT engine, section parser, git sync worker, local metadata DB (`meta.db` SQLite), outbound sync queue.
+**Components**: file watcher, CRDT engine (y-crdt Rust), section parser (pulldown-cmark), git sync worker, local metadata DB (`meta.db` SQLite), outbound sync queue.
 
 **Clients**: desktop app (Tauri+React+CM6), CLI (Rust), MCP server (TypeScript).
 
@@ -1058,6 +1207,10 @@ Key Niwa insight: agents lose context (sub-agent spawns, context compaction, cra
 ```
 
 **Relay Services**: auth, metadata API, sync session manager, update sequencer, snapshot compactor.
+
+**Relay CRDT Management**: Full Y.Doc in memory (via y-crdt Rust) for active documents. Validates updates, generates snapshots, serves current state. Inactive documents unloaded (reload from snapshot + update log on next subscribe).
+
+**Update Sequencer**: In-memory atomic counter per `(workspace_id, doc_id)`. Batch-flush to PostgreSQL periodically. Gaps in sequence are acceptable — clients handle via dedupe key `(client_id, client_update_id)`. Counter is recovered from `MAX(server_seq)` on startup.
 
 **Relay Persistence**: PostgreSQL for metadata + update index, object storage for large snapshots.
 
@@ -1518,6 +1671,7 @@ JSON-RPC 2.0 over local Unix socket (`~/.scriptum/daemon.sock`) or Windows named
 **`doc.bundle`**
 - Params: `{ workspace_id: string, doc_id: string, section_id?: string, include: ("parents" | "children" | "backlinks" | "comments")[], token_budget?: int }`
 - Result: `{ section_content: string, context: { parents: [Section], children: [Section], backlinks: [{ doc_id, path, snippet }], comments: [CommentThread] }, tokens_used: int }`
+- **Token counting**: tiktoken-rs (cl100k_base tokenizer) for accurate budget. Truncation priority: comments → backlinks → children → parents. Section content is never truncated.
 
 ### Git Methods
 
@@ -2361,6 +2515,8 @@ Playwright configured to retain on failure: trace, screenshot diffs, video (opti
 
 9. **Git leader election protocol**: Relay-mediated leader election among daemons is decided, but the specific protocol (heartbeat-based, lease-based, Raft-lite) needs design before Phase 3.
 
-10. **Reconciliation UI trigger heuristics**: When does "concurrent large rewrite" detection fire? Threshold: % of section changed by 2+ editors within N seconds? Needs UX research and tuning.
+10. ~~**Reconciliation UI trigger heuristics**~~ **RESOLVED**: >50% section changed by 2+ editors within 30s. Inline resolution (Notion-style keep A/B/both).
 
 11. **E2EE key management (V2)**: Key rotation, device authorization, recovery flows for end-to-end encrypted workspaces. Deferred but storage layer should be designed to accommodate.
+
+12. ~~**MCP subscribe notification delivery**~~ **RESOLVED**: Polling with change token. `scriptum_status` returns `change_token` that updates when watched docs change. No push over stdio.

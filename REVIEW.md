@@ -138,8 +138,8 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 
 ### Cross-Cutting
 - ~~No error states described anywhere~~ Resolved: full error code registry in spec
-- No loading states (syncing? committing? loading?)
-- No document creation or deletion flow (REST endpoints exist but no UI flow)
+- ~~No loading states~~ **RESOLVED**: Sync status in status bar (green/yellow/red), offline banner on web, reconnect progress indicator
+- ~~No document creation or deletion flow~~ **RESOLVED**: UI/UX section defines Cmd+N, right-click context menus, sidebar actions
 - ~~No accessibility (keyboard nav, screen readers, ARIA)~~ Partially addressed: ARIA snapshot testing added to UI testing strategy. Keyboard nav and screen reader design still needed.
 - No responsive web design (PM on mobile?)
 - Onboarding is Phase 5 (weeks 17-20) but "< 2 min to first edit" is a success metric
@@ -164,13 +164,13 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 
 ### Before Phase 4 (blocks agent integration)
 9. ~~Agent name policy~~ **RESOLVED** — duplicates allowed, shared state
-10. **MCP subscribe notification delivery** → how stdio transport delivers push notifications
+10. ~~MCP subscribe notification delivery~~ **RESOLVED** — polling with change token, no push over stdio
 
 ### Before Phase 5 (blocks polish)
 11. **Full-text search index** → SQLite FTS5 vs Tantivy
 12. **Backlinks parsing/resolution** → extract links, resolve to doc IDs, update on edit
 13. ~~CRDT GC / retention policy~~ **RESOLVED**
-14. **Reconciliation UI trigger heuristics** → what threshold triggers side-by-side view
+14. ~~Reconciliation UI trigger heuristics~~ **RESOLVED** — >50% section changed by 2+ editors in 30s, inline resolution
 
 ### Defer to V2
 - Image upload (paste URLs for V1)
