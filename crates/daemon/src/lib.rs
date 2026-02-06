@@ -5,6 +5,7 @@ pub mod engine;
 pub mod git;
 pub mod history;
 pub mod outbox;
+pub mod relay;
 pub mod rpc;
 pub mod runtime;
 pub mod search;

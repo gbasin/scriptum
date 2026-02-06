@@ -1,3 +1,5 @@
+pub mod documents;
+
 use std::{collections::HashMap, env, sync::Arc};
 
 use anyhow::{Context, Result};
