@@ -11,6 +11,7 @@ mod error;
 mod leader;
 mod protocol;
 mod sync;
+pub mod validation;
 mod ws;
 
 use anyhow::Context;
