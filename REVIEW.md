@@ -140,7 +140,7 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 - ~~No error states described anywhere~~ Resolved: full error code registry in spec
 - No loading states (syncing? committing? loading?)
 - No document creation or deletion flow (REST endpoints exist but no UI flow)
-- No accessibility (keyboard nav, screen readers, ARIA)
+- ~~No accessibility (keyboard nav, screen readers, ARIA)~~ Partially addressed: ARIA snapshot testing added to UI testing strategy. Keyboard nav and screen reader design still needed.
 - No responsive web design (PM on mobile?)
 - Onboarding is Phase 5 (weeks 17-20) but "< 2 min to first edit" is a success metric
 
