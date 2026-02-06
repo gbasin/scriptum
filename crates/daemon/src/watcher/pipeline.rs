@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 
+use scriptum_common::backlink::parse_wiki_links;
 use scriptum_common::diff::patch;
 
 use crate::engine::doc_manager::DocManager;
@@ -63,10 +64,7 @@ pub struct PipelineConfig {
 
 impl Default for PipelineConfig {
     fn default() -> Self {
-        Self {
-            debounce: DebounceConfig::default(),
-            poll_interval: Duration::from_millis(50),
-        }
+        Self { debounce: DebounceConfig::default(), poll_interval: Duration::from_millis(50) }
     }
 }
 
@@ -120,13 +118,8 @@ pub async fn run_pipeline(
         // Drain any events that have passed the debounce window.
         let ready = debouncer.drain_ready();
         for event in ready {
-            let result = process_event(
-                &event,
-                &doc_manager,
-                resolver.as_ref(),
-                hash_store.as_ref(),
-            )
-            .await;
+            let result =
+                process_event(&event, &doc_manager, resolver.as_ref(), hash_store.as_ref()).await;
 
             let pipeline_event = match result {
                 Ok(Some(pe)) => pe,
@@ -136,10 +129,7 @@ pub async fn run_pipeline(
                 }
                 Err(e) => {
                     warn!(path = %event.path.display(), error = %e, "pipeline error");
-                    PipelineEvent::Error {
-                        path: event.path,
-                        error: e.to_string(),
-                    }
+                    PipelineEvent::Error { path: event.path, error: e.to_string() }
                 }
             };
 
@@ -166,17 +156,16 @@ async fn process_event(
 
     match event.kind {
         FsEventKind::Remove => {
-            Ok(Some(PipelineEvent::DocRemoved {
-                workspace_id,
-                doc_id,
-                path: event.path.clone(),
-            }))
+            Ok(Some(PipelineEvent::DocRemoved { workspace_id, doc_id, path: event.path.clone() }))
         }
 
         FsEventKind::Create | FsEventKind::Modify => {
             // Read file content.
             let content = std::fs::read_to_string(&event.path)
                 .with_context(|| format!("failed to read {}", event.path.display()))?;
+
+            // Save-time backlink extraction (indexing is handled by downstream stages).
+            let _wiki_links = parse_wiki_links(&content);
 
             // Hash check — skip if unchanged.
             let new_hash = hash::sha256_hex(content.as_bytes());
@@ -192,12 +181,7 @@ async fn process_event(
 
             // Diff and apply.
             let ytext = doc.get_or_insert_text("content");
-            let ops = patch::apply_text_diff_to_ytext(
-                doc.inner(),
-                &ytext,
-                &current_text,
-                &content,
-            );
+            let ops = patch::apply_text_diff_to_ytext(doc.inner(), &ytext, &current_text, &content);
             let op_count = ops.len();
             drop(mgr); // Release lock before I/O.
 
@@ -271,9 +255,9 @@ mod tests {
     // ── Test helpers ───────────────────────────────────────────────
 
     fn setup() -> (
-        Uuid,      // workspace_id
-        Uuid,      // doc_id
-        PathBuf,   // file_path
+        Uuid,    // workspace_id
+        Uuid,    // doc_id
+        PathBuf, // file_path
         Arc<dyn PathResolver>,
         Arc<dyn HashStore>,
         Arc<Mutex<DocManager>>,
@@ -307,14 +291,10 @@ mod tests {
         resolver_mut.add(file_path.to_str().unwrap(), doc_id);
         let resolver: Arc<dyn PathResolver> = Arc::new(resolver_mut);
 
-        let event = RawFsEvent {
-            kind: FsEventKind::Create,
-            path: file_path.clone(),
-        };
+        let event = RawFsEvent { kind: FsEventKind::Create, path: file_path.clone() };
 
-        let result = process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref())
-            .await
-            .unwrap();
+        let result =
+            process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
 
         match result {
             Some(PipelineEvent::DocUpdated {
@@ -355,9 +335,8 @@ mod tests {
         hash_store.set_hash(&doc_id.to_string(), &h).unwrap();
 
         let event = RawFsEvent { kind: FsEventKind::Modify, path: file_path };
-        let result = process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref())
-            .await
-            .unwrap();
+        let result =
+            process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
 
         assert!(result.is_none(), "unchanged content should be no-op");
     }
@@ -367,9 +346,8 @@ mod tests {
         let (ws_id, doc_id, path, resolver, hash_store, doc_mgr) = setup();
 
         let event = RawFsEvent { kind: FsEventKind::Remove, path: path.clone() };
-        let result = process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref())
-            .await
-            .unwrap();
+        let result =
+            process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
 
         match result {
             Some(PipelineEvent::DocRemoved { workspace_id, doc_id: did, path: p }) => {
@@ -388,13 +366,10 @@ mod tests {
         // Empty resolver — no paths mapped.
         let resolver: Arc<dyn PathResolver> = Arc::new(MockResolver::new(Uuid::new_v4()));
 
-        let event = RawFsEvent {
-            kind: FsEventKind::Modify,
-            path: PathBuf::from("/unknown/file.md"),
-        };
+        let event =
+            RawFsEvent { kind: FsEventKind::Modify, path: PathBuf::from("/unknown/file.md") };
 
-        let result =
-            process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await;
+        let result = process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await;
         assert!(result.is_err());
     }
 
@@ -412,16 +387,13 @@ mod tests {
         // Create initial content via the pipeline.
         std::fs::write(&file_path, "# First\n").unwrap();
         let event = RawFsEvent { kind: FsEventKind::Create, path: file_path.clone() };
-        process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref())
-            .await
-            .unwrap();
+        process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
 
         // Modify.
         std::fs::write(&file_path, "# Updated\n").unwrap();
         let event = RawFsEvent { kind: FsEventKind::Modify, path: file_path.clone() };
-        let result = process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref())
-            .await
-            .unwrap();
+        let result =
+            process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
 
         assert!(result.is_some());
         let mut mgr = doc_mgr.lock().await;
@@ -442,9 +414,7 @@ mod tests {
         let resolver: Arc<dyn PathResolver> = Arc::new(resolver);
 
         let event = RawFsEvent { kind: FsEventKind::Create, path: file_path };
-        process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref())
-            .await
-            .unwrap();
+        process_event(&event, &doc_mgr, resolver.as_ref(), hash_store.as_ref()).await.unwrap();
 
         let stored = hash_store.get_hash(&doc_id.to_string()).unwrap();
         assert_eq!(stored, Some(hash::sha256_hex(b"content")));
