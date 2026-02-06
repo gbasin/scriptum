@@ -7,5 +7,6 @@ pub mod outbox;
 pub mod rpc;
 pub mod search;
 pub mod section;
+pub mod startup;
 pub mod store;
 pub mod watcher;
