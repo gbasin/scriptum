@@ -214,6 +214,36 @@ impl LeaseStore {
         Ok(leases)
     }
 
+    /// Get active leases in a workspace, optionally filtered by doc ID.
+    pub fn active_leases(
+        &mut self,
+        conn: &Connection,
+        workspace_id: &str,
+        doc_id: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<SectionLease>> {
+        self.prune_expired(conn, now)?;
+
+        let mut leases: Vec<SectionLease> = self
+            .leases
+            .values()
+            .filter(|lease| {
+                lease.workspace_id == workspace_id
+                    && doc_id.map(|doc| lease.doc_id == doc).unwrap_or(true)
+                    && !lease.is_expired_at(now)
+            })
+            .cloned()
+            .collect();
+        leases.sort_by(|a, b| {
+            a.doc_id
+                .cmp(&b.doc_id)
+                .then_with(|| a.section_id.cmp(&b.section_id))
+                .then_with(|| a.agent_id.cmp(&b.agent_id))
+        });
+
+        Ok(leases)
+    }
+
     /// Remove expired leases from memory and SQLite.
     pub fn prune_expired(&mut self, conn: &Connection, now: DateTime<Utc>) -> Result<usize> {
         let before = self.leases.len();

@@ -1,15 +1,21 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::agent::lease::{LeaseClaim, LeaseMode, LeaseStore};
+use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus, SessionStore};
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
+use crate::store::meta_db::MetaDb;
 use scriptum_common::protocol::jsonrpc::{
     Request, RequestId, Response, RpcError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use scriptum_common::section::parser::parse_sections;
-use scriptum_common::types::Section;
+use scriptum_common::types::{
+    AgentSession as RpcAgentSession, EditorType, OverlapEditor, OverlapSeverity, Section,
+    SectionOverlap,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -71,8 +77,12 @@ impl<E: CommandExecutor> GitState<E> {
 pub struct RpcServerState {
     doc_manager: Arc<RwLock<DocManager>>,
     doc_metadata: Arc<RwLock<HashMap<(Uuid, Uuid), DocMetadataRecord>>>,
+    workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
     shutdown_notifier: Option<broadcast::Sender<()>>,
     git_state: Option<Arc<dyn GitOps + Send + Sync>>,
+    agent_db: Arc<Mutex<MetaDb>>,
+    lease_store: Arc<Mutex<LeaseStore>>,
+    agent_id: Arc<String>,
 }
 
 /// Trait to abstract git operations for testability via dynamic dispatch.
@@ -243,13 +253,159 @@ struct DocEditSectionResult {
     etag: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct AgentStatusParams {
+    workspace_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AgentConflictsParams {
+    workspace_id: Uuid,
+    #[serde(default)]
+    doc_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AgentListParams {
+    workspace_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AgentClaimMode {
+    Exclusive,
+    Shared,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AgentClaimParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    section_id: String,
+    ttl_sec: u32,
+    mode: AgentClaimMode,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentWhoamiResult {
+    agent_id: String,
+    capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentStatusResult {
+    active_sessions: Vec<RpcAgentSession>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentListItem {
+    agent_id: String,
+    last_seen_at: chrono::DateTime<chrono::Utc>,
+    active_sections: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentListResult {
+    items: Vec<AgentListItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentClaimConflictResult {
+    agent_id: String,
+    section_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentClaimResult {
+    lease_id: String,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    conflicts: Vec<AgentClaimConflictResult>,
+}
+
+// ── Workspace types ────────────────────────────────────────────────
+
+/// In-memory workspace registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceInfo {
+    pub workspace_id: Uuid,
+    pub name: String,
+    pub root_path: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WorkspaceListParams {
+    #[serde(default)]
+    offset: usize,
+    #[serde(default = "default_workspace_list_limit")]
+    limit: usize,
+}
+
+fn default_workspace_list_limit() -> usize {
+    20
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkspaceListItem {
+    workspace_id: Uuid,
+    name: String,
+    root_path: String,
+    doc_count: usize,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkspaceListResult {
+    items: Vec<WorkspaceListItem>,
+    total: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WorkspaceOpenParams {
+    workspace_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkspaceOpenResult {
+    workspace_id: Uuid,
+    name: String,
+    root_path: String,
+    doc_count: usize,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WorkspaceCreateParams {
+    name: String,
+    root_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkspaceCreateResult {
+    workspace_id: Uuid,
+    name: String,
+    root_path: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl Default for RpcServerState {
     fn default() -> Self {
+        let meta_db = MetaDb::open(":memory:").expect("in-memory meta.db should initialize");
+        let lease_store = LeaseStore::new(meta_db.connection(), chrono::Utc::now())
+            .expect("lease store should initialize");
         Self {
             doc_manager: Arc::new(RwLock::new(DocManager::default())),
             doc_metadata: Arc::new(RwLock::new(HashMap::new())),
+            workspaces: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notifier: None,
             git_state: None,
+            agent_db: Arc::new(Mutex::new(meta_db)),
+            lease_store: Arc::new(Mutex::new(lease_store)),
+            agent_id: Arc::new("local-agent".to_string()),
         }
     }
 }
@@ -268,6 +424,249 @@ impl RpcServerState {
     pub fn with_git_state<E: CommandExecutor + 'static>(mut self, git: GitState<E>) -> Self {
         self.git_state = Some(Arc::new(git));
         self
+    }
+
+    pub fn with_agent_identity(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Arc::new(agent_id.into());
+        self
+    }
+
+    fn with_agent_storage<T, F>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce(&rusqlite::Connection, &mut LeaseStore) -> Result<T, String>,
+    {
+        let db = self
+            .agent_db
+            .lock()
+            .map_err(|_| "agent db lock poisoned".to_string())?;
+        let mut leases = self
+            .lease_store
+            .lock()
+            .map_err(|_| "agent lease store lock poisoned".to_string())?;
+        f(db.connection(), &mut leases)
+    }
+
+    fn ensure_active_session(
+        conn: &rusqlite::Connection,
+        workspace_id: Uuid,
+        agent_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), String> {
+        let workspace = workspace_id.to_string();
+        let active_sessions =
+            SessionStore::list_active(conn, &workspace).map_err(|error| error.to_string())?;
+
+        if let Some(session) = active_sessions.into_iter().find(|session| session.agent_id == agent_id)
+        {
+            SessionStore::touch(conn, &session.session_id, now).map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+
+        let session = PersistedAgentSession {
+            session_id: format!("rpc-{}", Uuid::new_v4()),
+            agent_id: agent_id.to_string(),
+            workspace_id: workspace,
+            started_at: now,
+            last_seen_at: now,
+            status: SessionStatus::Active,
+        };
+        SessionStore::create(conn, &session).map_err(|error| error.to_string())
+    }
+
+    fn count_active_sections_by_agent(
+        leases: &[crate::agent::lease::SectionLease],
+    ) -> HashMap<String, u32> {
+        let mut dedupe: HashMap<String, HashSet<(String, String)>> = HashMap::new();
+        for lease in leases {
+            dedupe
+                .entry(lease.agent_id.clone())
+                .or_default()
+                .insert((lease.doc_id.clone(), lease.section_id.clone()));
+        }
+
+        dedupe.into_iter().map(|(agent_id, sections)| (agent_id, sections.len() as u32)).collect()
+    }
+
+    fn agent_status(&self, workspace_id: Uuid) -> Result<AgentStatusResult, String> {
+        let now = chrono::Utc::now();
+        self.with_agent_storage(|conn, lease_store| {
+            let workspace = workspace_id.to_string();
+            let sessions =
+                SessionStore::list_active(conn, &workspace).map_err(|error| error.to_string())?;
+            let leases = lease_store
+                .active_leases(conn, &workspace, None, now)
+                .map_err(|error| error.to_string())?;
+            let active_sections_by_agent = Self::count_active_sections_by_agent(&leases);
+
+            let active_sessions = sessions
+                .into_iter()
+                .map(|session| RpcAgentSession {
+                    agent_id: session.agent_id.clone(),
+                    workspace_id,
+                    last_seen_at: session.last_seen_at,
+                    active_sections: active_sections_by_agent
+                        .get(&session.agent_id)
+                        .copied()
+                        .unwrap_or(0),
+                })
+                .collect::<Vec<_>>();
+            Ok(AgentStatusResult { active_sessions })
+        })
+    }
+
+    fn agent_list(&self, workspace_id: Uuid) -> Result<AgentListResult, String> {
+        let now = chrono::Utc::now();
+        self.with_agent_storage(|conn, lease_store| {
+            let workspace = workspace_id.to_string();
+            let sessions =
+                SessionStore::list_active(conn, &workspace).map_err(|error| error.to_string())?;
+            let leases = lease_store
+                .active_leases(conn, &workspace, None, now)
+                .map_err(|error| error.to_string())?;
+            let active_sections_by_agent = Self::count_active_sections_by_agent(&leases);
+
+            let mut items_by_agent: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
+            for session in sessions {
+                items_by_agent
+                    .entry(session.agent_id)
+                    .and_modify(|last_seen| {
+                        if session.last_seen_at > *last_seen {
+                            *last_seen = session.last_seen_at;
+                        }
+                    })
+                    .or_insert(session.last_seen_at);
+            }
+
+            let mut items = items_by_agent
+                .into_iter()
+                .map(|(agent_id, last_seen_at)| AgentListItem {
+                    active_sections: active_sections_by_agent.get(&agent_id).copied().unwrap_or(0),
+                    agent_id,
+                    last_seen_at,
+                })
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| {
+                b.last_seen_at
+                    .cmp(&a.last_seen_at)
+                    .then_with(|| a.agent_id.cmp(&b.agent_id))
+            });
+
+            Ok(AgentListResult { items })
+        })
+    }
+
+    fn agent_conflicts(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Option<Uuid>,
+    ) -> Result<Vec<SectionOverlap>, String> {
+        let now = chrono::Utc::now();
+        self.with_agent_storage(|conn, lease_store| {
+            let workspace = workspace_id.to_string();
+            let doc_filter = doc_id.map(|value| value.to_string());
+            let leases = lease_store
+                .active_leases(conn, &workspace, doc_filter.as_deref(), now)
+                .map_err(|error| error.to_string())?;
+
+            let mut grouped: HashMap<(String, String), Vec<crate::agent::lease::SectionLease>> =
+                HashMap::new();
+            for lease in leases {
+                grouped
+                    .entry((lease.doc_id.clone(), lease.section_id.clone()))
+                    .or_default()
+                    .push(lease);
+            }
+
+            let mut items = grouped
+                .into_iter()
+                .filter_map(|((_doc_id, section_id), mut section_leases)| {
+                    if section_leases.len() < 2 {
+                        return None;
+                    }
+
+                    section_leases.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+                    let editors = section_leases
+                        .iter()
+                        .map(|lease| OverlapEditor {
+                            name: lease.agent_id.clone(),
+                            editor_type: EditorType::Agent,
+                            cursor_offset: 0,
+                            last_edit_at: lease.expires_at,
+                        })
+                        .collect::<Vec<_>>();
+
+                    let section = Section {
+                        id: section_id.clone(),
+                        parent_id: None,
+                        heading: section_id.clone(),
+                        level: 1,
+                        start_line: 1,
+                        end_line: 2,
+                    };
+
+                    Some(SectionOverlap { section, editors, severity: OverlapSeverity::Info })
+                })
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.section.id.cmp(&b.section.id));
+            Ok(items)
+        })
+    }
+
+    fn agent_claim(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        section_id: String,
+        ttl_sec: u32,
+        mode: AgentClaimMode,
+        note: Option<String>,
+        agent_id: Option<String>,
+    ) -> Result<AgentClaimResult, String> {
+        let normalized_section_id = section_id.trim().to_string();
+        if normalized_section_id.is_empty() {
+            return Err("section_id must not be empty".to_string());
+        }
+
+        let now = chrono::Utc::now();
+        let agent_id = agent_id.unwrap_or_else(|| (*self.agent_id).clone());
+        let mode = match mode {
+            AgentClaimMode::Exclusive => LeaseMode::Exclusive,
+            AgentClaimMode::Shared => LeaseMode::Shared,
+        };
+
+        self.with_agent_storage(|conn, lease_store| {
+            Self::ensure_active_session(conn, workspace_id, &agent_id, now)?;
+
+            let claim = LeaseClaim {
+                workspace_id: workspace_id.to_string(),
+                doc_id: doc_id.to_string(),
+                section_id: normalized_section_id.clone(),
+                agent_id: agent_id.clone(),
+                ttl_sec,
+                mode,
+                note,
+            };
+
+            let claim_result = lease_store.claim(conn, claim, now).map_err(|error| error.to_string())?;
+            let lease = claim_result.lease;
+            let conflicts = claim_result
+                .conflicts
+                .into_iter()
+                .map(|conflict| AgentClaimConflictResult {
+                    agent_id: conflict.agent_id,
+                    section_id: conflict.section_id,
+                })
+                .collect::<Vec<_>>();
+
+            Ok(AgentClaimResult {
+                lease_id: format!(
+                    "{}:{}:{}:{}",
+                    workspace_id, doc_id, lease.section_id, lease.agent_id
+                ),
+                expires_at: lease.expires_at,
+                conflicts,
+            })
+        })
     }
 
     pub async fn seed_doc(
@@ -300,6 +699,114 @@ impl RpcServerState {
             etag: format!("doc:{doc_id}:0"),
         };
         self.doc_metadata.write().await.insert((workspace_id, doc_id), metadata);
+    }
+
+    /// Register a workspace (for tests).
+    pub async fn seed_workspace(
+        &self,
+        workspace_id: Uuid,
+        name: impl Into<String>,
+        root_path: impl Into<String>,
+    ) {
+        let info = WorkspaceInfo {
+            workspace_id,
+            name: name.into(),
+            root_path: root_path.into(),
+            created_at: chrono::Utc::now(),
+        };
+        self.workspaces.write().await.insert(workspace_id, info);
+    }
+
+    async fn workspace_list(&self, offset: usize, limit: usize) -> WorkspaceListResult {
+        let workspaces = self.workspaces.read().await;
+        let doc_metadata = self.doc_metadata.read().await;
+
+        // Count docs per workspace.
+        let mut doc_counts: HashMap<Uuid, usize> = HashMap::new();
+        for (ws_id, _doc_id) in doc_metadata.keys() {
+            *doc_counts.entry(*ws_id).or_default() += 1;
+        }
+
+        let mut items: Vec<WorkspaceListItem> = workspaces
+            .values()
+            .map(|ws| WorkspaceListItem {
+                workspace_id: ws.workspace_id,
+                name: ws.name.clone(),
+                root_path: ws.root_path.clone(),
+                doc_count: doc_counts.get(&ws.workspace_id).copied().unwrap_or(0),
+                created_at: ws.created_at,
+            })
+            .collect();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let total = items.len();
+        let items: Vec<WorkspaceListItem> = items.into_iter().skip(offset).take(limit).collect();
+
+        WorkspaceListResult { items, total }
+    }
+
+    async fn workspace_open(&self, workspace_id: Uuid) -> Result<WorkspaceOpenResult, String> {
+        let workspaces = self.workspaces.read().await;
+        let ws = workspaces
+            .get(&workspace_id)
+            .ok_or_else(|| format!("workspace {} not found", workspace_id))?;
+
+        let doc_metadata = self.doc_metadata.read().await;
+        let doc_count = doc_metadata
+            .keys()
+            .filter(|(ws_id, _)| *ws_id == workspace_id)
+            .count();
+
+        Ok(WorkspaceOpenResult {
+            workspace_id: ws.workspace_id,
+            name: ws.name.clone(),
+            root_path: ws.root_path.clone(),
+            doc_count,
+            created_at: ws.created_at,
+        })
+    }
+
+    async fn workspace_create(
+        &self,
+        name: String,
+        root_path: String,
+    ) -> Result<WorkspaceCreateResult, String> {
+        let trimmed_name = name.trim().to_string();
+        if trimmed_name.is_empty() {
+            return Err("workspace name must not be empty".to_string());
+        }
+
+        let path = std::path::Path::new(&root_path);
+        if !path.is_absolute() {
+            return Err("root_path must be an absolute path".to_string());
+        }
+
+        // Create `.scriptum/` directory and default workspace.toml.
+        let scriptum_dir = path.join(".scriptum");
+        std::fs::create_dir_all(&scriptum_dir)
+            .map_err(|e| format!("failed to create .scriptum directory: {e}"))?;
+
+        let config = crate::config::WorkspaceConfig::default();
+        config
+            .save(path)
+            .map_err(|e| format!("failed to write workspace.toml: {e}"))?;
+
+        let workspace_id = Uuid::new_v4();
+        let created_at = chrono::Utc::now();
+        let info = WorkspaceInfo {
+            workspace_id,
+            name: trimmed_name.clone(),
+            root_path: root_path.clone(),
+            created_at,
+        };
+        self.workspaces.write().await.insert(workspace_id, info);
+
+        Ok(WorkspaceCreateResult {
+            workspace_id,
+            name: trimmed_name,
+            root_path,
+            created_at,
+        })
     }
 
     async fn read_doc(
@@ -539,6 +1046,14 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
         "doc.read" => handle_doc_read(request, state).await,
         "doc.bundle" => handle_doc_bundle(request, state).await,
         "doc.edit_section" => handle_doc_edit_section(request, state).await,
+        "agent.whoami" => handle_agent_whoami(request, state),
+        "agent.status" => handle_agent_status(request, state),
+        "agent.conflicts" => handle_agent_conflicts(request, state),
+        "agent.list" => handle_agent_list(request, state),
+        "agent.claim" => handle_agent_claim(request, state),
+        "workspace.list" => handle_workspace_list(request, state).await,
+        "workspace.open" => handle_workspace_open(request, state).await,
+        "workspace.create" => handle_workspace_create(request, state).await,
         "git.status" => handle_git_status(request, state),
         "git.sync" => handle_git_sync(request, state),
         "git.configure" => handle_git_configure(request, state),
@@ -637,6 +1152,186 @@ async fn handle_doc_edit_section(request: Request, state: &RpcServerState) -> Re
             },
         ),
     }
+}
+
+fn handle_agent_whoami(request: Request, state: &RpcServerState) -> Response {
+    let result = AgentWhoamiResult {
+        agent_id: (*state.agent_id).clone(),
+        capabilities: vec![
+            "agent.whoami".to_string(),
+            "agent.status".to_string(),
+            "agent.conflicts".to_string(),
+            "agent.list".to_string(),
+            "agent.claim".to_string(),
+        ],
+    };
+    Response::success(request.id, json!(result))
+}
+
+fn handle_agent_status(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_agent_status_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.agent_status(params.workspace_id) {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => Response::error(
+            request.id,
+            RpcError {
+                code: INTERNAL_ERROR,
+                message: format!("failed to read agent status: {reason}"),
+                data: None,
+            },
+        ),
+    }
+}
+
+fn parse_agent_status_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<AgentStatusParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(
+            request_id,
+            "agent.status requires params".to_string(),
+        ));
+    };
+
+    serde_json::from_value::<AgentStatusParams>(params).map_err(|error| {
+        invalid_params_response(
+            request_id,
+            format!("failed to decode agent.status params: {error}"),
+        )
+    })
+}
+
+fn handle_agent_conflicts(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_agent_conflicts_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.agent_conflicts(params.workspace_id, params.doc_id) {
+        Ok(items) => Response::success(request.id, json!({ "items": items })),
+        Err(reason) => Response::error(
+            request.id,
+            RpcError {
+                code: INTERNAL_ERROR,
+                message: format!("failed to read agent conflicts: {reason}"),
+                data: None,
+            },
+        ),
+    }
+}
+
+fn parse_agent_conflicts_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<AgentConflictsParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(
+            request_id,
+            "agent.conflicts requires params".to_string(),
+        ));
+    };
+
+    serde_json::from_value::<AgentConflictsParams>(params).map_err(|error| {
+        invalid_params_response(
+            request_id,
+            format!("failed to decode agent.conflicts params: {error}"),
+        )
+    })
+}
+
+fn handle_agent_list(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_agent_list_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.agent_list(params.workspace_id) {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => Response::error(
+            request.id,
+            RpcError {
+                code: INTERNAL_ERROR,
+                message: format!("failed to list agents: {reason}"),
+                data: None,
+            },
+        ),
+    }
+}
+
+fn parse_agent_list_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<AgentListParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(
+            request_id,
+            "agent.list requires params".to_string(),
+        ));
+    };
+
+    serde_json::from_value::<AgentListParams>(params).map_err(|error| {
+        invalid_params_response(
+            request_id,
+            format!("failed to decode agent.list params: {error}"),
+        )
+    })
+}
+
+fn handle_agent_claim(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_agent_claim_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.agent_claim(
+        params.workspace_id,
+        params.doc_id,
+        params.section_id,
+        params.ttl_sec,
+        params.mode,
+        params.note,
+        params.agent_id,
+    ) {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => {
+            if reason.contains("ttl_sec must be > 0") || reason.contains("section_id must not be empty") {
+                invalid_params_response(request.id, reason)
+            } else {
+                Response::error(
+                    request.id,
+                    RpcError {
+                        code: INTERNAL_ERROR,
+                        message: format!("failed to claim section: {reason}"),
+                        data: None,
+                    },
+                )
+            }
+        }
+    }
+}
+
+fn parse_agent_claim_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<AgentClaimParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(
+            request_id,
+            "agent.claim requires params".to_string(),
+        ));
+    };
+
+    serde_json::from_value::<AgentClaimParams>(params).map_err(|error| {
+        invalid_params_response(
+            request_id,
+            format!("failed to decode agent.claim params: {error}"),
+        )
+    })
 }
 
 fn extract_section_content(markdown: &str, section: Option<&Section>) -> String {
@@ -945,6 +1640,7 @@ fn default_metadata(workspace_id: Uuid, doc_id: Uuid) -> DocMetadataRecord {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     use scriptum_common::protocol::jsonrpc::{Request, RequestId, INTERNAL_ERROR, INVALID_PARAMS};
@@ -1299,6 +1995,210 @@ mod tests {
         assert!(response.error.is_none(), "expected success response: {response:?}");
         assert_eq!(response.result.expect("result should be populated"), json!({ "ok": true }));
         shutdown_rx.recv().await.expect("shutdown notification should be sent");
+    }
+
+    // ── agent.* tests ─────────────────────────────────────────────────
+
+    async fn claim_section(
+        state: &RpcServerState,
+        request_id: i64,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        section_id: &str,
+        agent_id: &str,
+        mode: &str,
+    ) {
+        let request = Request::new(
+            "agent.claim",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "section_id": section_id,
+                "ttl_sec": 600,
+                "mode": mode,
+                "agent_id": agent_id
+            })),
+            RequestId::Number(request_id),
+        );
+        let response = dispatch_request(request, state).await;
+        assert!(response.error.is_none(), "claim should succeed: {response:?}");
+    }
+
+    #[tokio::test]
+    async fn agent_whoami_returns_id_and_capabilities() {
+        let state = RpcServerState::default().with_agent_identity("claude-1");
+        let request = Request::new("agent.whoami", Some(json!({})), RequestId::Number(60));
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result should be populated");
+        assert_eq!(result["agent_id"], "claude-1");
+        let capabilities = result["capabilities"]
+            .as_array()
+            .expect("capabilities should be an array");
+        assert!(capabilities.contains(&json!("agent.claim")));
+        assert!(capabilities.contains(&json!("agent.status")));
+    }
+
+    #[tokio::test]
+    async fn agent_claim_returns_lease_and_conflicts() {
+        let state = RpcServerState::default().with_agent_identity("claude-1");
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        claim_section(&state, 61, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
+            .await;
+
+        let request = Request::new(
+            "agent.claim",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "section_id": "root/auth",
+                "ttl_sec": 600,
+                "mode": "shared",
+                "agent_id": "copilot-1"
+            })),
+            RequestId::Number(62),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result should be populated");
+        let lease_id = result["lease_id"]
+            .as_str()
+            .expect("lease_id should be a string");
+        assert!(lease_id.contains(&workspace_id.to_string()));
+        assert!(lease_id.contains(&doc_id.to_string()));
+        assert!(lease_id.contains("root/auth"));
+        assert!(lease_id.contains("copilot-1"));
+
+        let conflicts = result["conflicts"]
+            .as_array()
+            .expect("conflicts should be an array");
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0]["agent_id"], "claude-1");
+        assert_eq!(conflicts[0]["section_id"], "root/auth");
+        assert!(result["expires_at"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn agent_status_returns_active_sessions_with_section_counts() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        claim_section(&state, 63, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
+            .await;
+        claim_section(&state, 64, workspace_id, doc_id, "root/auth/oauth", "claude-1", "shared")
+            .await;
+        claim_section(&state, 65, workspace_id, doc_id, "root/api", "copilot-1", "shared").await;
+
+        let request = Request::new(
+            "agent.status",
+            Some(json!({ "workspace_id": workspace_id })),
+            RequestId::Number(66),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result should be populated");
+        let sessions = result["active_sessions"]
+            .as_array()
+            .expect("active_sessions should be an array");
+        assert_eq!(sessions.len(), 2);
+
+        let mut sections_by_agent = HashMap::new();
+        for session in sessions {
+            let agent_id = session["agent_id"]
+                .as_str()
+                .expect("agent_id should be a string")
+                .to_string();
+            let active_sections = session["active_sections"]
+                .as_u64()
+                .expect("active_sections should be numeric") as u32;
+            sections_by_agent.insert(agent_id, active_sections);
+        }
+        assert_eq!(sections_by_agent.get("claude-1"), Some(&2));
+        assert_eq!(sections_by_agent.get("copilot-1"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn agent_conflicts_returns_overlapping_section_items() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        claim_section(&state, 67, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
+            .await;
+        claim_section(&state, 68, workspace_id, doc_id, "root/auth", "copilot-1", "shared").await;
+        claim_section(&state, 69, workspace_id, doc_id, "root/api", "cursor-1", "shared").await;
+
+        let request = Request::new(
+            "agent.conflicts",
+            Some(json!({ "workspace_id": workspace_id, "doc_id": doc_id })),
+            RequestId::Number(70),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result should be populated");
+        let items = result["items"]
+            .as_array()
+            .expect("items should be an array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["section"]["id"], "root/auth");
+        assert_eq!(items[0]["severity"], "info");
+        let editors = items[0]["editors"]
+            .as_array()
+            .expect("editors should be an array");
+        assert_eq!(editors.len(), 2);
+        let names = editors
+            .iter()
+            .map(|editor| editor["name"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"claude-1"));
+        assert!(names.contains(&"copilot-1"));
+    }
+
+    #[tokio::test]
+    async fn agent_list_aggregates_agents_by_latest_activity() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        claim_section(&state, 71, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
+            .await;
+        claim_section(&state, 72, workspace_id, doc_id, "root/auth/oauth", "claude-1", "shared")
+            .await;
+        claim_section(&state, 73, workspace_id, doc_id, "root/api", "copilot-1", "shared").await;
+
+        let request = Request::new(
+            "agent.list",
+            Some(json!({ "workspace_id": workspace_id })),
+            RequestId::Number(74),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result should be populated");
+        let items = result["items"]
+            .as_array()
+            .expect("items should be an array");
+        assert_eq!(items.len(), 2);
+
+        let mut sections_by_agent = HashMap::new();
+        for item in items {
+            sections_by_agent.insert(
+                item["agent_id"].as_str().expect("agent_id should be a string").to_string(),
+                item["active_sections"]
+                    .as_u64()
+                    .expect("active_sections should be numeric") as u32,
+            );
+            assert!(item["last_seen_at"].as_str().is_some());
+        }
+        assert_eq!(sections_by_agent.get("claude-1"), Some(&2));
+        assert_eq!(sections_by_agent.get("copilot-1"), Some(&1));
     }
 
     // ── git.status tests ───────────────────────────────────────────────
