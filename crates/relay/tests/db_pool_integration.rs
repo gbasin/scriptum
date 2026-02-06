@@ -16,11 +16,8 @@ async fn pg_pool_connects_and_passes_health_check() {
     config.min_connections = 1;
     config.max_connections = 2;
 
-    let pool = create_pg_pool(&database_url, config)
-        .await
-        .expect("pool should connect to test database");
+    let pool =
+        create_pg_pool(&database_url, config).await.expect("pool should connect to test database");
 
-    check_pool_health(&pool)
-        .await
-        .expect("health check query should succeed");
+    check_pool_health(&pool).await.expect("health check query should succeed");
 }

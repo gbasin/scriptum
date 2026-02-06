@@ -27,25 +27,16 @@ const EXPECTED_TABLES: &[&str] = &[
 #[tokio::test]
 async fn relay_migrations_create_expected_tables() {
     let Some(database_url) = std::env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
-        eprintln!(
-            "skipping db migration integration test: set SCRIPTUM_RELAY_TEST_DATABASE_URL"
-        );
+        eprintln!("skipping db migration integration test: set SCRIPTUM_RELAY_TEST_DATABASE_URL");
         return;
     };
 
-    let config = PoolConfig {
-        min_connections: 1,
-        max_connections: 2,
-        ..PoolConfig::default()
-    };
+    let config = PoolConfig { min_connections: 1, max_connections: 2, ..PoolConfig::default() };
 
-    let pool = create_pg_pool(&database_url, config)
-        .await
-        .expect("pool should connect to test database");
+    let pool =
+        create_pg_pool(&database_url, config).await.expect("pool should connect to test database");
 
-    migrations::run_migrations(&pool)
-        .await
-        .expect("migrations should apply");
+    migrations::run_migrations(&pool).await.expect("migrations should apply");
 
     let table_names: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT table_name \
