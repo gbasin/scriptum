@@ -193,8 +193,14 @@ fn hook_scripts() -> Vec<(&'static str, &'static str)> {
 # Scriptum SessionStart hook — inject workspace context into Claude session.
 set -euo pipefail
 
+echo "=== Scriptum Agent State ==="
+scriptum whoami 2>/dev/null || echo "(agent identity unavailable)"
+echo ""
 echo "=== Scriptum Workspace Status ==="
 scriptum status 2>/dev/null || echo "(scriptum daemon not running)"
+echo ""
+echo "=== Scriptum Overlap Warnings ==="
+scriptum conflicts 2>/dev/null || true
 echo ""
 echo "=== Scriptum CLI Quick Reference ==="
 echo "  scriptum read <doc>           Read document or section"
@@ -215,12 +221,24 @@ echo "  scriptum agents               List active agents"
 # Scriptum PreCompact hook — preserve context across /compact.
 set -euo pipefail
 
-echo "=== Scriptum Context (preserved across compaction) ==="
+echo "=== Scriptum Context Snapshot (preserve after /compact) ==="
+echo "Keep this block so Scriptum state survives compaction."
+echo ""
+echo "=== Scriptum Agent State ==="
 scriptum whoami 2>/dev/null || echo "(agent identity unavailable)"
 echo ""
+echo "=== Scriptum Workspace Status ==="
 scriptum status 2>/dev/null || echo "(status unavailable)"
 echo ""
+echo "=== Scriptum Active Overlaps ==="
 scriptum conflicts 2>/dev/null || true
+echo ""
+echo "=== Scriptum CLI Quick Reference ==="
+echo "  scriptum read <doc>           Read document or section"
+echo "  scriptum edit <doc>           Edit document or section"
+echo "  scriptum status               Show agent state and overlaps"
+echo "  scriptum conflicts            Show section overlap warnings"
+echo "  scriptum claim <section>      Claim advisory lease"
 "#,
         ),
         (
@@ -288,6 +306,39 @@ mod tests {
 
     fn setup_temp_project() -> TempDir {
         tempfile::tempdir().expect("should create temp dir")
+    }
+
+    fn hook_script_text(script_name: &str) -> &'static str {
+        hook_scripts()
+            .into_iter()
+            .find_map(|(name, script)| (name == script_name).then_some(script))
+            .expect("hook script should exist")
+    }
+
+    #[test]
+    fn session_start_script_injects_agent_state_workspace_status_and_cli_reference() {
+        let script = hook_script_text("session-start.sh");
+        assert!(script.contains("=== Scriptum Agent State ==="));
+        assert!(script.contains("scriptum whoami"));
+        assert!(script.contains("=== Scriptum Workspace Status ==="));
+        assert!(script.contains("scriptum status"));
+        assert!(script.contains("=== Scriptum Overlap Warnings ==="));
+        assert!(script.contains("scriptum conflicts"));
+        assert!(script.contains("=== Scriptum CLI Quick Reference ==="));
+    }
+
+    #[test]
+    fn pre_compact_script_preserves_context_for_post_compaction() {
+        let script = hook_script_text("pre-compact.sh");
+        assert!(script.contains("preserve after /compact"));
+        assert!(script.contains("state survives compaction"));
+        assert!(script.contains("=== Scriptum Agent State ==="));
+        assert!(script.contains("scriptum whoami"));
+        assert!(script.contains("=== Scriptum Workspace Status ==="));
+        assert!(script.contains("scriptum status"));
+        assert!(script.contains("=== Scriptum Active Overlaps ==="));
+        assert!(script.contains("scriptum conflicts"));
+        assert!(script.contains("=== Scriptum CLI Quick Reference ==="));
     }
 
     #[test]
