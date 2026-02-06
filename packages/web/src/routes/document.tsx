@@ -18,6 +18,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
+import { TimelineSlider } from "../components/editor/TimelineSlider";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
 import type { PeerPresence } from "../store/presence";
@@ -33,6 +34,7 @@ const LOCAL_COMMENT_AUTHOR_NAME = "You";
 const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
 const UNKNOWN_COMMENT_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const FIXTURE_REMOTE_CLIENT_ID_BASE = 10_000;
+const MAX_TIMELINE_SNAPSHOTS = 240;
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
   fixtureName: "default",
@@ -418,10 +420,15 @@ export function DocumentRoute() {
   const [daemonWsBaseUrl] = useState(DEFAULT_DAEMON_WS_BASE_URL);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
+  const isApplyingTimelineSnapshotRef = useRef(false);
   const collaborationProviderRef = useRef<
     ReturnType<typeof createCollaborationProvider> | null
   >(null);
   const fixtureRemoteClientIdsRef = useRef<number[]>([]);
+  const [timelineSnapshots, setTimelineSnapshots] = useState<string[]>([
+    fixtureState.docContent,
+  ]);
+  const [timelineIndex, setTimelineIndex] = useState(0);
   const roomId = useMemo(
     () => `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
     [workspaceId, documentId]
@@ -595,6 +602,25 @@ export function DocumentRoute() {
           remoteCursorExtension({ awareness: provider.provider.awareness }),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
+            if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
+              const nextContent = update.state.doc.toString();
+              setTimelineSnapshots((currentSnapshots) => {
+                const latestContent = currentSnapshots[currentSnapshots.length - 1];
+                if (latestContent === nextContent) {
+                  return currentSnapshots;
+                }
+                const nextSnapshots = [...currentSnapshots, nextContent];
+                if (nextSnapshots.length > MAX_TIMELINE_SNAPSHOTS) {
+                  nextSnapshots.splice(
+                    0,
+                    nextSnapshots.length - MAX_TIMELINE_SNAPSHOTS
+                  );
+                }
+                setTimelineIndex(nextSnapshots.length - 1);
+                return nextSnapshots;
+              });
+            }
+
             if (!update.selectionSet) {
               return;
             }
@@ -630,6 +656,8 @@ export function DocumentRoute() {
       }),
     });
     editorViewRef.current = view;
+    setTimelineSnapshots([fixtureState.docContent]);
+    setTimelineIndex(0);
 
     return () => {
       editorViewRef.current = null;
@@ -683,6 +711,34 @@ export function DocumentRoute() {
       provider.yText.insert(0, fixtureState.docContent);
     }
   }, [fixtureModeEnabled, fixtureState.docContent]);
+
+  const scrubToTimelineIndex = (nextIndex: number) => {
+    const snapshot = timelineSnapshots[nextIndex];
+    if (snapshot === undefined) {
+      return;
+    }
+
+    setTimelineIndex(nextIndex);
+    const view = editorViewRef.current;
+    if (!view) {
+      return;
+    }
+
+    const currentContent = view.state.doc.toString();
+    if (currentContent === snapshot) {
+      return;
+    }
+
+    isApplyingTimelineSnapshotRef.current = true;
+    view.dispatch({
+      changes: {
+        from: 0,
+        to: view.state.doc.length,
+        insert: snapshot,
+      },
+    });
+    isApplyingTimelineSnapshotRef.current = false;
+  };
 
   useEffect(() => {
     if (!fixtureModeEnabled) {
@@ -1201,6 +1257,11 @@ export function DocumentRoute() {
         activeEditors={activeEditors}
         pendingUpdates={pendingSyncUpdates}
         reconnectProgress={reconnectProgress}
+      />
+      <TimelineSlider
+        max={timelineSnapshots.length - 1}
+        onChange={scrubToTimelineIndex}
+        value={timelineIndex}
       />
     </section>
   );
