@@ -19,6 +19,10 @@ import type { ScriptumTestState } from "../test/harness";
 const DEFAULT_DAEMON_WS_BASE_URL =
   (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ??
   "ws://127.0.0.1:39091/yjs";
+const LOCAL_COMMENT_AUTHOR_ID = "local-user";
+const LOCAL_COMMENT_AUTHOR_NAME = "You";
+const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
+const UNKNOWN_COMMENT_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
   fixtureName: "default",
@@ -35,8 +39,12 @@ interface UnknownRecord {
 }
 
 interface InlineCommentMessage {
+  authorName: string;
+  authorUserId?: string;
   bodyMd: string;
+  createdAt: string;
   id: string;
+  isOwn: boolean;
 }
 
 export interface InlineCommentThread {
@@ -96,9 +104,34 @@ function normalizeInlineCommentMessages(value: unknown): InlineCommentMessage[] 
       continue;
     }
 
+    const authorRecord = asRecord(messageRecord.author);
+    const authorUserId =
+      readString(messageRecord, ["authorUserId", "author_user_id", "userId"]) ??
+      (authorRecord
+        ? readString(authorRecord, ["id", "userId", "user_id"])
+        : null);
+    const explicitIsOwn = messageRecord.isOwn;
+    const isOwn =
+      typeof explicitIsOwn === "boolean"
+        ? explicitIsOwn
+        : authorUserId === LOCAL_COMMENT_AUTHOR_ID;
+    const authorName =
+      readString(messageRecord, ["authorName", "author_name", "author"]) ??
+      (authorRecord
+        ? readString(authorRecord, ["name", "display_name", "displayName"])
+        : null) ??
+      (isOwn ? LOCAL_COMMENT_AUTHOR_NAME : UNKNOWN_COMMENT_AUTHOR_NAME);
+    const createdAt =
+      readString(messageRecord, ["createdAt", "created_at", "timestamp"]) ??
+      UNKNOWN_COMMENT_TIMESTAMP;
+
     messages.push({
+      authorName,
+      ...(authorUserId ? { authorUserId } : {}),
       bodyMd,
+      createdAt,
       id,
+      isOwn,
     });
   }
 
@@ -173,6 +206,65 @@ export function commentRangesFromThreads(
   }));
 }
 
+export function appendReplyToThread(
+  threads: readonly InlineCommentThread[],
+  threadId: string,
+  message: InlineCommentMessage
+): InlineCommentThread[] {
+  let didAppend = false;
+  const nextThreads = threads.map((thread) => {
+    if (thread.id !== threadId) {
+      return thread;
+    }
+    didAppend = true;
+    return {
+      ...thread,
+      messages: [...thread.messages, message],
+    };
+  });
+
+  return didAppend ? nextThreads : [...threads];
+}
+
+export function updateInlineCommentMessageBody(
+  threads: readonly InlineCommentThread[],
+  threadId: string,
+  messageId: string,
+  nextBodyMd: string
+): InlineCommentThread[] {
+  const nextBody = nextBodyMd.trim();
+  if (!nextBody) {
+    return [...threads];
+  }
+
+  let didUpdate = false;
+  const nextThreads = threads.map((thread) => {
+    if (thread.id !== threadId) {
+      return thread;
+    }
+
+    const nextMessages = thread.messages.map((message) => {
+      if (message.id !== messageId || !message.isOwn) {
+        return message;
+      }
+      didUpdate = true;
+      return {
+        ...message,
+        bodyMd: nextBody,
+      };
+    });
+
+    return didUpdate
+      ? {
+          ...thread,
+          messages: nextMessages,
+        }
+      : thread;
+  });
+
+  return didUpdate ? nextThreads : [...threads];
+}
+
 export function commentAnchorTopPx(line: number): number {
   if (!Number.isFinite(line)) {
     return 12;
@@ -209,6 +301,8 @@ export function DocumentRoute() {
   );
   const [isCommentPopoverOpen, setCommentPopoverOpen] = useState(false);
   const [pendingCommentBody, setPendingCommentBody] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageBody, setEditingMessageBody] = useState("");
   const activeEditors = fixtureModeEnabled
     ? fixtureState.remotePeers.length + 1
     : 1;
@@ -233,6 +327,18 @@ export function DocumentRoute() {
   const commentAnchorTop = activeSelection
     ? commentAnchorTopPx(activeSelection.line)
     : 12;
+  const activeThread = useMemo(() => {
+    if (!activeSelection) {
+      return null;
+    }
+    return (
+      inlineCommentThreads.find(
+        (thread) =>
+          thread.startOffsetUtf16 === activeSelection.from &&
+          thread.endOffsetUtf16 === activeSelection.to
+      ) ?? null
+    );
+  }, [activeSelection, inlineCommentThreads]);
 
   useEffect(() => {
     const api = window.__SCRIPTUM_TEST__;
@@ -391,6 +497,23 @@ export function DocumentRoute() {
     }
   }, [fixtureModeEnabled, fixtureState.docContent]);
 
+  useEffect(() => {
+    setEditingMessageId(null);
+    setEditingMessageBody("");
+  }, [activeThread?.id, isCommentPopoverOpen]);
+
+  const persistCommentThreads = (
+    mutator: (threads: readonly InlineCommentThread[]) => InlineCommentThread[]
+  ) => {
+    setInlineCommentThreads((currentThreads) => {
+      const nextThreads = mutator(currentThreads);
+      if (fixtureModeEnabled) {
+        window.__SCRIPTUM_TEST__?.setCommentThreads(nextThreads);
+      }
+      return nextThreads;
+    });
+  };
+
   const submitInlineComment = () => {
     if (!activeSelection) {
       return;
@@ -400,28 +523,61 @@ export function DocumentRoute() {
       return;
     }
 
-    const nextThread: InlineCommentThread = {
-      endOffsetUtf16: activeSelection.to,
-      id: makeClientId("thread"),
-      messages: [
-        {
-          bodyMd: messageBody,
-          id: makeClientId("message"),
-        },
-      ],
-      startOffsetUtf16: activeSelection.from,
-      status: "open",
+    const nextMessage: InlineCommentMessage = {
+      authorName: LOCAL_COMMENT_AUTHOR_NAME,
+      authorUserId: LOCAL_COMMENT_AUTHOR_ID,
+      bodyMd: messageBody,
+      createdAt: new Date(Date.now()).toISOString(),
+      id: makeClientId("message"),
+      isOwn: true,
     };
 
-    setInlineCommentThreads((currentThreads) => {
-      const nextThreads = [...currentThreads, nextThread];
-      if (fixtureModeEnabled) {
-        window.__SCRIPTUM_TEST__?.setCommentThreads(nextThreads);
+    const activeThreadId = activeThread?.id;
+    persistCommentThreads((currentThreads) => {
+      if (activeThreadId) {
+        return appendReplyToThread(currentThreads, activeThreadId, nextMessage);
       }
-      return nextThreads;
+
+      const nextThread: InlineCommentThread = {
+        endOffsetUtf16: activeSelection.to,
+        id: makeClientId("thread"),
+        messages: [nextMessage],
+        startOffsetUtf16: activeSelection.from,
+        status: "open",
+      };
+      return [...currentThreads, nextThread];
     });
     setPendingCommentBody("");
-    setCommentPopoverOpen(false);
+    if (!activeThread) {
+      setCommentPopoverOpen(false);
+    }
+  };
+
+  const beginEditingMessage = (message: InlineCommentMessage) => {
+    if (!message.isOwn) {
+      return;
+    }
+    setEditingMessageId(message.id);
+    setEditingMessageBody(message.bodyMd);
+  };
+
+  const saveEditedMessage = () => {
+    const threadId = activeThread?.id;
+    const messageId = editingMessageId;
+    if (!threadId || !messageId) {
+      return;
+    }
+
+    persistCommentThreads((currentThreads) =>
+      updateInlineCommentMessageBody(
+        currentThreads,
+        threadId,
+        messageId,
+        editingMessageBody
+      )
+    );
+    setEditingMessageId(null);
+    setEditingMessageBody("");
   };
 
   return (
@@ -501,7 +657,115 @@ export function DocumentRoute() {
                 {activeSelection.selectedText}
               </p>
 
-              <label htmlFor="inline-comment-input">Comment</label>
+              {activeThread ? (
+                <section
+                  aria-label="Thread replies"
+                  data-testid="comment-thread-replies"
+                  style={{
+                    borderBottom: "1px solid #e5e7eb",
+                    marginBottom: "0.5rem",
+                    maxHeight: "12rem",
+                    overflowY: "auto",
+                    paddingBottom: "0.5rem",
+                  }}
+                >
+                  {activeThread.messages.length === 0 ? (
+                    <p style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}>
+                      No replies yet.
+                    </p>
+                  ) : (
+                    <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                      {activeThread.messages.map((message) => {
+                        const isEditing = editingMessageId === message.id;
+                        return (
+                          <li
+                            key={message.id}
+                            style={{
+                              border: "1px solid #e5e7eb",
+                              borderRadius: "0.375rem",
+                              marginBottom: "0.375rem",
+                              padding: "0.375rem",
+                            }}
+                          >
+                            <div
+                              style={{
+                                alignItems: "center",
+                                display: "flex",
+                                fontSize: "0.75rem",
+                                gap: "0.375rem",
+                                justifyContent: "space-between",
+                                marginBottom: "0.25rem",
+                              }}
+                            >
+                              <strong>{message.authorName}</strong>
+                              <time dateTime={message.createdAt}>
+                                {message.createdAt}
+                              </time>
+                            </div>
+                            {isEditing ? (
+                              <>
+                                <textarea
+                                  data-testid="comment-edit-input"
+                                  onChange={(event) =>
+                                    setEditingMessageBody(event.target.value)
+                                  }
+                                  rows={3}
+                                  style={{ display: "block", width: "100%" }}
+                                  value={editingMessageBody}
+                                />
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    gap: "0.5rem",
+                                    justifyContent: "flex-end",
+                                    marginTop: "0.375rem",
+                                  }}
+                                >
+                                  <button
+                                    data-testid="comment-edit-cancel"
+                                    onClick={() => {
+                                      setEditingMessageId(null);
+                                      setEditingMessageBody("");
+                                    }}
+                                    type="button"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    data-testid="comment-edit-save"
+                                    onClick={saveEditedMessage}
+                                    type="button"
+                                  >
+                                    Save
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <p style={{ margin: 0 }}>{message.bodyMd}</p>
+                                {message.isOwn ? (
+                                  <button
+                                    data-testid={`comment-edit-${message.id}`}
+                                    onClick={() => beginEditingMessage(message)}
+                                    style={{ marginTop: "0.25rem" }}
+                                    type="button"
+                                  >
+                                    Edit
+                                  </button>
+                                ) : null}
+                              </>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </section>
+              ) : null}
+
+              <label htmlFor="inline-comment-input">
+                {activeThread ? "Reply" : "Comment"}
+              </label>
               <textarea
                 data-testid="comment-input"
                 id="inline-comment-input"
@@ -530,7 +794,7 @@ export function DocumentRoute() {
                   onClick={submitInlineComment}
                   type="button"
                 >
-                  Add comment
+                  {activeThread ? "Add reply" : "Add comment"}
                 </button>
               </div>
             </section>
@@ -551,7 +815,15 @@ export function DocumentRoute() {
                   ({thread.startOffsetUtf16}-{thread.endOffsetUtf16})
                 </span>
                 {thread.messages.map((message) => (
-                  <p key={message.id}>{message.bodyMd}</p>
+                  <article key={message.id}>
+                    <p style={{ marginBottom: "0.125rem" }}>
+                      <strong>{message.authorName}</strong>{" "}
+                      <time dateTime={message.createdAt}>
+                        {message.createdAt}
+                      </time>
+                    </p>
+                    <p style={{ marginTop: 0 }}>{message.bodyMd}</p>
+                  </article>
                 ))}
               </li>
             ))}

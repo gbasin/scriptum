@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendReplyToThread,
   commentAnchorTopPx,
   commentRangesFromThreads,
   normalizeInlineCommentThreads,
+  updateInlineCommentMessageBody,
   type InlineCommentThread,
 } from "./document";
 
@@ -10,7 +12,15 @@ describe("document comment helpers", () => {
   it("normalizes list responses with nested thread + messages shape", () => {
     const normalized = normalizeInlineCommentThreads([
       {
-        messages: [{ body_md: "Top level comment", id: "msg-1" }],
+        messages: [
+          {
+            author_name: "You",
+            author_user_id: "local-user",
+            body_md: "Top level comment",
+            created_at: "2026-02-06T20:00:00.000Z",
+            id: "msg-1",
+          },
+        ],
         thread: {
           end_offset_utf16: 14,
           id: "thread-1",
@@ -24,7 +34,16 @@ describe("document comment helpers", () => {
       {
         endOffsetUtf16: 14,
         id: "thread-1",
-        messages: [{ bodyMd: "Top level comment", id: "msg-1" }],
+        messages: [
+          {
+            authorName: "You",
+            authorUserId: "local-user",
+            bodyMd: "Top level comment",
+            createdAt: "2026-02-06T20:00:00.000Z",
+            id: "msg-1",
+            isOwn: true,
+          },
+        ],
         startOffsetUtf16: 3,
         status: "open",
       },
@@ -70,5 +89,81 @@ describe("document comment helpers", () => {
     expect(commentAnchorTopPx(3)).toBe(56);
     expect(commentAnchorTopPx(0)).toBe(12);
   });
-});
 
+  it("appends threaded replies to an existing thread", () => {
+    const threads: InlineCommentThread[] = [
+      {
+        endOffsetUtf16: 12,
+        id: "thread-1",
+        messages: [],
+        startOffsetUtf16: 5,
+        status: "open",
+      },
+    ];
+
+    const next = appendReplyToThread(threads, "thread-1", {
+      authorName: "You",
+      authorUserId: "local-user",
+      bodyMd: "Follow-up",
+      createdAt: "2026-02-06T20:01:00.000Z",
+      id: "msg-2",
+      isOwn: true,
+    });
+
+    expect(next[0]?.messages).toEqual([
+      {
+        authorName: "You",
+        authorUserId: "local-user",
+        bodyMd: "Follow-up",
+        createdAt: "2026-02-06T20:01:00.000Z",
+        id: "msg-2",
+        isOwn: true,
+      },
+    ]);
+  });
+
+  it("only edits messages owned by current user", () => {
+    const threads: InlineCommentThread[] = [
+      {
+        endOffsetUtf16: 12,
+        id: "thread-1",
+        messages: [
+          {
+            authorName: "You",
+            authorUserId: "local-user",
+            bodyMd: "Original",
+            createdAt: "2026-02-06T20:01:00.000Z",
+            id: "msg-own",
+            isOwn: true,
+          },
+          {
+            authorName: "Alex",
+            authorUserId: "user-2",
+            bodyMd: "Teammate note",
+            createdAt: "2026-02-06T20:02:00.000Z",
+            id: "msg-other",
+            isOwn: false,
+          },
+        ],
+        startOffsetUtf16: 5,
+        status: "open",
+      },
+    ];
+
+    const afterOwnEdit = updateInlineCommentMessageBody(
+      threads,
+      "thread-1",
+      "msg-own",
+      "Updated"
+    );
+    expect(afterOwnEdit[0]?.messages[0]?.bodyMd).toBe("Updated");
+
+    const afterOtherEdit = updateInlineCommentMessageBody(
+      afterOwnEdit,
+      "thread-1",
+      "msg-other",
+      "Should not change"
+    );
+    expect(afterOtherEdit[0]?.messages[1]?.bodyMd).toBe("Teammate note");
+  });
+});
