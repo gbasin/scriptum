@@ -2,6 +2,7 @@ mod api;
 mod audit;
 mod auth;
 mod awareness;
+mod cors;
 mod db;
 mod error;
 mod leader;
@@ -95,6 +96,7 @@ fn build_router(
 
 fn apply_middleware(router: Router) -> Router {
     router
+        .layer(cors::cors_layer())
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(middleware::from_fn(request_context_middleware))
         .layer(middleware::from_fn(panic_handler))
