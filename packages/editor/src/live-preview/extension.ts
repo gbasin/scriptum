@@ -432,6 +432,197 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
   );
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function detectCodeLanguage(rawInfo: string): string | null {
+  const firstToken = rawInfo.trim().split(/\s+/)[0] ?? "";
+  if (firstToken.length === 0) {
+    return null;
+  }
+  return firstToken.toLowerCase();
+}
+
+function highlightCode(code: string, language: string | null): string {
+  const escaped = escapeHtml(code);
+  if (!language) {
+    return escaped;
+  }
+
+  if (language !== "js" && language !== "javascript" && language !== "ts" && language !== "typescript") {
+    return escaped;
+  }
+
+  const pattern =
+    /\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|type|interface|extends)\b|("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|`(?:\\.|[^`])*`)|\b(\d+(?:\.\d+)?)\b/g;
+
+  return escaped.replace(pattern, (match, keyword: string, stringLiteral: string, numberLiteral: string) => {
+    if (keyword) {
+      return `<span class="cm-livePreview-codeToken-keyword">${match}</span>`;
+    }
+    if (stringLiteral) {
+      return `<span class="cm-livePreview-codeToken-string">${match}</span>`;
+    }
+    if (numberLiteral) {
+      return `<span class="cm-livePreview-codeToken-number">${match}</span>`;
+    }
+    return match;
+  });
+}
+
+function sanitizeLanguageClass(language: string): string {
+  return language.replaceAll(/[^a-z0-9_-]/gi, "-").toLowerCase();
+}
+
+class CodeBlockWidget extends WidgetType {
+  readonly kind = "code-block";
+
+  constructor(
+    readonly code: string,
+    readonly language: string | null,
+  ) {
+    super();
+  }
+
+  override eq(other: CodeBlockWidget): boolean {
+    return this.code === other.code && this.language === other.language;
+  }
+
+  override toDOM(): HTMLElement {
+    const wrapper = document.createElement("span");
+    wrapper.className = "cm-livePreview-codeBlock";
+    wrapper.setAttribute("aria-hidden", "true");
+
+    if (this.language) {
+      const badge = document.createElement("span");
+      badge.className = "cm-livePreview-codeLanguage";
+      badge.textContent = this.language;
+      wrapper.appendChild(badge);
+    }
+
+    const pre = document.createElement("pre");
+    pre.className = "cm-livePreview-codePre";
+    const codeNode = document.createElement("code");
+    codeNode.className = "cm-livePreview-code";
+    if (this.language) {
+      codeNode.classList.add(`cm-livePreview-code-lang-${sanitizeLanguageClass(this.language)}`);
+    }
+    codeNode.innerHTML = highlightCode(this.code, this.language);
+    pre.appendChild(codeNode);
+    wrapper.appendChild(pre);
+
+    return wrapper;
+  }
+
+  override ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+function buildCodeBlockDecorations(state: EditorState): DecorationSet {
+  const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
+  const activeLine = state.field(activeLines, false) ?? activeLineFromState(state);
+  const tree = markdownLanguage.parser.parse(state.doc.toString());
+
+  function walk(node: {
+    type: { name: string };
+    from: number;
+    to: number;
+    firstChild: unknown;
+    nextSibling: unknown;
+  }): void {
+    if (node.type.name === "FencedCode" && !rangeTouchesActiveLine(state, activeLine, node.from, node.to)) {
+      let language: string | null = null;
+      let code = "";
+
+      let child = node.firstChild as
+        | {
+            type: { name: string };
+            from: number;
+            to: number;
+            firstChild: unknown;
+            nextSibling: unknown;
+          }
+        | null;
+
+      while (child) {
+        if (child.type.name === "CodeInfo") {
+          language = detectCodeLanguage(state.doc.sliceString(child.from, child.to));
+        } else if (child.type.name === "CodeText") {
+          code = state.doc.sliceString(child.from, child.to);
+        }
+        child = child.nextSibling as
+          | {
+              type: { name: string };
+              from: number;
+              to: number;
+              firstChild: unknown;
+              nextSibling: unknown;
+            }
+          | null;
+      }
+
+      decorations.push({
+        from: node.from,
+        to: node.to,
+        decoration: Decoration.replace({
+          widget: new CodeBlockWidget(code, language),
+          inclusive: false,
+        }),
+      });
+      return;
+    }
+
+    let child = node.firstChild as
+      | {
+          type: { name: string };
+          from: number;
+          to: number;
+          firstChild: unknown;
+          nextSibling: unknown;
+        }
+      | null;
+    while (child) {
+      walk(child);
+      child = child.nextSibling as
+        | {
+            type: { name: string };
+            from: number;
+            to: number;
+            firstChild: unknown;
+            nextSibling: unknown;
+          }
+        | null;
+    }
+  }
+
+  walk(tree.topNode as unknown as {
+    type: { name: string };
+    from: number;
+    to: number;
+    firstChild: unknown;
+    nextSibling: unknown;
+  });
+
+  decorations.sort((left, right) => {
+    if (left.from !== right.from) {
+      return left.from - right.from;
+    }
+    return left.to - right.to;
+  });
+
+  return Decoration.set(
+    decorations.map(({ from, to, decoration }) => decoration.range(from, to)),
+    true,
+  );
+}
+
 interface InlinePreviewToken {
   readonly from: number;
   readonly href: string;

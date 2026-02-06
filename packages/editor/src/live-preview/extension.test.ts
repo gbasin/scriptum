@@ -175,6 +175,45 @@ describe("livePreview", () => {
     expect(hasInlineLinkDecorationOnLine(state, 1)).toBe(false);
   });
 
+  it("renders GFM tables with alignment metadata on unfocused lines", () => {
+    const source = [
+      "active",
+      "| Name | Role | Score |",
+      "| :--- | :---: | ---: |",
+      "| Ada | Agent | 42 |",
+    ].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    const tables = collectTableWidgets(state);
+    expect(tables).toEqual([
+      {
+        alignments: ["left", "center", "right"],
+        headers: ["Name", "Role", "Score"],
+      },
+    ]);
+    expect(hasTableDecorationOnLine(state, 2)).toBe(true);
+  });
+
+  it("keeps active line raw for markdown table syntax", () => {
+    const source = [
+      "| Name | Role |",
+      "| :--- | :--: |",
+      "| Ada | Agent |",
+    ].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: source.indexOf("| Name |") },
+      extensions: [livePreview()],
+    });
+
+    expect(hasTableDecorationOnLine(state, 1)).toBe(false);
+    expect(hasTableDecorationOnLine(state, 2)).toBe(false);
+  });
+
   it("renders blockquote styling on unfocused lines", () => {
     const source = ["active", "> quoted line"].join("\n");
     const state = EditorState.create({
@@ -322,6 +361,53 @@ function collectInlineWidgetKinds(state: EditorState): string[] {
 function hasInlineLinkDecorationOnLine(state: EditorState, lineNumber: number): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(inlineLinkDecorations);
+  let foundDecoration = false;
+
+  decorations.between(line.from, line.to, () => {
+    foundDecoration = true;
+  });
+
+  return foundDecoration;
+}
+
+function collectTableWidgets(state: EditorState): Array<{
+  headers: string[];
+  alignments: string[];
+}> {
+  const tables: Array<{ headers: string[]; alignments: string[] }> = [];
+  const decorations = state.field(tablePreviewDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const widget = (value.spec as {
+      widget?: {
+        kind?: unknown;
+        headers?: unknown;
+        alignments?: unknown;
+      };
+    }).widget;
+    if (!widget || widget.kind !== "table") {
+      return;
+    }
+    if (!Array.isArray(widget.headers) || !Array.isArray(widget.alignments)) {
+      return;
+    }
+
+    tables.push({
+      alignments: widget.alignments.filter(
+        (alignment): alignment is string => typeof alignment === "string",
+      ),
+      headers: widget.headers.filter(
+        (header): header is string => typeof header === "string",
+      ),
+    });
+  });
+
+  return tables;
+}
+
+function hasTableDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+  const line = state.doc.line(lineNumber);
+  const decorations = state.field(tablePreviewDecorations);
   let foundDecoration = false;
 
   decorations.between(line.from, line.to, () => {
