@@ -168,6 +168,26 @@ struct DocReadResult {
     content_md: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct DocEditSectionParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    section: String,
+    content: String,
+    agent: String,
+    #[serde(default)]
+    summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocEditSectionResult {
+    doc_path: String,
+    section_id: String,
+    heading: String,
+    bytes_written: usize,
+    etag: String,
+}
+
 impl Default for RpcServerState {
     fn default() -> Self {
         Self {
@@ -180,6 +200,11 @@ impl Default for RpcServerState {
 }
 
 impl RpcServerState {
+    /// Expose doc_manager for integration tests (e.g., CRDT sync verification).
+    pub fn doc_manager_for_test(&self) -> &Arc<RwLock<DocManager>> {
+        &self.doc_manager
+    }
+
     pub fn with_shutdown_notifier(mut self, shutdown_notifier: broadcast::Sender<()>) -> Self {
         self.shutdown_notifier = Some(shutdown_notifier);
         self
@@ -251,6 +276,98 @@ impl RpcServerState {
 
         DocReadResult { metadata, sections, content_md: include_content.then_some(content_md) }
     }
+
+    async fn edit_section(
+        &self,
+        params: DocEditSectionParams,
+    ) -> Result<DocEditSectionResult, String> {
+        let doc = {
+            let mut manager = self.doc_manager.write().await;
+            manager.subscribe_or_create(params.doc_id)
+        };
+
+        let content = doc.get_text_string("content");
+        let sections = parse_sections(&content);
+
+        // Find the target section by heading (strip leading # from the param for matching).
+        let section_heading = params.section.trim_start_matches('#').trim();
+        let section = sections
+            .iter()
+            .find(|s| s.heading == section_heading)
+            .ok_or_else(|| format!("section `{}` not found", params.section))?;
+
+        // Calculate byte offsets for the section body.
+        // The heading line is at `start_line`. The body starts right after the heading line.
+        // The section ends at `end_line` (exclusive — it's the start_line of the next section,
+        // or total_lines + 1 for the last section).
+        let lines: Vec<&str> = content.lines().collect();
+        let heading_line_idx = (section.start_line - 1) as usize;
+        let end_line_idx = (section.end_line - 1) as usize;
+
+        // Body starts after the heading line.
+        let body_start_line = heading_line_idx + 1;
+        let body_end_line = end_line_idx.min(lines.len());
+
+        // Calculate character offsets.
+        let mut char_offset = 0u32;
+        let mut body_start_offset = 0u32;
+        let mut body_end_offset;
+
+        for (i, line) in content.split('\n').enumerate() {
+            if i == body_start_line {
+                body_start_offset = char_offset;
+            }
+            if i == body_end_line {
+                break;
+            }
+            char_offset += line.len() as u32 + 1; // +1 for the newline
+        }
+        body_end_offset = char_offset;
+
+        // Handle the case where body_start_line >= lines.len() (section at end of doc with no body).
+        if body_start_line >= content.split('\n').count() {
+            body_start_offset = content.len() as u32;
+            body_end_offset = content.len() as u32;
+        }
+
+        // Replace the body text in the CRDT.
+        let body_len = body_end_offset.saturating_sub(body_start_offset);
+        doc.replace_text("content", body_start_offset, body_len, &params.content);
+
+        let new_content = doc.get_text_string("content");
+        let section_id = section.id.clone();
+        let heading = section.heading.clone();
+
+        // Update metadata etag.
+        let doc_path = {
+            let metadata = self.doc_metadata.read().await;
+            metadata
+                .get(&(params.workspace_id, params.doc_id))
+                .map(|m| m.path.clone())
+                .unwrap_or_else(|| format!("{}.md", params.doc_id))
+        };
+
+        let new_etag = format!("doc:{}:{}", params.doc_id, new_content.len());
+        {
+            let mut metadata = self.doc_metadata.write().await;
+            if let Some(record) = metadata.get_mut(&(params.workspace_id, params.doc_id)) {
+                record.etag = new_etag.clone();
+            }
+        }
+
+        {
+            let mut manager = self.doc_manager.write().await;
+            let _ = manager.unsubscribe(params.doc_id);
+        }
+
+        Ok(DocEditSectionResult {
+            doc_path,
+            section_id,
+            heading,
+            bytes_written: params.content.len(),
+            etag: new_etag,
+        })
+    }
 }
 
 pub async fn handle_raw_request(raw: &[u8], state: &RpcServerState) -> Response {
@@ -298,6 +415,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
             )
         }
         "doc.read" => handle_doc_read(request, state).await,
+        "doc.edit_section" => handle_doc_edit_section(request, state).await,
         "git.status" => handle_git_status(request, state),
         "git.sync" => handle_git_sync(request, state),
         "git.configure" => handle_git_configure(request, state),
@@ -337,6 +455,34 @@ fn parse_doc_read_params(
     serde_json::from_value::<DocReadParams>(params).map_err(|error| {
         invalid_params_response(request_id, format!("failed to decode doc.read params: {}", error))
     })
+}
+
+async fn handle_doc_edit_section(request: Request, state: &RpcServerState) -> Response {
+    let Some(params) = request.params else {
+        return invalid_params_response(request.id, "doc.edit_section requires params".to_string());
+    };
+
+    let params: DocEditSectionParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return invalid_params_response(
+                request.id,
+                format!("failed to decode doc.edit_section params: {e}"),
+            );
+        }
+    };
+
+    match state.edit_section(params).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(e) => Response::error(
+            request.id,
+            RpcError {
+                code: INTERNAL_ERROR,
+                message: e,
+                data: None,
+            },
+        ),
+    }
 }
 
 fn invalid_params_response(request_id: RequestId, reason: String) -> Response {

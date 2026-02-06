@@ -77,6 +77,27 @@ impl YDoc {
         text.insert(&mut txn, index, content);
     }
 
+    /// Remove a range of characters from a named text type.
+    pub fn remove_text(&self, name: &str, index: u32, length: u32) {
+        let text = self.doc.get_or_insert_text(name);
+        let mut txn = self.doc.transact_mut();
+        text.remove_range(&mut txn, index, length);
+    }
+
+    /// Replace a range of text in a named text type (atomic remove + insert).
+    pub fn replace_text(&self, name: &str, index: u32, length: u32, content: &str) {
+        let text = self.doc.get_or_insert_text(name);
+        let mut txn = self.doc.transact_mut();
+        text.remove_range(&mut txn, index, length);
+        text.insert(&mut txn, index, content);
+    }
+
+    /// Get the length of a named text type in UTF-8 characters.
+    pub fn text_len(&self, name: &str) -> u32 {
+        let text = self.doc.get_or_insert_text(name);
+        text.len(&self.doc.transact())
+    }
+
     /// Get the underlying Doc reference (for advanced operations).
     pub fn inner(&self) -> &Doc {
         &self.doc

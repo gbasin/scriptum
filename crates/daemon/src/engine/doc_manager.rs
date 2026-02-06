@@ -88,6 +88,11 @@ impl DocManager {
         true
     }
 
+    /// Get a doc by ID without affecting subscriber count (for sync/test).
+    pub fn get_doc(&self, doc_id: Uuid) -> Option<Arc<YDoc>> {
+        self.docs.get(&doc_id).map(|entry| Arc::clone(&entry.doc))
+    }
+
     pub fn contains_doc(&self, doc_id: Uuid) -> bool {
         self.docs.contains_key(&doc_id)
     }
