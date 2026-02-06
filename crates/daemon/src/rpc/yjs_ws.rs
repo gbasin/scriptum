@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use axum::{
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
-        State,
+        Path, State,
     },
     response::IntoResponse,
     routing::get,
@@ -49,7 +49,10 @@ impl YjsWsState {
     }
 
     pub fn router(self) -> Router {
-        Router::new().route("/yjs", get(yjs_ws_route)).with_state(self)
+        Router::new()
+            .route("/yjs", get(yjs_ws_route))
+            .route("/yjs/{room}", get(yjs_ws_room_route))
+            .with_state(self)
     }
 
     pub async fn get_text_string(&self, name: &str) -> String {
@@ -70,6 +73,14 @@ pub async fn serve(listener: TcpListener, state: YjsWsState) -> Result<()> {
 }
 
 async fn yjs_ws_route(ws: WebSocketUpgrade, State(state): State<YjsWsState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, state))
+}
+
+async fn yjs_ws_room_route(
+    ws: WebSocketUpgrade,
+    Path(_room): Path<String>,
+    State(state): State<YjsWsState>,
+) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 

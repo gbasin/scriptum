@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use scriptum_common::protocol::jsonrpc::{Request, RequestId, Response};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -11,12 +12,14 @@ use tracing::{info, warn};
 
 use crate::rpc::methods::RpcServerState;
 use crate::rpc::unix::serve_unix_until_shutdown;
+use crate::rpc::yjs_ws::{self, YjsWsState};
 use crate::startup::{
     bind_socket, is_daemon_running, remove_pid_file, write_pid_file, DaemonPaths,
 };
 
 const TAKEOVER_WAIT_RETRIES: usize = 40;
 const TAKEOVER_WAIT_DELAY: Duration = Duration::from_millis(50);
+const LOCAL_YJS_WS_ADDR: &str = "127.0.0.1:39091";
 
 pub struct EmbeddedDaemonHandle {
     shutdown_tx: broadcast::Sender<()>,
@@ -53,6 +56,7 @@ pub async fn run_standalone() -> Result<()> {
 async fn run_standalone_with_paths(paths: DaemonPaths) -> Result<()> {
     let listener = bind_socket(&paths.socket_path).await?;
     write_pid_file(&paths.pid_path)?;
+    let yjs_ws_task = start_local_yjs_ws_server().await?;
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
     let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx.clone());
@@ -64,6 +68,8 @@ async fn run_standalone_with_paths(paths: DaemonPaths) -> Result<()> {
 
     info!(socket_path = %paths.socket_path.display(), "standalone daemon started");
     let result = serve_unix_until_shutdown(listener, state, shutdown_rx).await;
+    yjs_ws_task.abort();
+    let _ = yjs_ws_task.await;
     cleanup_paths(&paths);
     result.context("standalone daemon exited with error")
 }
@@ -73,6 +79,7 @@ async fn start_embedded_with_paths(paths: DaemonPaths) -> Result<EmbeddedDaemonH
 
     let listener = bind_socket(&paths.socket_path).await?;
     write_pid_file(&paths.pid_path)?;
+    let yjs_ws_task = start_local_yjs_ws_server().await?;
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
     let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx.clone());
@@ -82,15 +89,14 @@ async fn start_embedded_with_paths(paths: DaemonPaths) -> Result<EmbeddedDaemonH
         if let Err(error) = serve_unix_until_shutdown(listener, state, shutdown_rx).await {
             warn!(?error, "embedded daemon server terminated unexpectedly");
         }
+        yjs_ws_task.abort();
+        let _ = yjs_ws_task.await;
         remove_pid_file(&pid_path);
         let _ = std::fs::remove_file(&socket_path);
     });
 
     info!(socket_path = %paths.socket_path.display(), "embedded daemon started");
-    Ok(EmbeddedDaemonHandle {
-        shutdown_tx,
-        task: Some(task),
-    })
+    Ok(EmbeddedDaemonHandle { shutdown_tx, task: Some(task) })
 }
 
 async fn take_over_standalone_if_running(socket_path: &Path) -> Result<()> {
@@ -147,6 +153,19 @@ async fn wait_for_daemon_shutdown(socket_path: &Path) -> Result<()> {
 fn cleanup_paths(paths: &DaemonPaths) {
     remove_pid_file(&paths.pid_path);
     let _ = std::fs::remove_file(&paths.socket_path);
+}
+
+async fn start_local_yjs_ws_server() -> Result<JoinHandle<()>> {
+    let listener = TcpListener::bind(LOCAL_YJS_WS_ADDR).await.with_context(|| {
+        format!("failed to bind local yjs websocket server at `{LOCAL_YJS_WS_ADDR}`")
+    })?;
+    info!(address = LOCAL_YJS_WS_ADDR, "local yjs websocket server started");
+
+    Ok(tokio::spawn(async move {
+        if let Err(error) = yjs_ws::serve(listener, YjsWsState::default()).await {
+            warn!(?error, "local yjs websocket server terminated unexpectedly");
+        }
+    }))
 }
 
 #[cfg(all(test, unix))]

@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.scriptum.app",
   "build": {
-    "frontendDist": "../src",
+    "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "",
-    "beforeDevCommand": ""
+    "beforeBuildCommand": "pnpm --filter @scriptum/web build",
+    "beforeDevCommand": "pnpm --filter @scriptum/web dev"
   },
   "app": {
     "title": "Scriptum",

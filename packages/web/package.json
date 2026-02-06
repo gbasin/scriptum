@@ -12,6 +12,10 @@
     "test:ui:smoke": "playwright test -c playwright.smoke.config.ts"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "latest",
+    "@codemirror/state": "latest",
+    "@codemirror/view": "latest",
+    "@scriptum/editor": "workspace:*",
     "react": "latest",
     "react-dom": "latest",
     "react-router": "latest",
