@@ -2,3 +2,4 @@
 
 pub mod doc_manager;
 pub mod sequencer;
+pub mod snapshot;

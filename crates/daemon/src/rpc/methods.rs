@@ -7,6 +7,7 @@ use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
 use crate::store::meta_db::MetaDb;
+use crate::store::recovery::{recover_documents_into_manager, StartupRecoveryReport};
 use scriptum_common::protocol::jsonrpc::{
     Request, RequestId, Response, RpcError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     METHOD_NOT_FOUND, PARSE_ERROR,
@@ -77,6 +78,7 @@ impl<E: CommandExecutor> GitState<E> {
 pub struct RpcServerState {
     doc_manager: Arc<RwLock<DocManager>>,
     doc_metadata: Arc<RwLock<HashMap<(Uuid, Uuid), DocMetadataRecord>>>,
+    degraded_docs: Arc<RwLock<HashSet<Uuid>>>,
     workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
     shutdown_notifier: Option<broadcast::Sender<()>>,
     git_state: Option<Arc<dyn GitOps + Send + Sync>>,
@@ -177,6 +179,7 @@ struct DocReadResult {
     sections: Vec<Section>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content_md: Option<String>,
+    degraded: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -432,6 +435,7 @@ impl Default for RpcServerState {
         Self {
             doc_manager: Arc::new(RwLock::new(DocManager::default())),
             doc_metadata: Arc::new(RwLock::new(HashMap::new())),
+            degraded_docs: Arc::new(RwLock::new(HashSet::new())),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notifier: None,
             git_state: None,
@@ -446,6 +450,29 @@ impl RpcServerState {
     /// Expose doc_manager for integration tests (e.g., CRDT sync verification).
     pub fn doc_manager_for_test(&self) -> &Arc<RwLock<DocManager>> {
         &self.doc_manager
+    }
+
+    pub async fn recover_docs_at_startup(
+        &self,
+        crdt_store_dir: impl AsRef<std::path::Path>,
+    ) -> Result<StartupRecoveryReport, String> {
+        let report = {
+            let mut manager = self.doc_manager.write().await;
+            recover_documents_into_manager(crdt_store_dir.as_ref(), &mut manager)
+                .map_err(|error| error.to_string())?
+        };
+
+        {
+            let mut degraded_docs = self.degraded_docs.write().await;
+            degraded_docs.clear();
+            degraded_docs.extend(report.degraded_docs.iter().copied());
+        }
+
+        Ok(report)
+    }
+
+    pub async fn is_doc_degraded_for_test(&self, doc_id: Uuid) -> bool {
+        self.degraded_docs.read().await.contains(&doc_id)
     }
 
     pub fn with_shutdown_notifier(mut self, shutdown_notifier: broadcast::Sender<()>) -> Self {
@@ -731,6 +758,7 @@ impl RpcServerState {
             etag: format!("doc:{doc_id}:0"),
         };
         self.doc_metadata.write().await.insert((workspace_id, doc_id), metadata);
+        self.degraded_docs.write().await.remove(&doc_id);
     }
 
     /// Register a workspace (for tests).
@@ -862,13 +890,14 @@ impl RpcServerState {
 
         let content_md = doc.get_text_string("content");
         let sections = parse_sections(&content_md);
+        let degraded = self.degraded_docs.read().await.contains(&doc_id);
 
         {
             let mut manager = self.doc_manager.write().await;
             let _ = manager.unsubscribe(doc_id);
         }
 
-        DocReadResult { metadata, sections, content_md: include_content.then_some(content_md) }
+        DocReadResult { metadata, sections, content_md: include_content.then_some(content_md), degraded }
     }
 
     async fn doc_sections(&self, workspace_id: Uuid, doc_id: Uuid) -> DocSectionsResult {

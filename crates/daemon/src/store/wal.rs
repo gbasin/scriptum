@@ -8,6 +8,14 @@ use uuid::Uuid;
 const FRAME_HEADER_BYTES: usize = 8;
 const MAX_UPDATE_BYTES: usize = 1 << 20;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalReplaySummary {
+    pub applied: usize,
+    pub valid_frames: usize,
+    pub truncated: bool,
+    pub checksum_failed: bool,
+}
+
 /// Minimal append-only WAL format:
 /// [len:u32 little-endian][checksum:u32 little-endian][payload:len bytes]
 #[derive(Debug, Clone)]
@@ -64,12 +72,30 @@ impl WalStore {
     where
         F: FnMut(&[u8]) -> Result<()>,
     {
+        Ok(self.replay_from_frame(0, |payload| on_update(payload))?.applied)
+    }
+
+    /// Replay WAL updates starting from `start_frame` (0-based), validating all frames.
+    ///
+    /// Frames before `start_frame` are validated and skipped. Corrupted/truncated frames are
+    /// treated as a recoverable tail: replay stops at the first bad frame and the WAL is
+    /// truncated to the last valid offset.
+    pub fn replay_from_frame<F>(
+        &self,
+        start_frame: usize,
+        mut on_update: F,
+    ) -> Result<WalReplaySummary>
+    where
+        F: FnMut(&[u8]) -> Result<()>,
+    {
         let mut file = OpenOptions::new().read(true).open(&self.path).with_context(|| {
             format!("failed to open wal file `{}` for replay", self.path.display())
         })?;
 
         let mut applied = 0usize;
+        let mut valid_frames = 0usize;
         let mut truncate_to = None;
+        let mut checksum_failed = false;
         loop {
             let frame_offset =
                 file.stream_position().context("failed to read wal stream position")?;
@@ -104,11 +130,15 @@ impl WalStore {
             let actual_checksum = checksum(&payload);
             if expected_checksum != actual_checksum {
                 truncate_to = Some(frame_offset);
+                checksum_failed = true;
                 break;
             }
 
-            on_update(&payload).context("failed to apply wal frame payload")?;
-            applied = applied.saturating_add(1);
+            if valid_frames >= start_frame {
+                on_update(&payload).context("failed to apply wal frame payload")?;
+                applied = applied.saturating_add(1);
+            }
+            valid_frames = valid_frames.saturating_add(1);
         }
 
         drop(file);
@@ -116,7 +146,12 @@ impl WalStore {
             truncate_wal(&self.path, offset)?;
         }
 
-        Ok(applied)
+        Ok(WalReplaySummary {
+            applied,
+            valid_frames,
+            truncated: truncate_to.is_some(),
+            checksum_failed,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -151,7 +186,7 @@ mod tests {
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom, Write};
 
-    use super::{WalStore, FRAME_HEADER_BYTES};
+    use super::{WalReplaySummary, WalStore, FRAME_HEADER_BYTES};
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -218,6 +253,68 @@ mod tests {
             .expect("replay should be stable after truncation");
         assert_eq!(applied_again, 1);
         assert_eq!(replayed_again, vec![b"u1".to_vec()]);
+    }
+
+    #[test]
+    fn replay_from_frame_skips_snapshot_covered_updates() {
+        let tmp = tempdir().expect("tempdir should be created");
+        let wal = WalStore::open(tmp.path().join("doc.wal")).expect("wal should open");
+
+        wal.append_update(b"u1").expect("frame 1 should append");
+        wal.append_update(b"u2").expect("frame 2 should append");
+        wal.append_update(b"u3").expect("frame 3 should append");
+
+        let mut replayed = Vec::new();
+        let summary = wal
+            .replay_from_frame(2, |payload| {
+                replayed.push(payload.to_vec());
+                Ok(())
+            })
+            .expect("replay should succeed");
+
+        assert_eq!(
+            summary,
+            WalReplaySummary {
+                applied: 1,
+                valid_frames: 3,
+                truncated: false,
+                checksum_failed: false,
+            }
+        );
+        assert_eq!(replayed, vec![b"u3".to_vec()]);
+    }
+
+    #[test]
+    fn replay_summary_marks_checksum_failures() {
+        let tmp = tempdir().expect("tempdir should be created");
+        let wal = WalStore::open(tmp.path().join("doc.wal")).expect("wal should open");
+        wal.append_update(b"u1").expect("frame 1 should append");
+        wal.append_update(b"u2").expect("frame 2 should append");
+
+        let first_frame_len = FRAME_HEADER_BYTES + b"u1".len();
+        let second_frame_checksum_offset = first_frame_len + 4;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(wal.path())
+            .expect("wal file should open for corruption");
+        file.seek(SeekFrom::Start(second_frame_checksum_offset as u64)).expect("seek should work");
+        file.write_all(&[0, 0, 0, 0]).expect("checksum bytes should be overwritten");
+        file.sync_data().expect("corruption write should fsync");
+
+        let summary = wal
+            .replay_from_frame(0, |_payload| Ok(()))
+            .expect("replay should recover from checksum failure");
+
+        assert_eq!(
+            summary,
+            WalReplaySummary {
+                applied: 1,
+                valid_frames: 1,
+                truncated: true,
+                checksum_failed: true,
+            }
+        );
     }
 
     #[test]

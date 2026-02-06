@@ -60,6 +60,7 @@ async fn run_standalone_with_paths(paths: DaemonPaths) -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
     let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx.clone());
+    recover_state_from_crdt_store(&state, &paths.base_dir).await?;
     let ctrl_c_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -83,6 +84,7 @@ async fn start_embedded_with_paths(paths: DaemonPaths) -> Result<EmbeddedDaemonH
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
     let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx.clone());
+    recover_state_from_crdt_store(&state, &paths.base_dir).await?;
     let socket_path = paths.socket_path.clone();
     let pid_path = paths.pid_path.clone();
     let task = tokio::spawn(async move {
@@ -153,6 +155,30 @@ async fn wait_for_daemon_shutdown(socket_path: &Path) -> Result<()> {
 fn cleanup_paths(paths: &DaemonPaths) {
     remove_pid_file(&paths.pid_path);
     let _ = std::fs::remove_file(&paths.socket_path);
+}
+
+async fn recover_state_from_crdt_store(state: &RpcServerState, base_dir: &Path) -> Result<()> {
+    let crdt_store_dir = base_dir.join("crdt_store");
+    let report = state
+        .recover_docs_at_startup(&crdt_store_dir)
+        .await
+        .map_err(|error| anyhow!("startup crash recovery failed: {error}"))?;
+    if report.degraded_docs.is_empty() {
+        info!(
+            recovered_docs = report.recovered_docs,
+            path = %crdt_store_dir.display(),
+            "startup crash recovery completed"
+        );
+    } else {
+        warn!(
+            recovered_docs = report.recovered_docs,
+            degraded_docs = report.degraded_docs.len(),
+            degraded_doc_ids = ?report.degraded_docs,
+            path = %crdt_store_dir.display(),
+            "startup crash recovery completed with degraded documents"
+        );
+    }
+    Ok(())
 }
 
 async fn start_local_yjs_ws_server() -> Result<JoinHandle<()>> {

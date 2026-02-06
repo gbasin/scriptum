@@ -89,8 +89,24 @@ impl UpdateSequencer {
     pub async fn recover_from_max_server_seq(&self, pool: &PgPool) -> Result<()> {
         let rows = sqlx::query_as::<_, MaxSeqRow>(
             "
-            SELECT workspace_id, doc_id, MAX(server_seq) AS max_server_seq
-            FROM yjs_update_log
+            WITH max_update_seq AS (
+                SELECT workspace_id, doc_id, MAX(server_seq) AS max_server_seq
+                FROM yjs_update_log
+                GROUP BY workspace_id, doc_id
+            ),
+            max_snapshot_seq AS (
+                SELECT workspace_id, doc_id, MAX(snapshot_seq) AS max_server_seq
+                FROM yjs_snapshots
+                GROUP BY workspace_id, doc_id
+            )
+            SELECT workspace_id, doc_id, MAX(max_server_seq) AS max_server_seq
+            FROM (
+                SELECT workspace_id, doc_id, max_server_seq
+                FROM max_update_seq
+                UNION ALL
+                SELECT workspace_id, doc_id, max_server_seq
+                FROM max_snapshot_seq
+            ) AS combined
             GROUP BY workspace_id, doc_id
             ",
         )
