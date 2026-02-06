@@ -17,6 +17,8 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 sha2 = "0.10"
+toml = { workspace = true }
+dirs = { workspace = true }
 yrs = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]

@@ -54,6 +54,10 @@ jsonwebtoken = "9"
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
 url = "2"
 
+# Config
+toml = "0.8"
+dirs = "6"
+
 # Unicode normalization
 unicode-normalization = "0.1"
 

@@ -1,6 +1,7 @@
 // scriptum-daemon library entry point (embedded in Tauri).
 
 pub mod agent;
+pub mod config;
 pub mod engine;
 pub mod git;
 pub mod history;
