@@ -88,7 +88,7 @@ fn build_router(
         Router::new()
             .route("/healthz", get(healthz))
             .merge(auth::oauth::router(oauth_state))
-            .merge(ws::router(jwt_service, session_store, doc_store, membership_store, ws_base_url))
+            .merge(ws::router(jwt_service, session_store, doc_store, Arc::new(ws::AwarenessStore::default()), membership_store, ws_base_url))
             .merge(api_router),
     )
 }

@@ -38,8 +38,92 @@ const RESUME_TOKEN_TTL_MINUTES: i64 = 10;
 pub struct SyncSessionRouterState {
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    awareness_store: Arc<AwarenessStore>,
     membership_store: WorkspaceMembershipStore,
     ws_base_url: Arc<str>,
+}
+
+// ── Awareness store ─────────────────────────────────────────────────
+
+/// Tracks per-doc awareness (cursors, presence, names) from each session.
+///
+/// Key: (workspace_id, doc_id, session_id)
+/// Value: list of peer awareness entries from that session.
+#[derive(Debug, Clone, Default)]
+pub struct AwarenessStore {
+    state: Arc<RwLock<HashMap<(Uuid, Uuid), HashMap<Uuid, Vec<serde_json::Value>>>>>,
+}
+
+impl AwarenessStore {
+    /// Update awareness for a session's contribution to a doc.
+    pub async fn update(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        session_id: Uuid,
+        peers: Vec<serde_json::Value>,
+    ) {
+        let mut guard = self.state.write().await;
+        let doc_state = guard.entry((workspace_id, doc_id)).or_default();
+        if peers.is_empty() {
+            doc_state.remove(&session_id);
+        } else {
+            doc_state.insert(session_id, peers);
+        }
+    }
+
+    /// Remove all awareness for a session (on disconnect).
+    pub async fn remove_session(
+        &self,
+        workspace_id: Uuid,
+        doc_ids: &[Uuid],
+        session_id: Uuid,
+    ) {
+        let mut guard = self.state.write().await;
+        for doc_id in doc_ids {
+            if let Some(doc_state) = guard.get_mut(&(workspace_id, *doc_id)) {
+                doc_state.remove(&session_id);
+                if doc_state.is_empty() {
+                    guard.remove(&(workspace_id, *doc_id));
+                }
+            }
+        }
+    }
+
+    /// Get aggregated awareness for a doc (all sessions' peers merged).
+    pub async fn aggregate(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+    ) -> Vec<serde_json::Value> {
+        let guard = self.state.read().await;
+        guard
+            .get(&(workspace_id, doc_id))
+            .map(|doc_state| {
+                doc_state.values().flatten().cloned().collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get aggregated awareness excluding a specific session (for broadcast).
+    pub async fn aggregate_excluding(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        exclude_session: Uuid,
+    ) -> Vec<serde_json::Value> {
+        let guard = self.state.read().await;
+        guard
+            .get(&(workspace_id, doc_id))
+            .map(|doc_state| {
+                doc_state
+                    .iter()
+                    .filter(|(sid, _)| **sid != exclude_session)
+                    .flat_map(|(_, peers)| peers.iter().cloned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Clone)]
@@ -204,12 +288,14 @@ pub fn router(
     jwt_service: Arc<JwtAccessTokenService>,
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    awareness_store: Arc<AwarenessStore>,
     membership_store: WorkspaceMembershipStore,
     ws_base_url: String,
 ) -> Router {
     let state = SyncSessionRouterState {
         session_store,
         doc_store,
+        awareness_store,
         membership_store,
         ws_base_url: Arc::<str>::from(ws_base_url),
     };
@@ -308,15 +394,17 @@ pub async fn ws_upgrade(
 
     let session_store = state.session_store.clone();
     let doc_store = state.doc_store.clone();
+    let awareness_store = state.awareness_store.clone();
     let membership_store = state.membership_store.clone();
     ws.max_frame_size(MAX_FRAME_BYTES as usize).on_upgrade(move |socket| async move {
-        handle_socket(session_store, doc_store, membership_store, session_id, socket).await;
+        handle_socket(session_store, doc_store, awareness_store, membership_store, session_id, socket).await;
     })
 }
 
 async fn handle_socket(
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
+    awareness_store: Arc<AwarenessStore>,
     membership_store: WorkspaceMembershipStore,
     session_id: Uuid,
     mut socket: WebSocket,
@@ -490,6 +578,33 @@ async fn handle_socket(
                                     }
                                 }
                             }
+                            WsMessage::AwarenessUpdate { doc_id, peers } => {
+                                match handle_awareness_update(
+                                    &session_store,
+                                    &awareness_store,
+                                    session_id,
+                                    doc_id,
+                                    peers,
+                                )
+                                .await
+                                {
+                                    Ok(broadcast) => {
+                                        let _ = session_store
+                                            .broadcast_to_subscribers_excluding(
+                                                broadcast.workspace_id,
+                                                doc_id,
+                                                broadcast.message,
+                                                session_id,
+                                            )
+                                            .await;
+                                    }
+                                    Err(error_message) => {
+                                        if send_ws_message(&mut socket, &error_message).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                             _ => {
                                 if send_ws_message(
                                     &mut socket,
@@ -518,6 +633,24 @@ async fn handle_socket(
                     Ok(_) => {}
                     Err(_) => break,
                 }
+            }
+        }
+    }
+
+    // Clean up awareness state for this session.
+    if let Some(workspace_id) = session_store.workspace_for_session(session_id).await {
+        if let Some(subscriptions) = session_store.subscriptions_for_session(session_id).await {
+            awareness_store.remove_session(workspace_id, &subscriptions, session_id).await;
+            // Broadcast updated awareness to remaining subscribers.
+            for doc_id in &subscriptions {
+                let aggregated = awareness_store.aggregate(workspace_id, *doc_id).await;
+                let _ = session_store
+                    .broadcast_to_subscribers(
+                        workspace_id,
+                        *doc_id,
+                        WsMessage::AwarenessUpdate { doc_id: *doc_id, peers: aggregated },
+                    )
+                    .await;
             }
         }
     }
@@ -728,6 +861,51 @@ async fn handle_yjs_update_message(
             doc_id: Some(doc_id),
         }),
     }
+}
+
+// ── Awareness handling ──────────────────────────────────────────────
+
+#[derive(Debug)]
+struct AwarenessBroadcast {
+    workspace_id: Uuid,
+    message: WsMessage,
+}
+
+async fn handle_awareness_update(
+    session_store: &SyncSessionStore,
+    awareness_store: &AwarenessStore,
+    session_id: Uuid,
+    doc_id: Uuid,
+    peers: Vec<serde_json::Value>,
+) -> Result<AwarenessBroadcast, WsMessage> {
+    let Some(workspace_id) = session_store.workspace_for_session(session_id).await else {
+        return Err(WsMessage::Error {
+            code: "SYNC_SESSION_INVALID".to_string(),
+            message: "session is not available".to_string(),
+            retryable: false,
+            doc_id: Some(doc_id),
+        });
+    };
+
+    if !session_store.session_is_subscribed(session_id, doc_id).await {
+        return Err(WsMessage::Error {
+            code: "SYNC_DOC_NOT_SUBSCRIBED".to_string(),
+            message: "subscribe before sending awareness_update".to_string(),
+            retryable: false,
+            doc_id: Some(doc_id),
+        });
+    }
+
+    // Store this session's awareness data.
+    awareness_store.update(workspace_id, doc_id, session_id, peers).await;
+
+    // Build aggregate for broadcast (all peers from all sessions).
+    let aggregated = awareness_store.aggregate(workspace_id, doc_id).await;
+
+    Ok(AwarenessBroadcast {
+        workspace_id,
+        message: WsMessage::AwarenessUpdate { doc_id, peers: aggregated },
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1059,6 +1237,39 @@ impl SyncSessionStore {
         sent_count
     }
 
+    /// Broadcast to all doc subscribers except the sender session.
+    async fn broadcast_to_subscribers_excluding(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        message: WsMessage,
+        exclude_session: Uuid,
+    ) -> usize {
+        let mut recipients = Vec::new();
+        {
+            let guard = self.sessions.read().await;
+            for (session_id, session) in guard.iter() {
+                if *session_id == exclude_session {
+                    continue;
+                }
+                if session.workspace_id == workspace_id && session.subscriptions.contains(&doc_id) {
+                    if let Some(sender) = session.outbound.clone() {
+                        recipients.push(sender);
+                    }
+                }
+            }
+        }
+
+        let mut sent_count = 0;
+        for recipient in recipients {
+            if recipient.send(message.clone()).is_ok() {
+                sent_count += 1;
+            }
+        }
+
+        sent_count
+    }
+
     async fn active_connections(&self, session_id: Uuid) -> Option<usize> {
         self.sessions.read().await.get(&session_id).map(|session| session.active_connections)
     }
@@ -1087,9 +1298,10 @@ impl SyncSessionStore {
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_hello_message, handle_subscribe_message, handle_yjs_update_message, router,
-        CreateSyncSessionResponse, DocSyncStore, SessionTokenValidation, SyncSessionStore,
-        WorkspaceMembershipStore, HEARTBEAT_INTERVAL_MS, MAX_FRAME_BYTES,
+        handle_awareness_update, handle_hello_message, handle_subscribe_message,
+        handle_yjs_update_message, router, AwarenessStore, CreateSyncSessionResponse,
+        DocSyncStore, SessionTokenValidation, SyncSessionStore, WorkspaceMembershipStore,
+        HEARTBEAT_INTERVAL_MS, MAX_FRAME_BYTES,
     };
     use crate::auth::{jwt::JwtAccessTokenService, middleware::WorkspaceRole};
     use axum::{
@@ -1122,6 +1334,7 @@ mod tests {
             jwt_service.clone(),
             session_store,
             Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
             membership_store,
             "ws://localhost:8080".to_string(),
         );
@@ -1158,6 +1371,7 @@ mod tests {
             jwt_service.clone(),
             Arc::new(SyncSessionStore::default()),
             Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
             WorkspaceMembershipStore::for_tests(),
             "ws://localhost:8080".to_string(),
         );
@@ -1194,6 +1408,7 @@ mod tests {
             jwt_service.clone(),
             session_store.clone(),
             Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
             membership_store.clone(),
             "ws://localhost:8080".to_string(),
         );
@@ -1834,6 +2049,7 @@ mod tests {
             jwt_service.clone(),
             session_store,
             Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
             membership_store,
             "ws://localhost:8080".to_string(),
         );
@@ -1874,5 +2090,277 @@ mod tests {
             .expect("supported_versions should be an array")
             .iter()
             .any(|v| v == "scriptum-sync.v1"));
+    }
+
+    // ── Awareness tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn awareness_update_stores_and_aggregates_peers() {
+        let session_store = SyncSessionStore::default();
+        let awareness_store = AwarenessStore::default();
+        let membership_store = WorkspaceMembershipStore::for_tests();
+        let doc_store = DocSyncStore::default();
+        let session_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        session_store
+            .create_session(
+                session_id,
+                workspace_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+        handle_subscribe_message(
+            &session_store,
+            &doc_store,
+            &membership_store,
+            session_id,
+            doc_id,
+            None,
+        )
+        .await
+        .expect("subscribe should succeed");
+
+        let peers = vec![serde_json::json!({"user": "alice", "cursor": 42})];
+        let result =
+            handle_awareness_update(&session_store, &awareness_store, session_id, doc_id, peers)
+                .await
+                .expect("awareness update should succeed");
+
+        match result.message {
+            WsMessage::AwarenessUpdate { doc_id: msg_doc_id, peers } => {
+                assert_eq!(msg_doc_id, doc_id);
+                assert_eq!(peers.len(), 1);
+                assert_eq!(peers[0]["user"], "alice");
+                assert_eq!(peers[0]["cursor"], 42);
+            }
+            other => panic!("expected awareness_update, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn awareness_update_requires_subscription() {
+        let session_store = SyncSessionStore::default();
+        let awareness_store = AwarenessStore::default();
+        let session_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        session_store
+            .create_session(
+                session_id,
+                workspace_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+
+        let error = handle_awareness_update(
+            &session_store,
+            &awareness_store,
+            session_id,
+            doc_id,
+            vec![serde_json::json!({"user": "bob"})],
+        )
+        .await
+        .expect_err("should reject without subscription");
+
+        match error {
+            WsMessage::Error { code, .. } => {
+                assert_eq!(code, "SYNC_DOC_NOT_SUBSCRIBED");
+            }
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn awareness_aggregates_multiple_sessions() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_a,
+                vec![serde_json::json!({"user": "alice"})],
+            )
+            .await;
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_b,
+                vec![serde_json::json!({"user": "bob"})],
+            )
+            .await;
+
+        let aggregated = awareness_store.aggregate(workspace_id, doc_id).await;
+        assert_eq!(aggregated.len(), 2);
+        let users: Vec<&str> = aggregated.iter().filter_map(|v| v["user"].as_str()).collect();
+        assert!(users.contains(&"alice"));
+        assert!(users.contains(&"bob"));
+    }
+
+    #[tokio::test]
+    async fn awareness_aggregate_excluding_omits_sender() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_a,
+                vec![serde_json::json!({"user": "alice"})],
+            )
+            .await;
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_b,
+                vec![serde_json::json!({"user": "bob"})],
+            )
+            .await;
+
+        let excluding_a = awareness_store
+            .aggregate_excluding(workspace_id, doc_id, session_a)
+            .await;
+        assert_eq!(excluding_a.len(), 1);
+        assert_eq!(excluding_a[0]["user"], "bob");
+    }
+
+    #[tokio::test]
+    async fn awareness_remove_session_cleans_up() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_a,
+                vec![serde_json::json!({"user": "alice"})],
+            )
+            .await;
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_b,
+                vec![serde_json::json!({"user": "bob"})],
+            )
+            .await;
+
+        awareness_store.remove_session(workspace_id, &[doc_id], session_a).await;
+
+        let aggregated = awareness_store.aggregate(workspace_id, doc_id).await;
+        assert_eq!(aggregated.len(), 1);
+        assert_eq!(aggregated[0]["user"], "bob");
+    }
+
+    #[tokio::test]
+    async fn awareness_empty_peers_removes_entry() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_id,
+                vec![serde_json::json!({"user": "alice"})],
+            )
+            .await;
+        assert_eq!(awareness_store.aggregate(workspace_id, doc_id).await.len(), 1);
+
+        // Sending empty peers clears the session's awareness.
+        awareness_store.update(workspace_id, doc_id, session_id, vec![]).await;
+        assert_eq!(awareness_store.aggregate(workspace_id, doc_id).await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn awareness_update_replaces_previous_state() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_id,
+                vec![serde_json::json!({"cursor": 10})],
+            )
+            .await;
+        awareness_store
+            .update(
+                workspace_id,
+                doc_id,
+                session_id,
+                vec![serde_json::json!({"cursor": 20})],
+            )
+            .await;
+
+        let aggregated = awareness_store.aggregate(workspace_id, doc_id).await;
+        assert_eq!(aggregated.len(), 1);
+        assert_eq!(aggregated[0]["cursor"], 20);
+    }
+
+    #[tokio::test]
+    async fn awareness_different_docs_are_independent() {
+        let awareness_store = AwarenessStore::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_a = Uuid::new_v4();
+        let doc_b = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+
+        awareness_store
+            .update(
+                workspace_id,
+                doc_a,
+                session_id,
+                vec![serde_json::json!({"doc": "a"})],
+            )
+            .await;
+        awareness_store
+            .update(
+                workspace_id,
+                doc_b,
+                session_id,
+                vec![serde_json::json!({"doc": "b"})],
+            )
+            .await;
+
+        let a_peers = awareness_store.aggregate(workspace_id, doc_a).await;
+        assert_eq!(a_peers.len(), 1);
+        assert_eq!(a_peers[0]["doc"], "a");
+
+        let b_peers = awareness_store.aggregate(workspace_id, doc_b).await;
+        assert_eq!(b_peers.len(), 1);
+        assert_eq!(b_peers[0]["doc"], "b");
     }
 }
