@@ -3,6 +3,7 @@ mod audit;
 mod auth;
 mod awareness;
 mod db;
+mod error;
 mod leader;
 mod sync;
 mod ws;
@@ -11,7 +12,7 @@ use anyhow::Context;
 use axum::{
     body::Body,
     extract::DefaultBodyLimit,
-    http::{header::HeaderValue, Request, StatusCode},
+    http::{Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -24,9 +25,12 @@ use uuid::Uuid;
 use ws::SyncSessionStore;
 
 use crate::auth::jwt::JwtAccessTokenService;
+use crate::error::{
+    attach_request_id_header, request_id_from_headers_or_generate, with_request_id_scope,
+    ErrorCode, RelayError,
+};
 
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
-const REQUEST_ID_HEADER: &str = "x-request-id";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -113,33 +117,27 @@ async fn shutdown_signal() {
 }
 
 async fn panic_handler(request: Request<Body>, next: Next) -> Response {
+    let request_id = request_id_from_headers_or_generate(request.headers());
     match tokio::spawn(async move { next.run(request).await }).await {
         Ok(response) => response,
         Err(join_error) => {
-            error!(?join_error, "request handling panicked");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            error!(?join_error, request_id = %request_id, "request handling panicked");
+            RelayError::from_code(ErrorCode::InternalError)
+                .with_request_id(request_id)
+                .into_response()
         }
     }
 }
 
 async fn request_context_middleware(request: Request<Body>, next: Next) -> Response {
-    let request_id = request
-        .headers()
-        .get(REQUEST_ID_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let request_id = request_id_from_headers_or_generate(request.headers());
 
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     let started_at = Instant::now();
 
-    let mut response = next.run(request).await;
-
-    if let Ok(request_id_header) = HeaderValue::from_str(&request_id) {
-        response.headers_mut().insert(REQUEST_ID_HEADER, request_id_header);
-    }
+    let mut response = with_request_id_scope(request_id.clone(), next.run(request)).await;
+    attach_request_id_header(&mut response, &request_id);
 
     info!(
         request_id = %request_id,
@@ -158,12 +156,14 @@ mod tests {
     use std::sync::Arc;
 
     use axum::{
-        body::Body,
+        body::{to_bytes, Body},
         http::{Method, Request, StatusCode},
         routing::{get, post},
         Router,
     };
+    use serde_json::Value;
     use tower::ServiceExt;
+    use uuid::Uuid;
 
     use super::{apply_middleware, build_router, MAX_REQUEST_BODY_BYTES};
     use crate::{auth::jwt::JwtAccessTokenService, ws::SyncSessionStore};
