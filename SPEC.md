@@ -168,6 +168,10 @@ Abstract workspace layer that's flexible and intuitive.
 - **Folders**: Hierarchical organization within workspaces
 - **Tags**: Cross-cutting labels for documents (e.g., `#rfc`, `#draft`, `#approved`)
 - **Backlinks**: `[[wiki-style]]` links between documents for navigation convenience. This is a linking/navigation feature, not a wiki system -- no namespaces, templates, or wiki-specific features.
+  - **Syntax**: `[[target]]`, `[[target|display text]]` (alias), `[[target#heading]]` (section link). Obsidian-compatible.
+  - **Resolution order**: exact path → filename (case-insensitive) → document title. First match wins.
+  - **Index updates**: Re-parsed on file save / git commit (not real-time during editing). Backlinks may be stale for a few seconds during active editing.
+  - **Rename handling**: When a document is renamed/moved, all `[[old-name]]` references across the workspace are automatically updated to `[[new-name]]`. Confirmation toast: "Updated N links across M documents." No undo — matches IDE refactoring behavior.
 - **Search**: Full-text search across all documents, with filters by tag, author, date
 - **Flexible backends**: A workspace can be backed by:
   - A git repo (full sync)
@@ -2586,7 +2590,7 @@ Must complete before any parallel work begins. Validates the core architecture.
 
 7. ~~**Full-text search index**~~ **RESOLVED**: SQLite FTS5 for V1 (zero additional deps, already using SQLite via meta.db). Swap to Tantivy later if search quality becomes a user complaint. Search is behind an abstraction layer either way.
 
-8. **Backlinks parsing/resolution**: Table exists but no parsing, link resolution, or update-on-edit logic. Needs design before Phase 5.
+8. ~~**Backlinks parsing/resolution**~~ **RESOLVED**: `[[target]]`, `[[target|alias]]`, `[[target#heading]]` syntax (Obsidian-compatible). Resolution: path → filename → title. Index on save/commit. Auto-update references on rename.
 
 9. ~~**Git leader election protocol**~~ **RESOLVED**: Lease-based via relay. Daemon acquires a `git-leader` lease from relay (TTL 60s, auto-renew on heartbeat). If lease holder disconnects, lease expires, another daemon claims it. One row in relay DB per workspace. Simple, relay already manages state.
 

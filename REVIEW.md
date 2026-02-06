@@ -168,7 +168,7 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 
 ### Before Phase 5 (blocks polish)
 11. ~~Full-text search index~~ **RESOLVED** — SQLite FTS5 for V1, Tantivy later if needed
-12. **Backlinks parsing/resolution** → extract links, resolve to doc IDs, update on edit (only remaining pre-implementation design item)
+12. ~~Backlinks parsing/resolution~~ **RESOLVED** — Obsidian-compatible syntax, resolve path→filename→title, index on save/commit, auto-update on rename
 13. ~~CRDT GC / retention policy~~ **RESOLVED**
 14. ~~Reconciliation UI trigger heuristics~~ **RESOLVED** — >50% section changed by 2+ editors in 30s, inline resolution
 
