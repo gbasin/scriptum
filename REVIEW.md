@@ -41,7 +41,17 @@ Full auth design now in SPEC.md:
 
 ### All Fixed
 
-All 13 contradictions identified in the original review have been resolved and incorporated into the merged SPEC.md. See the document's revision history for details.
+All contradictions identified in the original review and the subsequent AI critique have been resolved:
+- **Local-first vs relay required**: Clarified — local replica is authoritative, relay for collab only.
+- **Yjs location (JS vs Rust daemon)**: Resolved — Yjs-in-daemon with local WS server. CodeMirror connects via y-websocket.
+- **"Byte-for-byte" claim**: Adjusted to "exact content, no normalization, UTF-8."
+- **"Never conflict destructively"**: Reframed to "Conflict-free data, coordinated editing" with intent/lease system and reconciliation UI.
+- **Git blame attribution**: Two-tier model — `scriptum blame` (CRDT-based) + git co-author trailers.
+- **Web app vs "local files always present"**: Web is first-class (relay-backed). "Local files" scoped to desktop.
+- **Disk write policy**: Always write to disk. External editors handle "file changed" natively.
+- **Attribution persistence**: Dual model — CRDT origin tags + server-side update log.
+- **Git sync multi-writer**: Leader election among daemons, relay-mediated.
+- **Encryption model**: Server-readable V1, E2EE opt-in V2.
 
 ---
 
@@ -69,11 +79,15 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 | **Full-text search** | Open | No search index chosen yet (SQLite FTS5 vs Tantivy). Needed before Phase 5. |
 | **Image/file upload** | Deferred | No blob storage. Paste URLs for V1. |
 | **KaTeX/Mermaid** | Deferred | CM6 extensions, client-side rendering. No detailed design yet. |
-| **Timeline view** | Deferred | Git history for V1. |
+| **Timeline view** | Deferred | Character-level time travel UI is V1 (Phase 5). |
 | **Diff view** | Deferred | Git diff for V1. |
 | **Tags syncing** | Designed | Tags table in relay DB schema. Sync via relay protocol. |
 | **Backlinks** | Open | Table exists locally but no parsing, resolution, or update logic. Before Phase 5. |
-| **CRDT history/retention** | Designed | 90-day retention, WAL + snapshots (every 1000 updates or 10 min), compaction policy, recovery procedure. |
+| **CRDT history/retention** | Designed | 90-day retention, WAL + snapshots, dual attribution model, character-level replay committed for V1. |
+| **Intent/lease system** | Designed | Advisory leases, TTL, overlap warnings. V1 Phase 2. |
+| **Reconciliation UI** | Designed | Concurrent rewrite detection → side-by-side view. V1 Phase 2. |
+| **Semantic commit groups** | Designed | Intent-based triggers (lease release, comment resolve, checkpoint). Idle timer as fallback. V1 Phase 3. |
+| **Context bundling** | Designed | `scriptum_bundle` with token budget. V1 Phase 4. |
 | **Error handling** | Designed | Full error code registry (18 codes), HTTP status mapping, retry policy, dead letter queue, deterministic fallbacks. |
 | **Observability** | Designed | Logging, metrics (15+ metrics defined), distributed tracing, alerting thresholds. |
 | **Performance SLAs** | Designed | 12 metrics with specific targets and benchmark assumptions. |
@@ -89,7 +103,7 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 - No onboarding or empty-state guidance
 - No notification system at all (edits, comments, mentions)
 - Section IDs like "h2_3" would leak to UI - need friendly names
-- CRDT interleaving will feel like a bug (no "accept/reject" affordance)
+- ~~CRDT interleaving will feel like a bug~~ **RESOLVED**: Reconciliation UI shows side-by-side when concurrent large rewrites detected
 - No settings UI (must edit TOML files?)
 
 ### Developer (Desktop/CLI)
@@ -97,13 +111,13 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 - No `scriptum init` command for workspace creation
 - Connecting to existing git repo is unspecified
 - "Yjs is the source of truth, not the file" is counterintuitive - what happens when they `git pull`?
-- Auto-commit every 30s will pollute git history (no squash/batch option)
+- ~~Auto-commit every 30s will pollute git history~~ **RESOLVED**: Semantic commit groups (intent-based triggers), idle timer is fallback only
 
 ### AI Agent (CLI/MCP)
-- Agent name collisions: `whoami` suggests but doesn't enforce unique names
-- No agent coordination/reservation system ("I'm working on this section")
-- Two Claude instances with same name will corrupt state
-- Post-compaction: agent knows its name and section but not the content → needs re-read
+- ~~Agent name collisions~~ **RESOLVED**: Duplicates allowed, shared state by design
+- ~~No agent coordination/reservation system~~ **RESOLVED**: Intent/lease system with `scriptum_claim`
+- ~~Two Claude instances with same name will corrupt state~~ **RESOLVED**: Shared state, not corruption
+- Post-compaction: agent knows its name and section but not the content → needs re-read (mitigated by `scriptum_bundle`)
 - MCP `scriptum_subscribe` notification delivery over stdio is unclear
 
 ### Returning Offline User
@@ -134,24 +148,33 @@ After the adversarial review with GPT-5.3-codex, the spec now covers most featur
 
 ## Remaining Priority for Resolution
 
+### Before Phase 0 (blocks everything)
+1. ~~Integration spike~~ → Added as Phase 0 in spec. Must validate Yjs-in-daemon + CodeMirror + CLI convergence.
+
 ### Before Phase 2 (blocks collaboration)
-1. ~~Auth model design~~ **RESOLVED** — full design in SPEC.md Part 5 (Security) + Part 3 (Auth Endpoints) + Part 4 (DB Schema)
-2. ~~File watcher race condition strategy~~ **RESOLVED** — detailed pipeline in SPEC.md Part 2, Section 4
-3. ~~Relay always-connected enforcement~~ **RESOLVED** — relay is required, architecture updated
+2. ~~Auth model design~~ **RESOLVED**
+3. ~~File watcher race condition strategy~~ **RESOLVED**
+4. ~~Relay always-connected enforcement~~ **RESOLVED** — relay for collab, local-first for solo/offline
+5. ~~CRDT location model~~ **RESOLVED** — Yjs-in-daemon with local WS server
+6. ~~Disk write policy~~ **RESOLVED** — always write to disk
+7. ~~Conflict framing~~ **RESOLVED** — "Conflict-free data, coordinated editing" + intent/leases + reconciliation UI
+
+### Before Phase 3 (blocks git sync)
+8. **Git leader election protocol** → relay-mediated, distributed. Specific protocol (heartbeat/lease/Raft-lite) TBD.
 
 ### Before Phase 4 (blocks agent integration)
-4. **Agent name uniqueness enforcement** → daemon-level dedup or registry
-5. **MCP subscribe notification delivery** → how stdio transport delivers push notifications
+9. ~~Agent name policy~~ **RESOLVED** — duplicates allowed, shared state
+10. **MCP subscribe notification delivery** → how stdio transport delivers push notifications
 
 ### Before Phase 5 (blocks polish)
-6. **Full-text search index** → SQLite FTS5 vs Tantivy
-7. **Backlinks parsing/resolution** → extract links, resolve to doc IDs, update on edit
-8. ~~CRDT GC / retention policy~~ **RESOLVED** — 90-day retention, WAL + snapshots, compaction policy
+11. **Full-text search index** → SQLite FTS5 vs Tantivy
+12. **Backlinks parsing/resolution** → extract links, resolve to doc IDs, update on edit
+13. ~~CRDT GC / retention policy~~ **RESOLVED**
+14. **Reconciliation UI trigger heuristics** → what threshold triggers side-by-side view
 
 ### Defer to V2
-- Commenting implementation (design exists, deferred for V1)
 - Image upload (paste URLs for V1)
-- Timeline/diff views (git history for V1)
-- Mobile/responsive
+- E2EE opt-in (server-readable V1, storage layer designed to accommodate)
+- Mobile (daemon embedded in-process, same as Tauri)
 - Notification system
 - KaTeX/Mermaid extensions

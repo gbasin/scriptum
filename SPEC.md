@@ -14,9 +14,9 @@ Scriptum bridges the gap between GitHub (too heavy for collaboration) and Notion
 
 ## Core Principles
 
-1. **Local-first**: Your data lives on your machine. Works offline. Syncs when connected.
+1. **Local-first**: Your data lives on your machine. Local replica is authoritative — solo and offline use work fully without a server. The relay is required only for multi-user collaboration and cross-device sync.
 2. **Markdown-native**: Pure `.md` files on disk. No proprietary format. No lock-in.
-3. **CRDT-native**: Conflict-free by design. Multiple editors, humans or agents, never conflict destructively.
+3. **Conflict-free data, coordinated editing**: CRDT ensures no data loss at the data layer — every character from every editor is preserved. Intent system and section awareness ensure no surprises at the UX layer — concurrent edits to the same section are surfaced for review, not silently interleaved.
 4. **Git-optional**: Push to GitHub/any git remote with AI-generated commits. Or don't. Git is a sync target, not a dependency.
 5. **Agent-friendly**: AI agents are first-class collaborators with attribution, not second-class citizens bolted on.
 
@@ -57,6 +57,8 @@ Multiple people editing the same document simultaneously.
 - **Character-level CRDT**: Powered by Yjs - merges are conflict-free at the character level
 - **Section awareness**: Overlay on top of CRDT that detects when two editors are in the same markdown section, showing a subtle indicator
 - **Offline support**: Edit offline, changes merge seamlessly when you reconnect
+- **Intent/lease system**: Editors can "claim" a section with a TTL (e.g., `scriptum_claim(section, ttl=10m, note="rewriting auth")`). UI shows "claimed by X" as a soft advisory lock. Other editors see a warning but can still edit — leases are non-blocking. Provides a default coordination path for agents and humans.
+- **Reconciliation UI**: When concurrent large rewrites hit the same section, both versions are preserved and shown side-by-side for the user to choose, merge, or keep both. Prevents the worst CRDT interleaving UX.
 - **Commenting**: Inline comments on selections, threaded discussions, resolve/unresolve. Comments are for discussion and conversation -- not an approval workflow. No tracked changes or suggesting mode.
 
 ### 3. Local Editing & Sync
@@ -106,7 +108,9 @@ scriptum peek doc.md --section "## Auth"  # Quick read without registering edit 
 
 **MCP Server**:
 - Native integration with Claude Code, Cursor, and any MCP-compatible agent
-- Tools: `scriptum_read`, `scriptum_edit`, `scriptum_list`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`, `scriptum_history`, `scriptum_subscribe`, `scriptum_agents`
+- Tools: `scriptum_read`, `scriptum_edit`, `scriptum_list`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`, `scriptum_history`, `scriptum_subscribe`, `scriptum_agents`, `scriptum_claim`, `scriptum_bundle`
+- `scriptum_claim(section_id, ttl, mode, note)`: Claim a section with advisory lease
+- `scriptum_bundle(doc, section_id, include=[parents, children, backlinks, comments], token_budget=N)`: Get optimally-sized context for a section in one call — agents get just enough context, continuously updated
 - Resources: `scriptum://docs/{id}`, `scriptum://docs/{id}/sections`, `scriptum://workspace`, `scriptum://agents`
 - Agents receive notifications when sections they're working on change
 - Agent name derived from MCP client config (no manual `--agent` needed)
@@ -131,22 +135,27 @@ scriptum setup claude --remove
 - Attribution inferred from process/user context when possible
 - Lower fidelity than CLI/MCP: paragraph-level diff, no section targeting, no edit summaries
 
-**Agent Attribution**:
-- All agent edits are tracked with agent name, timestamp, and edit summary
-- Version history shows human vs. agent contributions
-- Section-level "last edited by" indicators in the UI
-- Contributions flow through to git via `Co-authored-by` headers
+**Agent Attribution** (dual persistence model):
+- **CRDT-level**: Lightweight origin tag embedded in each Yjs transaction (author ID + timestamp, ~20 bytes per update). Travels with the CRDT, survives storage and replay. Enables offline attribution.
+- **Server-level**: Relay annotates each update with authenticated user/agent ID in `yjs_update_log`. Provides authoritative mapping for history and audit.
+- Both layers combined enable: per-section "last edited by" in UI, `scriptum blame` command with full edit summaries, character-level time travel with authorship.
+- Contributions flow through to git via `Co-authored-by` trailers (best-effort attribution at git layer).
+
+**Agent Name Policy**:
+- Duplicate agent names are allowed. Two agents with the same name share state — their edits are attributed to the same identity.
+- This simplifies agent lifecycle: agents are "disposable," and multiple instances of the same agent type (e.g., `claude`) naturally share context.
+- For distinct tracking, agents should use unique names (e.g., `claude-auth-reviewer`, `claude-api-writer`).
 
 ### 5. Git Sync
 
 Automatic, intelligent syncing to git remotes.
 
-- **Auto-commit on idle**: After ~30 seconds of inactivity (no new edits), changes are committed automatically
+- **Semantic commit groups**: Commits triggered by intent closure (finishing a claimed section, resolving a comment thread, completing a task, explicit checkpoint command). Idle timer (~30 seconds) as fallback only — not the primary commit trigger.
 - **AI-generated commit messages**: Analyzes the diff and produces meaningful commit messages (e.g., "Update authentication flow with OAuth2 PKCE details")
 - **Configurable remote**: GitHub, GitLab, Bitbucket, any git remote
 - **Branch strategy**: Configurable per workspace - commit to main, to a branch, or create PRs
 - **Selective sync**: Choose which documents/folders sync to git
-- **Git blame integration**: Attribution flows through to git - `git blame` shows who (human or agent) wrote each line
+- **Two-tier attribution**: `scriptum blame` shows per-line/per-section attribution from CRDT data (richer than git — includes edit summaries, agent vs human, section context). Git history preserves co-authors via `Co-authored-by` trailers as best-effort.
 
 ### 6. Workspace Organization
 
@@ -166,7 +175,7 @@ Abstract workspace layer that's flexible and intuitive.
 
 Full audit trail of every change.
 
-- **CRDT history (recent)**: Character-level, real-time history for the last 30 days. See exactly who typed what, rewind to any point.
+- **CRDT history (recent, V1)**: Character-level, real-time history for the last 90 days. See exactly who typed what, rewind to any point. Requires: update log with timestamps, stable client-ID-to-user mapping (via dual attribution model), periodic snapshots for feasible replay, scrub/replay UI.
 - **Git history (permanent)**: Every auto-commit is a permanent snapshot. Browse with familiar git tools.
 - **Timeline view**: Visual timeline of document evolution with contributor avatars
 - **Diff view**: Side-by-side or inline diffs between any two versions
@@ -292,9 +301,11 @@ Control who can access and edit.
 
 Core architectural decisions:
 1. Canonical state is CRDT; markdown is a projection.
-2. Relay assigns monotonic `server_seq` per `(workspace_id, doc_id)`.
-3. Local writes are acknowledged only after durable local WAL fsync.
-4. Protocol compatibility target is N and N-1 for REST, WS, JSON-RPC.
+2. **Yjs-in-daemon model**: The daemon owns the authoritative Y.Doc and exposes a local WebSocket server (`ws://localhost:{port}`). Desktop/web CodeMirror connects via y-websocket as a standard Yjs provider. CLI and MCP connect as peers over the same local WS. On mobile, the daemon is embedded in-process (same as Tauri desktop mode).
+3. Relay assigns monotonic `server_seq` per `(workspace_id, doc_id)`.
+4. Local writes are acknowledged only after durable local WAL fsync.
+5. Protocol compatibility target is N and N-1 for REST, WS, JSON-RPC.
+6. **Web-first onboarding**: Web app is a first-class client. Web users can create workspaces, edit, and collaborate without installing anything (CRDT state on relay). Desktop adds local files, offline mode, CLI, and agent integration. "Local files always present" applies to desktop users only.
 
 ---
 
@@ -413,7 +424,7 @@ No normalization, no conversion between rich document models.
 ytext.toString() === file.md contents  (identity mapping)
 
 This means:
-1. File on disk = ytext.toString() = raw markdown (byte-for-byte)
+1. File on disk = ytext.toString() = exact markdown content (no normalization, no reformatting; configurable line-ending policy, UTF-8)
 2. Editor (CodeMirror 6) renders live preview via custom extension:
    - Active line shows raw markdown (for editing)
    - Unfocused lines render as rich text (for reading)
@@ -642,6 +653,11 @@ The Scriptum daemon (`scriptumd`) is a Rust process that owns all local collabor
 │       ▼                                                           │
 │  Write to file (with watcher temporarily paused for this)         │
 │                                                                   │
+│  Disk write policy: ALWAYS write remote changes to disk.          │
+│  External editors (VS Code, Vim) handle "file changed on disk"    │
+│  prompts natively. This is the expected behavior — simple and     │
+│  predictable. No shadow files or idle detection.                  │
+│                                                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -649,7 +665,8 @@ The Scriptum daemon (`scriptumd`) is a Rust process that owns all local collabor
 - **Debouncing**: 100ms debounce on file events to batch rapid saves (configurable 50-500ms)
 - **Hash tracking**: SHA-256 hash of file content to detect actual changes vs. no-op saves
 - **Watcher pausing**: When writing remote changes to disk, temporarily ignore file events to prevent feedback loops
-- **Diff algorithm**: Uses `diff-match-patch` or similar to compute minimal edits, converted to Yjs text operations
+- **Diff algorithm**: Uses `diff-match-patch` or similar to compute minimal edits, converted to Yjs text operations. Patch-based (not whole-doc replace) for efficiency with concurrent edits.
+- **Diff correctness testing**: Both property-based tests (randomized edits, verify CRDT convergence) and golden file tests (curated tricky scenarios: multi-hunk, overlapping, Unicode, empty sections). Golden tests on every commit, property tests nightly.
 - **Path safety**: Canonicalize all paths, reject directory traversal and symlink escape attempts
 - **Path normalization**: Separators to `/`, Unicode NFKC, reject `.`/`..`, max 512 characters
 
@@ -731,10 +748,12 @@ function applyFileChangeToYjs(oldContent: string, newContent: string, ytext: Y.T
 ```
 
 **Git Sync Worker details:**
-- Triggers: idle>=30s, manual RPC, optional `on_save`
+- **Semantic triggers (primary)**: Section lease release, comment thread resolved, task completed, explicit `scriptum checkpoint` command. These produce meaningful, intent-aligned commits.
+- **Idle fallback**: After 30s of inactivity with uncommitted changes, auto-commit as a safety net. Not the primary commit path.
 - Max 1 auto-commit per 30s per workspace
 - Push policies: `disabled` | `manual` | `auto_rebase`
 - AI commit messages: opt-in, redact before API call per workspace policy, deterministic fallback on failure
+- **Leader election**: One daemon per workspace is elected git sync leader via relay-mediated protocol. If the leader disconnects, another connected daemon takes over automatically. Prevents multi-writer race conditions (competing commits, forced merges). Leader handles both commit and push operations.
 
 **AI Commit Message Generation:**
 
@@ -1421,6 +1440,17 @@ JSON-RPC 2.0 over local Unix socket (`~/.scriptum/daemon.sock`) or Windows named
 - Params: `{ workspace_id: string }`
 - Result: `{ items: [{ agent_id: string, last_seen_at: string, active_sections: int }] }`
 
+**`agent.claim`**
+- Params: `{ workspace_id: string, doc_id: string, section_id: string, ttl_sec: int, mode: "exclusive" | "shared", note?: string }`
+- Result: `{ lease_id: string, expires_at: string, conflicts: [{ agent_id: string, section_id: string }] }`
+- Note: Leases are advisory only (V1). Other editors see a warning but are not blocked.
+
+### Document Bundle Methods
+
+**`doc.bundle`**
+- Params: `{ workspace_id: string, doc_id: string, section_id?: string, include: ("parents" | "children" | "backlinks" | "comments")[], token_budget?: int }`
+- Result: `{ section_content: string, context: { parents: [Section], children: [Section], backlinks: [{ doc_id, path, snippet }], comments: [CommentThread] }, tokens_used: int }`
+
 ### Git Methods
 
 **`git.status`**
@@ -1452,6 +1482,8 @@ MCP tools mirror the daemon JSON-RPC interface. Each tool connects to `scriptumd
 | `scriptum_history` | `doc.diff` | Version timeline / diffs |
 | `scriptum_subscribe` | (notification channel) | Change notifications for watched docs |
 | `scriptum_agents` | `agent.list` | List active agents in workspace |
+| `scriptum_claim` | `agent.claim` | Claim a section with advisory lease (TTL, mode, note) |
+| `scriptum_bundle` | `doc.bundle` | Get optimally-sized context bundle for a section |
 
 **MCP Resources**:
 - `scriptum://docs/{id}` -- document content
@@ -1948,6 +1980,11 @@ Recovery procedure:
 - PII minimized: IP addresses and user agents stored as hashes, not raw values.
 - Retention: 180 days hot, archive per tenant configuration.
 
+### Encryption Model
+- **V1: Server-readable**. Relay can read document content. This enables: server-side search, share link rendering, server-side AI features, and easier debugging. Standard SaaS model.
+- **V2: E2EE opt-in**. Storage layer is designed so end-to-end encryption can be layered on per-workspace for enterprise/privacy-sensitive users. When E2EE is enabled: relay stores opaque blobs, server-side search is disabled, share links require client-side decryption.
+- **Migration path**: E2EE workspaces are a separate mode, not a global toggle. Existing server-readable workspaces are unaffected.
+
 ### AI Safety
 - Per-workspace redaction policy for AI commit messages: `disabled` (no AI) | `redacted` (sanitized diff) | `full` (complete diff).
 - Redaction strips sensitive patterns (API keys, secrets, credentials) before sending to Claude API.
@@ -2050,7 +2087,8 @@ Every paging alert must have an associated runbook before going to production.
 | Category | Scope | Frequency |
 |----------|-------|-----------|
 | **Unit** | Parser, sequencer, auth, ACL logic | Every commit |
-| **Property** | CRDT convergence (10k-op randomized scenarios) | Nightly |
+| **Property** | CRDT convergence (10k-op randomized scenarios), diff-to-Yjs correctness (randomized file edits → verify CRDT state) | Nightly |
+| **Golden file** | Diff-to-Yjs edge cases: multi-hunk patches, overlapping edits, Unicode, empty sections, large replacements | Every commit |
 | **Integration** | Daemon+watcher, relay+WS, git worker, snapshot/recovery | Every PR |
 | **Contract** | REST vs OpenAPI spec, WS frame schemas, JSON-RPC, MCP parity | Every PR |
 | **Security** | AuthZ bypass, path traversal, XSS, token replay, brute-force | Every PR + periodic pen test |
@@ -2116,48 +2154,59 @@ Every paging alert must have an associated runbook before going to production.
 
 ## Development Phases
 
+### Phase 0: Integration Spike (Week 0-1)
+- [ ] **Critical path validation**: CodeMirror (JS) edits a doc via y-websocket connecting to daemon's local WS server. CLI (Rust) edits the same doc via y-crdt. Both converge. Persistence works across daemon restarts. This spike de-risks the Yjs-in-daemon architecture before building anything else.
+
 ### Phase 1: Foundation (Weeks 1-4)
-- [ ] Tauri app scaffold with React + CodeMirror 6 editor
+- [ ] Daemon with local WebSocket server (Yjs-in-daemon model)
+- [ ] Tauri app scaffold with React + CodeMirror 6 editor connecting to daemon via ws://localhost
 - [ ] Build custom Live Preview CM6 extension (hybrid rendering: active line raw markdown, unfocused lines rich text). Reference: codemirror-markdown-hybrid (MIT)
-- [ ] Yjs integration with CodeMirror 6 via y-codemirror.next (local CRDT, no network)
-- [ ] File watcher daemon (bidirectional sync: editor <-> local files)
+- [ ] Yjs integration with CodeMirror 6 via y-codemirror.next → y-websocket → daemon
+- [ ] File watcher pipeline (patch-based diff-to-Yjs with always-write-to-disk policy)
+- [ ] Golden file tests for diff-to-Yjs edge cases
 - [ ] Basic workspace management (create, open, list documents)
 - [ ] Markdown rendering + editing (GFM support)
 
 ### Phase 2: Collaboration (Weeks 5-8)
 - [ ] WebSocket relay server (Rust/Axum)
-- [ ] y-websocket provider for document sync
+- [ ] y-websocket provider for document sync (daemon ↔ relay)
 - [ ] WebRTC provider (y-webrtc) for P2P optimization (relay is primary)
 - [ ] Presence/awareness (live cursors, online indicators)
 - [ ] Section awareness layer
-- [ ] Basic web app (shared React components with desktop)
+- [ ] Intent/lease system (advisory claims, TTL, overlap warnings)
+- [ ] Reconciliation UI (concurrent rewrite detection → side-by-side view)
+- [ ] Dual attribution model (CRDT-level origin tags + server-side update log)
+- [ ] Basic web app (first-class: standalone editing without desktop, relay-backed CRDT state)
 
 ### Phase 3: Git & AI (Weeks 9-12)
 - [ ] Git sync engine (gitoxide or libgit2)
+- [ ] Git leader election protocol (relay-mediated, distributed among daemons)
 - [ ] AI commit message generation (Claude API)
-- [ ] Auto-commit on save/idle
+- [ ] Semantic commit groups (lease release, comment resolve, checkpoint as primary triggers; idle timer as fallback)
+- [ ] `scriptum blame` command (CRDT-based per-line/section attribution)
 - [ ] Git history browsing in the UI
-- [ ] Attribution tracking (per-edit, per-section)
 
 ### Phase 4: Agent Integration (Weeks 13-16)
-- [ ] `scriptum` CLI tool (Rust) - connects to daemon via Unix socket
-- [ ] CLI commands: `read`, `edit`, `tree`, `sections`, `search`, `diff`, `ls`
+- [ ] `scriptum` CLI tool (Rust) - connects to daemon via local WS / Unix socket
+- [ ] CLI commands: `read`, `edit`, `tree`, `sections`, `search`, `diff`, `ls`, `blame`, `claim`, `bundle`
 - [ ] Agent state commands: `whoami`, `status`, `conflicts`, `agents` (inspired by Niwa)
-- [ ] Agent state persistence in daemon (survives context switches)
+- [ ] Agent state persistence in daemon (survives context switches; duplicate names share state)
 - [ ] MCP server for Claude Code / Cursor (TypeScript, stdio transport)
-- [ ] MCP tools: `scriptum_read`, `scriptum_edit`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`
+- [ ] MCP tools: `scriptum_read`, `scriptum_edit`, `scriptum_tree`, `scriptum_status`, `scriptum_conflicts`, `scriptum_claim`, `scriptum_bundle`
+- [ ] Context bundling: `scriptum_bundle(doc, section, include=[...], token_budget=N)`
 - [ ] Claude Code hooks: SessionStart, PreCompact, PreToolUse, PostToolUse, Stop (ported from Niwa)
 - [ ] `scriptum setup claude` command to install hooks
 - [ ] Agent attribution in UI (name badges, contribution indicators)
 
 ### Phase 5: Polish & Launch (Weeks 17-20)
 - [ ] Permissions & sharing
-- [ ] Search (full-text across documents)
-- [ ] Tags, backlinks, wiki-style linking
+- [ ] Search (full-text across documents — choose FTS5 vs Tantivy)
+- [ ] Tags, backlinks (parsing, resolution, update-on-edit), wiki-style linking
 - [ ] Commenting / inline threads
-- [ ] Version history timeline UI
+- [ ] Character-level time travel UI (scrub/replay, powered by dual attribution + WAL)
 - [ ] Documentation & onboarding
-- [ ] Performance optimization & testing
+- [ ] Performance optimization & load testing
+- [ ] Property-based diff-to-Yjs tests (nightly)
 
 ---
 
@@ -2167,10 +2216,20 @@ Every paging alert must have an associated runbook before going to production.
 
 2. **CRDT tombstone compaction**: Yjs accumulates tombstones. Strategy for periodic garbage collection without breaking sync with long-offline peers?
 
-3. **Character-level attribution**: Retention policy and compliance implications for fine-grained edit attribution data.
+3. ~~**Character-level attribution**~~ **RESOLVED**: Dual persistence model (CRDT-level origin tags + server-side update log). Retention: 90 days for update log, snapshots every 1000 updates.
 
-4. **Mobile**: No mobile app in V1. When we add it (V2), offline store architecture TBD -- React Native (share code) or native (better UX)?
+4. **Mobile**: No mobile app in V1. When we add it (V2), daemon is embedded in-process (same as Tauri desktop mode) with local WS server. React Native vs native TBD.
 
 5. **Tenant-level retention**: Custom retention policies and legal hold support for enterprise/hosted deployments.
 
 6. **Pricing model**: Open-source relay server + hosted option. Per-user? Per-workspace? Free tier?
+
+7. **Full-text search index**: SQLite FTS5 vs Tantivy. Needs decision before Phase 5.
+
+8. **Backlinks parsing/resolution**: Table exists but no parsing, link resolution, or update-on-edit logic. Needs design before Phase 5.
+
+9. **Git leader election protocol**: Relay-mediated leader election among daemons is decided, but the specific protocol (heartbeat-based, lease-based, Raft-lite) needs design before Phase 3.
+
+10. **Reconciliation UI trigger heuristics**: When does "concurrent large rewrite" detection fire? Threshold: % of section changed by 2+ editors within N seconds? Needs UX research and tuning.
+
+11. **E2EE key management (V2)**: Key rotation, device authorization, recovery flows for end-to-end encrypted workspaces. Deferred but storage layer should be designed to accommodate.
