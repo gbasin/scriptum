@@ -8,6 +8,7 @@ use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
 use crate::store::meta_db::MetaDb;
 use crate::store::recovery::{recover_documents_into_manager, StartupRecoveryReport};
+use base64::Engine;
 use scriptum_common::protocol::jsonrpc::{
     Request, RequestId, Response, RpcError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     METHOD_NOT_FOUND, PARSE_ERROR,
@@ -286,6 +287,27 @@ struct DocEditSectionResult {
     heading: String,
     bytes_written: usize,
     etag: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocEditParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    client_update_id: String,
+    #[serde(default)]
+    ops: Option<serde_json::Value>,
+    #[serde(default)]
+    content_md: Option<String>,
+    #[serde(default)]
+    if_etag: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocEditResult {
+    etag: String,
+    head_seq: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -900,6 +922,73 @@ impl RpcServerState {
         DocReadResult { metadata, sections, content_md: include_content.then_some(content_md), degraded }
     }
 
+    async fn edit_doc(&self, params: DocEditParams) -> Result<DocEditResult, String> {
+        let doc = {
+            let mut manager = self.doc_manager.write().await;
+            manager.subscribe_or_create(params.doc_id)
+        };
+
+        let outcome = async {
+            if params.client_update_id.trim().is_empty() {
+                return Err("client_update_id must not be empty".to_string());
+            }
+            if let Some(agent_id) = params.agent_id.as_deref() {
+                if agent_id.trim().is_empty() {
+                    return Err("agent_id must not be empty".to_string());
+                }
+            }
+            if params.content_md.is_none() && params.ops.is_none() {
+                return Err("doc.edit requires either `ops` or `content_md`".to_string());
+            }
+
+            {
+                let mut metadata = self.doc_metadata.write().await;
+                let record = metadata
+                    .entry((params.workspace_id, params.doc_id))
+                    .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id));
+                if let Some(if_etag) = params.if_etag.as_deref() {
+                    if if_etag != record.etag {
+                        return Err(format!(
+                            "if_etag mismatch: expected `{}`, got `{}`",
+                            record.etag, if_etag
+                        ));
+                    }
+                }
+            }
+
+            if let Some(content_md) = params.content_md.as_deref() {
+                let existing_len = doc.text_len("content");
+                doc.replace_text("content", 0, existing_len, content_md);
+            }
+
+            if let Some(ops_value) = params.ops.as_ref() {
+                let update_bytes = decode_doc_edit_ops(ops_value)?;
+                doc.apply_update(&update_bytes)
+                    .map_err(|error| format!("failed to apply Yjs ops: {error}"))?;
+            }
+
+            let result = {
+                let mut metadata = self.doc_metadata.write().await;
+                let record = metadata
+                    .entry((params.workspace_id, params.doc_id))
+                    .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id));
+                record.head_seq = record.head_seq.saturating_add(1);
+                record.etag = format!("doc:{}:{}", params.doc_id, record.head_seq);
+                DocEditResult { etag: record.etag.clone(), head_seq: record.head_seq }
+            };
+
+            Ok(result)
+        }
+        .await;
+
+        {
+            let mut manager = self.doc_manager.write().await;
+            let _ = manager.unsubscribe(params.doc_id);
+        }
+
+        outcome
+    }
+
     async fn doc_sections(&self, workspace_id: Uuid, doc_id: Uuid) -> DocSectionsResult {
         let doc = {
             let mut manager = self.doc_manager.write().await;
@@ -1157,6 +1246,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
             )
         }
         "doc.read" => handle_doc_read(request, state).await,
+        "doc.edit" => handle_doc_edit(request, state).await,
         "doc.bundle" => handle_doc_bundle(request, state).await,
         "doc.edit_section" => handle_doc_edit_section(request, state).await,
         "doc.sections" => handle_doc_sections(request, state).await,
@@ -1238,6 +1328,31 @@ fn parse_doc_bundle_params(
             request_id,
             format!("failed to decode doc.bundle params: {}", error),
         )
+    })
+}
+
+async fn handle_doc_edit(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_doc_edit_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.edit_doc(params).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => invalid_params_response(request.id, reason),
+    }
+}
+
+fn parse_doc_edit_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<DocEditParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(request_id, "doc.edit requires params".to_string()));
+    };
+
+    serde_json::from_value::<DocEditParams>(params).map_err(|error| {
+        invalid_params_response(request_id, format!("failed to decode doc.edit params: {error}"))
     })
 }
 
@@ -1647,6 +1762,56 @@ fn cl100k_tokenizer() -> Result<&'static CoreBPE, String> {
     }
 }
 
+fn decode_doc_edit_ops(value: &serde_json::Value) -> Result<Vec<u8>, String> {
+    match value {
+        serde_json::Value::String(payload_b64) => decode_doc_edit_ops_base64(payload_b64),
+        serde_json::Value::Array(bytes) => decode_doc_edit_ops_array(bytes),
+        serde_json::Value::Object(object) => {
+            let Some(payload_b64_value) =
+                object.get("payload_b64").or_else(|| object.get("base64"))
+            else {
+                return Err(
+                    "doc.edit `ops` object must include `payload_b64` (or `base64`)".to_string(),
+                );
+            };
+            let Some(payload_b64) = payload_b64_value.as_str() else {
+                return Err("doc.edit `ops.payload_b64` must be a base64 string".to_string());
+            };
+            decode_doc_edit_ops_base64(payload_b64)
+        }
+        _ => Err(
+            "doc.edit `ops` must be a base64 string, byte array, or object with `payload_b64`"
+                .to_string(),
+        ),
+    }
+}
+
+fn decode_doc_edit_ops_base64(payload_b64: &str) -> Result<Vec<u8>, String> {
+    if payload_b64.trim().is_empty() {
+        return Err("doc.edit `ops` base64 payload must not be empty".to_string());
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload_b64)
+        .map_err(|error| format!("doc.edit `ops` base64 decode failed: {error}"))
+}
+
+fn decode_doc_edit_ops_array(values: &[serde_json::Value]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let Some(number) = value.as_u64() else {
+            return Err(format!("doc.edit `ops[{index}]` must be an integer byte (0-255)"));
+        };
+        if number > u8::MAX as u64 {
+            return Err(format!("doc.edit `ops[{index}]` out of range: {number}"));
+        }
+        bytes.push(number as u8);
+    }
+    if bytes.is_empty() {
+        return Err("doc.edit `ops` byte array must not be empty".to_string());
+    }
+    Ok(bytes)
+}
+
 fn invalid_params_response(request_id: RequestId, reason: String) -> Response {
     Response::error(
         request_id,
@@ -1883,11 +2048,14 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
+    use base64::Engine;
     use scriptum_common::protocol::jsonrpc::{Request, RequestId, INTERNAL_ERROR, INVALID_PARAMS};
     use scriptum_common::types::Section;
     use serde_json::json;
     use tokio::sync::broadcast;
     use uuid::Uuid;
+
+    use crate::engine::ydoc::YDoc;
 
     use super::{
         apply_bundle_token_budget_with, dispatch_request, BacklinkContext, CommentThreadContext,
@@ -1969,6 +2137,12 @@ mod tests {
         state
     }
 
+    fn encoded_doc_ops(content: &str) -> String {
+        let source = YDoc::new();
+        source.insert_text("content", 0, content);
+        base64::engine::general_purpose::STANDARD.encode(source.encode_state())
+    }
+
     #[tokio::test]
     async fn doc_read_returns_content_and_sections() {
         let state = RpcServerState::default();
@@ -2039,6 +2213,131 @@ mod tests {
         assert!(response.result.is_none());
         let error = response.error.expect("error should be present");
         assert_eq!(error.code, -32602);
+    }
+
+    #[tokio::test]
+    async fn doc_edit_replaces_content_and_advances_head_seq() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/spec.md", "Spec", "# Before\nold").await;
+
+        let request = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-1",
+                "content_md": "# After\nnew",
+                "if_etag": format!("doc:{doc_id}:0"),
+                "agent_id": "cursor-1"
+            })),
+            RequestId::Number(80),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success response: {response:?}");
+        let result = response.result.expect("result should be populated");
+        assert_eq!(result["head_seq"], json!(1));
+        assert_eq!(result["etag"], json!(format!("doc:{doc_id}:1")));
+
+        let read = state.read_doc(workspace_id, doc_id, true).await;
+        assert_eq!(read.content_md, Some("# After\nnew".to_string()));
+        assert_eq!(read.metadata.head_seq, 1);
+        assert_eq!(read.metadata.etag, format!("doc:{doc_id}:1"));
+    }
+
+    #[tokio::test]
+    async fn doc_edit_applies_yjs_ops_payload() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/live.md", "Live", "").await;
+        let ops_payload_b64 = encoded_doc_ops("inserted via ops");
+
+        let request = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-ops-1",
+                "ops": {
+                    "payload_b64": ops_payload_b64
+                }
+            })),
+            RequestId::Number(81),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success response: {response:?}");
+        let read = state.read_doc(workspace_id, doc_id, true).await;
+        assert_eq!(read.content_md, Some("inserted via ops".to_string()));
+        assert_eq!(read.metadata.head_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn doc_edit_rejects_if_etag_mismatch_without_mutating_doc() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/etag.md", "Etag", "unchanged").await;
+
+        let request = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-etag-1",
+                "content_md": "mutated",
+                "if_etag": format!("doc:{doc_id}:999")
+            })),
+            RequestId::Number(82),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+        let reason = error
+            .data
+            .as_ref()
+            .and_then(|value| value.get("reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(reason.contains("if_etag mismatch"));
+
+        let read = state.read_doc(workspace_id, doc_id, true).await;
+        assert_eq!(read.content_md, Some("unchanged".to_string()));
+        assert_eq!(read.metadata.head_seq, 0);
+        assert_eq!(read.metadata.etag, format!("doc:{doc_id}:0"));
+    }
+
+    #[tokio::test]
+    async fn doc_edit_rejects_requests_without_ops_or_content() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/empty.md", "Empty", "seed").await;
+
+        let request = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-empty-1"
+            })),
+            RequestId::Number(83),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+        let reason = error
+            .data
+            .as_ref()
+            .and_then(|value| value.get("reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(reason.contains("requires either `ops` or `content_md`"));
     }
 
     #[tokio::test]
