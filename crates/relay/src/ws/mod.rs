@@ -46,7 +46,6 @@ pub struct SyncSessionRouterState {
     ws_base_url: Arc<str>,
 }
 
-
 #[derive(Clone)]
 pub enum WorkspaceMembershipStore {
     Postgres(sqlx::PgPool),
@@ -318,7 +317,15 @@ pub async fn ws_upgrade(
     let awareness_store = state.awareness_store.clone();
     let membership_store = state.membership_store.clone();
     ws.max_frame_size(MAX_FRAME_BYTES as usize).on_upgrade(move |socket| async move {
-        handle_socket(session_store, doc_store, awareness_store, membership_store, session_id, socket).await;
+        handle_socket(
+            session_store,
+            doc_store,
+            awareness_store,
+            membership_store,
+            session_id,
+            socket,
+        )
+        .await;
     })
 }
 
@@ -389,9 +396,8 @@ async fn handle_socket(
 
     // Heartbeat: server pings every HEARTBEAT_INTERVAL_MS, disconnects if no
     // pong arrives within HEARTBEAT_TIMEOUT_MS.
-    let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_millis(
-        HEARTBEAT_INTERVAL_MS as u64,
-    ));
+    let mut heartbeat_interval =
+        tokio::time::interval(std::time::Duration::from_millis(HEARTBEAT_INTERVAL_MS as u64));
     heartbeat_interval.reset(); // skip immediate first tick
     let mut last_pong = Instant::now();
     let heartbeat_timeout = std::time::Duration::from_millis(HEARTBEAT_TIMEOUT_MS);
@@ -1241,19 +1247,30 @@ impl SyncSessionStore {
 mod tests {
     use super::{
         handle_awareness_update, handle_hello_message, handle_subscribe_message,
-        handle_yjs_update_message, router, CreateSyncSessionResponse,
-        DocSyncStore, SessionTokenValidation, SyncSessionStore, WorkspaceMembershipStore,
-        HEARTBEAT_INTERVAL_MS, HEARTBEAT_TIMEOUT_MS, MAX_FRAME_BYTES,
+        handle_yjs_update_message, router, CreateSyncSessionResponse, DocSyncStore,
+        SessionTokenValidation, SyncSessionStore, WorkspaceMembershipStore, HEARTBEAT_INTERVAL_MS,
+        HEARTBEAT_TIMEOUT_MS, MAX_FRAME_BYTES,
     };
-    use crate::awareness::AwarenessStore;
     use crate::auth::{jwt::JwtAccessTokenService, middleware::WorkspaceRole};
+    use crate::awareness::AwarenessStore;
+    use crate::db::{
+        migrations::run_migrations,
+        pool::{create_pg_pool, PoolConfig},
+    };
     use axum::{
         body::{to_bytes, Body},
         http::{header::AUTHORIZATION, Method, Request, StatusCode},
+        Router,
     };
     use chrono::{Duration, Utc};
+    use futures_util::{SinkExt, StreamExt};
     use scriptum_common::protocol::ws::WsMessage;
     use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use tokio::time::timeout;
+    use tokio_tungstenite::{
+        connect_async, tungstenite::Message as WsFrame, MaybeTlsStream, WebSocketStream,
+    };
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -1264,6 +1281,69 @@ mod tests {
             .await
             .expect("response body should be readable");
         String::from_utf8(bytes.to_vec()).expect("response body should be valid utf8")
+    }
+
+    type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    async fn ws_send(socket: &mut ClientSocket, message: &WsMessage) {
+        let raw = serde_json::to_string(message).expect("ws message should serialize");
+        socket.send(WsFrame::Text(raw.into())).await.expect("ws message should send");
+    }
+
+    async fn ws_recv(socket: &mut ClientSocket) -> WsMessage {
+        loop {
+            let next = timeout(std::time::Duration::from_secs(2), socket.next())
+                .await
+                .expect("timed out waiting for websocket frame");
+            let frame =
+                next.expect("websocket should remain open").expect("websocket frame should decode");
+
+            match frame {
+                WsFrame::Text(payload) => {
+                    return serde_json::from_str::<WsMessage>(&payload)
+                        .expect("text frame should decode as ws message");
+                }
+                WsFrame::Binary(payload) => {
+                    return serde_json::from_slice::<WsMessage>(&payload)
+                        .expect("binary frame should decode as ws message");
+                }
+                WsFrame::Ping(payload) => {
+                    socket.send(WsFrame::Pong(payload)).await.expect("pong should send");
+                }
+                WsFrame::Close(_) => panic!("websocket closed unexpectedly"),
+                WsFrame::Pong(_) | WsFrame::Frame(_) => {}
+            }
+        }
+    }
+
+    async fn create_sync_session_for_test(
+        app: &Router,
+        workspace_id: Uuid,
+        token: &str,
+    ) -> CreateSyncSessionResponse {
+        let payload = format!(
+            "{{\"protocol\":\"scriptum-sync.v1\",\"client_id\":\"{}\",\"device_id\":\"{}\"}}",
+            Uuid::new_v4(),
+            Uuid::new_v4()
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/sync-sessions"))
+                    .header("content-type", "application/json")
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(payload))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should return a response");
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = response_body(response).await;
+        serde_json::from_str::<CreateSyncSessionResponse>(&body)
+            .expect("sync session response should deserialize")
     }
 
     #[tokio::test]
@@ -1395,6 +1475,189 @@ mod tests {
             session_store.token_for_session(parsed.session_id).await,
             Some(parsed.session_token)
         );
+    }
+
+    #[tokio::test]
+    async fn websocket_integration_ack_and_broadcast_to_other_subscriber() {
+        let Some(database_url) = std::env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
+            eprintln!("skipping websocket integration test: set SCRIPTUM_RELAY_TEST_DATABASE_URL");
+            return;
+        };
+
+        let pool = create_pg_pool(
+            &database_url,
+            PoolConfig { min_connections: 1, max_connections: 2, ..PoolConfig::default() },
+        )
+        .await
+        .expect("pool should connect to test database");
+        run_migrations(&pool).await.expect("migrations should apply");
+
+        let workspace_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let user_email = format!("relay-ws-{}@example.test", Uuid::new_v4().simple());
+        let workspace_slug = format!("relay-ws-{}", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)")
+            .bind(user_id)
+            .bind(user_email)
+            .bind("Relay WS Test User")
+            .execute(&pool)
+            .await
+            .expect("user should insert");
+        sqlx::query("INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, $3, $4)")
+            .bind(workspace_id)
+            .bind(workspace_slug)
+            .bind("Relay WS Integration")
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .expect("workspace should insert");
+        sqlx::query(
+            "INSERT INTO workspace_members (workspace_id, user_id, role, status) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(workspace_id)
+        .bind(user_id)
+        .bind("editor")
+        .bind("active")
+        .execute(&pool)
+        .await
+        .expect("workspace membership should insert");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose local address");
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let session_store = Arc::new(SyncSessionStore::default());
+        let app = router(
+            jwt_service.clone(),
+            session_store.clone(),
+            Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
+            WorkspaceMembershipStore::Postgres(pool.clone()),
+            format!("ws://{addr}"),
+        );
+        let access_token = jwt_service
+            .issue_workspace_token(user_id, workspace_id)
+            .expect("access token should be created");
+
+        let session_a = create_sync_session_for_test(&app, workspace_id, &access_token).await;
+        let session_b = create_sync_session_for_test(&app, workspace_id, &access_token).await;
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("relay websocket server should run for integration test");
+        });
+
+        let (mut socket_a, _) =
+            connect_async(session_a.ws_url.as_str()).await.expect("client A should connect");
+        let (mut socket_b, _) =
+            connect_async(session_b.ws_url.as_str()).await.expect("client B should connect");
+
+        ws_send(
+            &mut socket_a,
+            &WsMessage::Hello {
+                session_token: session_a.session_token.clone(),
+                resume_token: None,
+            },
+        )
+        .await;
+        match ws_recv(&mut socket_a).await {
+            WsMessage::HelloAck { .. } => {}
+            other => panic!("expected hello ack for client A, got {other:?}"),
+        }
+
+        ws_send(
+            &mut socket_b,
+            &WsMessage::Hello {
+                session_token: session_b.session_token.clone(),
+                resume_token: None,
+            },
+        )
+        .await;
+        match ws_recv(&mut socket_b).await {
+            WsMessage::HelloAck { .. } => {}
+            other => panic!("expected hello ack for client B, got {other:?}"),
+        }
+
+        let doc_id = Uuid::new_v4();
+        ws_send(&mut socket_a, &WsMessage::Subscribe { doc_id, last_server_seq: Some(0) }).await;
+        ws_send(&mut socket_b, &WsMessage::Subscribe { doc_id, last_server_seq: Some(0) }).await;
+
+        let wait_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !(session_store.session_is_subscribed(session_a.session_id, doc_id).await
+            && session_store.session_is_subscribed(session_b.session_id, doc_id).await)
+        {
+            assert!(
+                tokio::time::Instant::now() < wait_deadline,
+                "timed out waiting for both sessions to subscribe"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let update_client_id = Uuid::new_v4();
+        let update_id = Uuid::new_v4();
+        let payload_b64 = "cGF5bG9hZA==".to_string();
+        ws_send(
+            &mut socket_a,
+            &WsMessage::YjsUpdate {
+                doc_id,
+                client_id: update_client_id,
+                client_update_id: update_id,
+                base_server_seq: 0,
+                payload_b64: payload_b64.clone(),
+            },
+        )
+        .await;
+
+        let ack = loop {
+            let message = ws_recv(&mut socket_a).await;
+            if matches!(message, WsMessage::Ack { client_update_id, .. } if client_update_id == update_id)
+            {
+                break message;
+            }
+        };
+        match ack {
+            WsMessage::Ack { doc_id: ack_doc_id, client_update_id, server_seq, applied } => {
+                assert_eq!(ack_doc_id, doc_id);
+                assert_eq!(client_update_id, update_id);
+                assert_eq!(server_seq, 1);
+                assert!(applied);
+            }
+            other => panic!("expected ack, got {other:?}"),
+        }
+
+        let broadcast = loop {
+            let message = ws_recv(&mut socket_b).await;
+            if matches!(
+                message,
+                WsMessage::YjsUpdate { client_update_id, .. } if client_update_id == update_id
+            ) {
+                break message;
+            }
+        };
+        match broadcast {
+            WsMessage::YjsUpdate {
+                doc_id: update_doc_id,
+                client_id,
+                client_update_id,
+                base_server_seq,
+                payload_b64: message_payload,
+            } => {
+                assert_eq!(update_doc_id, doc_id);
+                assert_eq!(client_id, update_client_id);
+                assert_eq!(client_update_id, update_id);
+                assert_eq!(base_server_seq, 0);
+                assert_eq!(message_payload, payload_b64);
+            }
+            other => panic!("expected yjs_update broadcast, got {other:?}"),
+        }
+
+        let _ = socket_a.close(None).await;
+        let _ = socket_b.close(None).await;
+        server_task.abort();
+        let _ = server_task.await;
     }
 
     #[tokio::test]
@@ -2135,20 +2398,10 @@ mod tests {
         let session_b = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_a,
-                vec![serde_json::json!({"user": "alice"})],
-            )
+            .update(workspace_id, doc_id, session_a, vec![serde_json::json!({"user": "alice"})])
             .await;
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_b,
-                vec![serde_json::json!({"user": "bob"})],
-            )
+            .update(workspace_id, doc_id, session_b, vec![serde_json::json!({"user": "bob"})])
             .await;
 
         let aggregated = awareness_store.aggregate(workspace_id, doc_id).await;
@@ -2167,25 +2420,14 @@ mod tests {
         let session_b = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_a,
-                vec![serde_json::json!({"user": "alice"})],
-            )
+            .update(workspace_id, doc_id, session_a, vec![serde_json::json!({"user": "alice"})])
             .await;
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_b,
-                vec![serde_json::json!({"user": "bob"})],
-            )
+            .update(workspace_id, doc_id, session_b, vec![serde_json::json!({"user": "bob"})])
             .await;
 
-        let excluding_a = awareness_store
-            .aggregate_excluding(workspace_id, doc_id, session_a)
-            .await;
+        let excluding_a =
+            awareness_store.aggregate_excluding(workspace_id, doc_id, session_a).await;
         assert_eq!(excluding_a.len(), 1);
         assert_eq!(excluding_a[0]["user"], "bob");
     }
@@ -2199,20 +2441,10 @@ mod tests {
         let session_b = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_a,
-                vec![serde_json::json!({"user": "alice"})],
-            )
+            .update(workspace_id, doc_id, session_a, vec![serde_json::json!({"user": "alice"})])
             .await;
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_b,
-                vec![serde_json::json!({"user": "bob"})],
-            )
+            .update(workspace_id, doc_id, session_b, vec![serde_json::json!({"user": "bob"})])
             .await;
 
         awareness_store.remove_session(workspace_id, &[doc_id], session_a).await;
@@ -2230,12 +2462,7 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_id,
-                vec![serde_json::json!({"user": "alice"})],
-            )
+            .update(workspace_id, doc_id, session_id, vec![serde_json::json!({"user": "alice"})])
             .await;
         assert_eq!(awareness_store.aggregate(workspace_id, doc_id).await.len(), 1);
 
@@ -2252,20 +2479,10 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_id,
-                vec![serde_json::json!({"cursor": 10})],
-            )
+            .update(workspace_id, doc_id, session_id, vec![serde_json::json!({"cursor": 10})])
             .await;
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_id,
-                vec![serde_json::json!({"cursor": 20})],
-            )
+            .update(workspace_id, doc_id, session_id, vec![serde_json::json!({"cursor": 20})])
             .await;
 
         let aggregated = awareness_store.aggregate(workspace_id, doc_id).await;
@@ -2282,20 +2499,10 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_a,
-                session_id,
-                vec![serde_json::json!({"doc": "a"})],
-            )
+            .update(workspace_id, doc_a, session_id, vec![serde_json::json!({"doc": "a"})])
             .await;
         awareness_store
-            .update(
-                workspace_id,
-                doc_b,
-                session_id,
-                vec![serde_json::json!({"doc": "b"})],
-            )
+            .update(workspace_id, doc_b, session_id, vec![serde_json::json!({"doc": "b"})])
             .await;
 
         let a_peers = awareness_store.aggregate(workspace_id, doc_a).await;
@@ -2411,13 +2618,8 @@ mod tests {
         assert_eq!(awareness_store.aggregate(workspace_id, doc_id).await.len(), 1);
 
         // Simulate what handle_socket does on disconnect.
-        let subscriptions = session_store
-            .subscriptions_for_session(session_id)
-            .await
-            .unwrap();
-        awareness_store
-            .remove_session(workspace_id, &subscriptions, session_id)
-            .await;
+        let subscriptions = session_store.subscriptions_for_session(session_id).await.unwrap();
+        awareness_store.remove_session(workspace_id, &subscriptions, session_id).await;
         session_store.mark_disconnected(session_id).await;
 
         // Awareness should be cleared.
@@ -2433,26 +2635,14 @@ mod tests {
         let session_b = Uuid::new_v4();
 
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_a,
-                vec![serde_json::json!({"user": "alice"})],
-            )
+            .update(workspace_id, doc_id, session_a, vec![serde_json::json!({"user": "alice"})])
             .await;
         awareness_store
-            .update(
-                workspace_id,
-                doc_id,
-                session_b,
-                vec![serde_json::json!({"user": "bob"})],
-            )
+            .update(workspace_id, doc_id, session_b, vec![serde_json::json!({"user": "bob"})])
             .await;
 
         // Disconnect session_a.
-        awareness_store
-            .remove_session(workspace_id, &[doc_id], session_a)
-            .await;
+        awareness_store.remove_session(workspace_id, &[doc_id], session_a).await;
 
         // session_b should still be there.
         let remaining = awareness_store.aggregate(workspace_id, doc_id).await;
