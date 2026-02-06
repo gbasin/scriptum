@@ -99,3 +99,4 @@ jobs:
         run: |
           cargo test -p scriptum-daemon git::worker::tests -- --nocapture
           cargo test -p scriptum-daemon git::leader::tests -- --nocapture
+          cargo test -p scriptum-daemon --test git_worker_e2e_integration -- --nocapture
