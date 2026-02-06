@@ -64,14 +64,28 @@ automation with Playwright. Start server, take screenshots, verify DOM state.
 
 ## Beads Workflow Integration
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`/`bd`) for issue tracking. Issues are stored in `.beads/` and tracked in git.
+This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`/`bd`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/` and tracked in git.
 
-### Essential Commands
+### Triage (bv — read-only intelligence)
+
+**Use `bv --robot-*` flags to decide what to work on. Never run bare `bv` — it launches an interactive TUI that blocks agent sessions.**
 
 ```bash
-# View ready issues (unblocked, not deferred)
-br ready              # or: bd ready
+# Pick next task (graph-aware: considers dependencies, PageRank, critical path)
+bv --robot-next                        # Single top pick + claim command
 
+# Full triage (ranked picks, quick wins, blockers-to-clear, project health)
+bv --robot-triage --format toon        # --format toon = token-optimized output
+
+# Planning & analysis
+bv --robot-plan                        # Parallel execution tracks with unblock lists
+bv --robot-insights                    # PageRank, betweenness, cycles, critical path
+bv --robot-alerts                      # Stale issues, blocking cascades, priority mismatches
+```
+
+### Mutations (br — create, update, close)
+
+```bash
 # List and search
 br list --status=open # All open issues
 br show <id>          # Full issue details with dependencies
@@ -90,7 +104,7 @@ br sync --status      # Check sync status
 
 ### Workflow Pattern
 
-1. **Start**: Run `br ready` to find actionable work
+1. **Start**: Run `bv --robot-next` to get the highest-impact actionable task
 2. **Claim**: Use `br update <id> --status=in_progress`
 3. **Work**: Implement the task
 4. **Complete**: Use `br close <id>`
@@ -98,7 +112,7 @@ br sync --status      # Check sync status
 
 ### Key Concepts
 
-- **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
+- **Dependencies**: Issues can block other issues. `bv --robot-next` factors in the full dependency graph to pick optimal work.
 - **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers 0-4, not words)
 - **Types**: task, bug, feature, epic, chore, docs, question
 - **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
@@ -117,7 +131,8 @@ git push                # Push to remote
 
 ### Best Practices
 
-- Check `br ready` at session start to find available work
+- Use `bv --robot-next` at session start — it picks the highest-impact unblocked task
+- For broader context, run `bv --robot-triage --format toon` to see ranked recommendations, quick wins, and blockers worth clearing
 - Update status as you work (in_progress → closed)
 - Create new issues with `br create` when you discover tasks
 - Use descriptive titles and set appropriate priority/type
