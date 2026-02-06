@@ -4,6 +4,7 @@ mod auth;
 mod awareness;
 pub mod config;
 mod cors;
+pub mod etag;
 mod db;
 mod error;
 mod leader;
