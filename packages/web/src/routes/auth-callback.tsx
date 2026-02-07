@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { AuthClient } from "../auth/client";
 import { useAuthStore } from "../store/auth";
 import { isFixtureModeEnabled } from "../test/setup";
+import styles from "./auth-callback.module.css";
 
 const RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
@@ -48,18 +49,22 @@ export function AuthCallbackRoute() {
 
   if (error) {
     return (
-      <section data-testid="auth-callback-error">
-        <h1>Auth Callback</h1>
-        <p role="alert">{error}</p>
-        <a href="/">Return home</a>
+      <section className={styles.page} data-testid="auth-callback-error">
+        <h1 className={styles.title}>Auth Callback</h1>
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+        <a className={styles.link} href="/">
+          Return home
+        </a>
       </section>
     );
   }
 
   return (
-    <section>
-      <h1>Auth Callback</h1>
-      <p>Completing sign-in...</p>
+    <section className={styles.page}>
+      <h1 className={styles.title}>Auth Callback</h1>
+      <p className={styles.pending}>Completing sign-in...</p>
     </section>
   );
 }

@@ -1,0 +1,31 @@
+.page {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-3);
+  display: grid;
+  gap: var(--space-2);
+  max-width: 28rem;
+  padding: var(--space-4);
+}
+
+.title {
+  font-size: 1.2rem;
+}
+
+.error {
+  color: oklch(0.56 0.23 30);
+  margin: 0;
+}
+
+.pending {
+  margin: 0;
+}
+
+.link {
+  color: var(--color-accent-hex);
+  font-weight: 600;
+}
+
+.link:hover {
+  color: var(--color-accent);
+}

@@ -1,10 +1,13 @@
 import type { CommentMessage, CommentThread } from "@scriptum/shared";
+import clsx from "clsx";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import {
   addCommentMessage,
   reopenCommentThread,
   resolveCommentThread,
 } from "../../lib/api-client";
+import controls from "../../styles/Controls.module.css";
+import styles from "./ThreadList.module.css";
 
 export interface ThreadListProps {
   workspaceId: string;
@@ -41,15 +44,7 @@ function renderMarkdownInline(input: string): ReactNode[] {
     }
     if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
       return (
-        <code
-          key={`code-${index}`}
-          style={{
-            background: "#f3f4f6",
-            borderRadius: "0.25rem",
-            fontSize: "0.75rem",
-            padding: "0.1rem 0.2rem",
-          }}
-        >
+        <code className={styles.inlineCode} key={`code-${index}`}>
           {part.slice(1, -1)}
         </code>
       );
@@ -61,10 +56,10 @@ function renderMarkdownInline(input: string): ReactNode[] {
     if (linkMatch) {
       return (
         <a
+          className={styles.inlineLink}
           key={`link-${index}`}
           href={linkMatch[2]}
           rel="noreferrer"
-          style={{ color: "#1d4ed8" }}
           target="_blank"
         >
           {linkMatch[1]}
@@ -80,7 +75,7 @@ export function renderMarkdownBody(markdownBody: string): ReactNode {
   return blocks.map((block, blockIndex) => {
     const lines = block.split("\n");
     return (
-      <p key={`block-${blockIndex}`} style={{ margin: "0 0 0.25rem" }}>
+      <p className={styles.markdownParagraph} key={`block-${blockIndex}`}>
         {lines.map((line, lineIndex) => (
           <Fragment key={`line-${lineIndex}`}>
             {lineIndex > 0 ? <br /> : null}
@@ -162,17 +157,20 @@ export function ThreadList({
   };
 
   return (
-    <section aria-label="Thread replies" data-testid="thread-list">
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: "0.5rem",
-        }}
-      >
-        <strong style={{ fontSize: "0.75rem" }}>Thread</strong>
+    <section
+      aria-label="Thread replies"
+      className={styles.threadList}
+      data-testid="thread-list"
+    >
+      <div className={styles.header}>
+        <strong className={styles.title}>Thread</strong>
         <button
+          className={clsx(
+            controls.buttonBase,
+            localThread.status === "resolved"
+              ? controls.buttonSecondary
+              : controls.buttonDanger,
+          )}
           data-testid={
             localThread.status === "resolved"
               ? "thread-list-reopen"
@@ -191,58 +189,22 @@ export function ThreadList({
       </div>
 
       {localThread.status === "resolved" ? (
-        <p
-          data-testid="thread-list-resolved-note"
-          style={{
-            color: "#6b7280",
-            fontSize: "0.75rem",
-            margin: "0 0 0.5rem",
-          }}
-        >
+        <p className={styles.resolvedNote} data-testid="thread-list-resolved-note">
           This thread is resolved.
         </p>
       ) : null}
 
       {localThread.status === "open" && messages.length === 0 ? (
-        <p
-          data-testid="thread-list-empty"
-          style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}
-        >
+        <p className={styles.emptyState} data-testid="thread-list-empty">
           No replies yet.
         </p>
       ) : null}
 
       {localThread.status === "open" && messages.length > 0 ? (
-        <ol
-          data-testid="thread-list-messages"
-          style={{
-            listStyle: "none",
-            margin: "0 0 0.5rem",
-            maxHeight: "12rem",
-            overflowY: "auto",
-            padding: 0,
-          }}
-        >
+        <ol className={styles.messageList} data-testid="thread-list-messages">
           {messages.map((message) => (
-            <li
-              key={message.id}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: "0.375rem",
-                marginBottom: "0.375rem",
-                padding: "0.375rem",
-              }}
-            >
-              <div
-                style={{
-                  alignItems: "center",
-                  display: "flex",
-                  fontSize: "0.75rem",
-                  gap: "0.375rem",
-                  justifyContent: "space-between",
-                  marginBottom: "0.25rem",
-                }}
-              >
+            <li className={styles.messageItem} key={message.id}>
+              <div className={styles.messageMeta}>
                 <strong>{message.author}</strong>
                 <time dateTime={message.createdAt}>{message.createdAt}</time>
               </div>
@@ -256,40 +218,30 @@ export function ThreadList({
 
       {canReply ? (
         <>
-          <label htmlFor="thread-list-reply-input">Reply</label>
+          <label className={styles.replyLabel} htmlFor="thread-list-reply-input">
+            Reply
+          </label>
           <textarea
+            className={controls.textArea}
             data-testid="thread-list-reply-input"
             id="thread-list-reply-input"
             onChange={(event) => setReplyBody(event.target.value)}
             rows={3}
-            style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
             value={replyBody}
           />
         </>
       ) : null}
 
       {errorMessage ? (
-        <p
-          data-testid="thread-list-error"
-          style={{
-            color: "#b91c1c",
-            fontSize: "0.75rem",
-            margin: "0.5rem 0 0",
-          }}
-        >
+        <p className={styles.errorMessage} data-testid="thread-list-error">
           {errorMessage}
         </p>
       ) : null}
 
       {canReply ? (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            marginTop: "0.5rem",
-          }}
-        >
+        <div className={styles.actions}>
           <button
+            className={clsx(controls.buttonBase, controls.buttonPrimary)}
             data-testid="thread-list-reply-submit"
             disabled={pending || replyBody.trim().length === 0}
             onClick={() => void submitReply()}

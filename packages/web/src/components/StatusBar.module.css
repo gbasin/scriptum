@@ -1,0 +1,40 @@
+.root {
+  align-items: center;
+  border-top: 1px solid var(--color-border-muted);
+  color: var(--color-text-secondary);
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-2);
+}
+
+.syncCluster {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.syncDot {
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.625rem;
+  width: 0.625rem;
+}
+
+.dotGreen {
+  background-color: oklch(0.72 0.18 149);
+}
+
+.dotYellow {
+  background-color: oklch(0.84 0.18 96);
+}
+
+.dotRed {
+  background-color: oklch(0.63 0.23 29);
+}
+
+.metric {
+  font-variant-numeric: tabular-nums;
+}

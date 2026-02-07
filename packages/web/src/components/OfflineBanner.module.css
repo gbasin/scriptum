@@ -1,0 +1,73 @@
+.banner {
+  background: oklch(0.84 0.12 86);
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  color: oklch(0.42 0.09 66);
+  margin-bottom: 0;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  padding: 0 var(--space-3);
+  transform: translateY(-0.25rem);
+  transition:
+    opacity var(--duration-normal) var(--ease-standard),
+    transform var(--duration-normal) var(--ease-standard),
+    max-height var(--duration-normal) var(--ease-standard),
+    margin var(--duration-normal) var(--ease-standard),
+    padding var(--duration-normal) var(--ease-standard),
+    border-color var(--duration-normal) var(--ease-standard);
+}
+
+.visible {
+  border-color: oklch(0.72 0.16 79);
+  margin-bottom: var(--space-3);
+  max-height: 4rem;
+  opacity: 1;
+  padding: 0.625rem var(--space-3);
+  transform: translateY(0);
+}
+
+.hidden {
+  pointer-events: none;
+}
+
+.content {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.dismissButton {
+  background: transparent;
+  border: 1px solid oklch(0.54 0.13 62);
+  border-radius: 9999px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.75rem;
+  height: 1.25rem;
+  line-height: 1rem;
+  min-width: 1.25rem;
+  padding: 0;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.dismissButton:hover {
+  background-color: oklch(0.73 0.15 78);
+  border-color: oklch(0.56 0.13 63);
+}
+
+.dismissButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner,
+  .dismissButton {
+    transition: none;
+  }
+}

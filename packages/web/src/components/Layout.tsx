@@ -5,6 +5,7 @@ import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore } from "../store/presence";
 import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
+import styles from "./Layout.module.css";
 import { Outline } from "./right-panel/Outline";
 import { AgentsSection } from "./sidebar/AgentsSection";
 import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
@@ -704,18 +705,11 @@ export function Layout() {
   };
 
   return (
-    <div
-      data-testid="app-layout"
-      style={{ display: "flex", minHeight: "100vh" }}
-    >
+    <div className={styles.layout} data-testid="app-layout">
       <aside
         aria-label="Sidebar"
+        className={styles.sidebar}
         data-testid="app-sidebar"
-        style={{
-          borderRight: "1px solid #d1d5db",
-          padding: "1rem",
-          width: "18rem",
-        }}
       >
         <WorkspaceDropdown
           activeWorkspaceId={activeWorkspaceId}
@@ -737,13 +731,9 @@ export function Layout() {
         />
         {renameBacklinkToast ? (
           <p
+            className={styles.renameBacklinkToast}
             data-testid="rename-backlink-toast"
             role="status"
-            style={{
-              color: "#065f46",
-              fontSize: "0.8rem",
-              margin: "0.75rem 0 0",
-            }}
           >
             {renameBacklinkToast}
           </p>
@@ -758,7 +748,7 @@ export function Layout() {
           />
         ) : (
           <section aria-label="Document tree section">
-            <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>
+            <h2 className={styles.documentTreeHeading}>
               Documents
             </h2>
             <DocumentTree
@@ -775,35 +765,25 @@ export function Layout() {
       </aside>
       <main
         aria-label="Editor area"
+        className={styles.editorArea}
         data-testid="app-editor-area"
         ref={(node) => {
           editorAreaRef.current = node;
           setOutlineContainer(node);
         }}
-        style={{ flex: 1, padding: "1rem" }}
       >
         <Outlet />
       </main>
       {outlinePanelOpen ? (
         <aside
           aria-label="Document outline panel"
+          className={styles.outlinePanel}
           data-testid="outline-panel"
-          style={{
-            borderLeft: "1px solid #d1d5db",
-            padding: "1rem",
-            width: "16rem",
-          }}
         >
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              justifyContent: "space-between",
-              marginBottom: "0.75rem",
-            }}
-          >
-            <h2 style={{ margin: 0 }}>Outline</h2>
+          <div className={styles.panelHeader}>
+            <h2 className={styles.panelHeading}>Outline</h2>
             <button
+              className={styles.secondaryButton}
               data-testid="outline-panel-toggle"
               onClick={() => setOutlinePanelOpen(false)}
               type="button"
@@ -816,54 +796,35 @@ export function Layout() {
 
           <section
             aria-label="Incoming backlinks"
+            className={styles.backlinksSection}
             data-testid="backlinks-panel"
-            style={{ marginTop: "1.25rem" }}
           >
-            <h3 style={{ margin: "0 0 0.5rem" }}>Backlinks</h3>
+            <h3 className={styles.backlinksTitle}>Backlinks</h3>
             {incomingBacklinks.length === 0 ? (
-              <p
-                data-testid="backlinks-empty"
-                style={{ color: "#6b7280", margin: 0 }}
-              >
+              <p className={styles.backlinksEmpty} data-testid="backlinks-empty">
                 No incoming links to this document.
               </p>
             ) : (
               <ul
                 aria-label="Incoming wiki links"
+                className={styles.backlinksList}
                 data-testid="backlinks-list"
-                style={{ listStyle: "none", margin: 0, padding: 0 }}
               >
                 {incomingBacklinks.map((backlink) => (
-                  <li
-                    key={backlink.sourceDocumentId}
-                    style={{ marginBottom: "0.75rem" }}
-                  >
+                  <li className={styles.backlinksItem} key={backlink.sourceDocumentId}>
                     <button
+                      className={styles.backlinkButton}
                       data-testid={`backlink-item-${backlink.sourceDocumentId}`}
                       onClick={() =>
                         handleBacklinkSelect(backlink.sourceDocumentId)
                       }
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "#1d4ed8",
-                        cursor: "pointer",
-                        fontSize: "0.875rem",
-                        fontWeight: 600,
-                        padding: 0,
-                        textAlign: "left",
-                      }}
                       type="button"
                     >
                       {backlink.sourceTitle}
                     </button>
                     <p
+                      className={styles.backlinkSnippet}
                       data-testid={`backlink-snippet-${backlink.sourceDocumentId}`}
-                      style={{
-                        color: "#6b7280",
-                        fontSize: "0.8rem",
-                        margin: "0.2rem 0 0",
-                      }}
                     >
                       {backlink.snippet}
                     </p>
@@ -876,17 +837,9 @@ export function Layout() {
       ) : (
         <button
           aria-label="Show document outline panel"
+          className={styles.showOutlineButton}
           data-testid="outline-panel-toggle"
           onClick={() => setOutlinePanelOpen(true)}
-          style={{
-            alignSelf: "flex-start",
-            background: "#ffffff",
-            border: "1px solid #d1d5db",
-            borderRadius: "0.375rem",
-            cursor: "pointer",
-            margin: "1rem 1rem 0 0",
-            padding: "0.4rem 0.6rem",
-          }}
           type="button"
         >
           Show Outline
@@ -894,45 +847,24 @@ export function Layout() {
       )}
       {pendingDeleteDocument ? (
         <div
+          className={styles.deleteOverlay}
           data-testid="delete-document-overlay"
-          style={{
-            alignItems: "center",
-            background: "rgba(15, 23, 42, 0.4)",
-            display: "flex",
-            inset: 0,
-            justifyContent: "center",
-            position: "fixed",
-            zIndex: 1200,
-          }}
         >
           <section
             aria-label="Delete document confirmation"
             aria-modal="true"
+            className={styles.deleteDialog}
             data-testid="delete-document-dialog"
             role="alertdialog"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #d1d5db",
-              borderRadius: "0.5rem",
-              boxShadow: "0 12px 30px rgba(15, 23, 42, 0.2)",
-              maxWidth: "28rem",
-              padding: "1rem",
-              width: "calc(100% - 2rem)",
-            }}
           >
-            <h2 style={{ margin: "0 0 0.5rem" }}>Delete document?</h2>
-            <p style={{ margin: "0 0 1rem" }}>
+            <h2 className={styles.deleteDialogTitle}>Delete document?</h2>
+            <p className={styles.deleteDialogDescription}>
               Permanently delete <strong>{pendingDeleteDocument.path}</strong>?
               This cannot be undone.
             </p>
-            <div
-              style={{
-                display: "flex",
-                gap: "0.5rem",
-                justifyContent: "flex-end",
-              }}
-            >
+            <div className={styles.deleteDialogActions}>
               <button
+                className={styles.secondaryButton}
                 data-testid="delete-document-cancel"
                 onClick={handleCancelDeleteDocument}
                 type="button"
@@ -940,13 +872,9 @@ export function Layout() {
                 Cancel
               </button>
               <button
+                className={styles.dangerButton}
                 data-testid="delete-document-confirm"
                 onClick={handleConfirmDeleteDocument}
-                style={{
-                  background: "#b91c1c",
-                  border: "1px solid #991b1b",
-                  color: "#ffffff",
-                }}
                 type="button"
               >
                 Delete

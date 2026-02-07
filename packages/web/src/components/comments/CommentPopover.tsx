@@ -1,6 +1,9 @@
 import type { CommentMessage, CommentThread } from "@scriptum/shared";
-import { useEffect, useState } from "react";
+import clsx from "clsx";
+import { useEffect, useRef, useState } from "react";
 import { type CreateCommentInput, createComment } from "../../lib/api-client";
+import controls from "../../styles/Controls.module.css";
+import styles from "./CommentPopover.module.css";
 import { ThreadList } from "./ThreadList";
 
 export interface InlineCommentSelection {
@@ -64,10 +67,17 @@ export function CommentPopover({
   const [threadState, setThreadState] = useState<ThreadWithMessages | null>(
     activeThread,
   );
+  const marginButtonRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setThreadState(activeThread);
   }, [activeThread]);
+
+  useEffect(() => {
+    marginButtonRef.current?.style.setProperty("top", `${anchorTopPx}px`);
+    popoverRef.current?.style.setProperty("top", `${anchorTopPx + 32}px`);
+  }, [anchorTopPx, isOpen]);
 
   if (!selection) {
     return null;
@@ -112,37 +122,20 @@ export function CommentPopover({
     <>
       <button
         aria-label={isResolved ? "Resolved comment thread" : "Add comment"}
+        className={clsx(
+          styles.marginButton,
+          isResolved ? styles.marginButtonResolved : styles.marginButtonOpen,
+        )}
         data-testid="comment-margin-button"
         onClick={() => setOpen((current) => !current)}
-        style={{
-          alignItems: "center",
-          background: isResolved ? "#f3f4f6" : "#fde68a",
-          border: isResolved ? "1px solid #9ca3af" : "1px solid #f59e0b",
-          borderRadius: "9999px",
-          cursor: "pointer",
-          display: "inline-flex",
-          fontSize: "0.75rem",
-          fontWeight: 600,
-          minHeight: "1.5rem",
-          minWidth: isResolved ? "1.5rem" : undefined,
-          padding: isResolved ? "0.25rem" : "0.25rem 0.5rem",
-          position: "absolute",
-          right: "0.5rem",
-          top: `${anchorTopPx}px`,
-        }}
+        ref={marginButtonRef}
         type="button"
       >
         {isResolved ? (
           <span
             aria-hidden="true"
+            className={styles.resolvedDot}
             data-testid="comment-margin-resolved-dot"
-            style={{
-              background: "#6b7280",
-              borderRadius: "9999px",
-              display: "inline-block",
-              height: "0.5rem",
-              width: "0.5rem",
-            }}
           />
         ) : (
           "Comment"
@@ -152,30 +145,13 @@ export function CommentPopover({
       {isOpen ? (
         <section
           aria-label="Comment popover"
+          className={styles.popover}
           data-testid="comment-popover"
-          style={{
-            background: "#ffffff",
-            border: "1px solid #d1d5db",
-            borderRadius: "0.5rem",
-            boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-            maxWidth: "20rem",
-            padding: "0.75rem",
-            position: "absolute",
-            right: "0.5rem",
-            top: `${anchorTopPx + 32}px`,
-            width: "100%",
-            zIndex: 1,
-          }}
+          ref={popoverRef}
         >
           <p
+            className={styles.selectionPreview}
             data-testid="comment-selection-preview"
-            style={{
-              background: "rgba(250, 204, 21, 0.28)",
-              borderRadius: "0.25rem",
-              fontSize: "0.75rem",
-              margin: "0 0 0.5rem",
-              padding: "0.375rem",
-            }}
           >
             {selection.selectedText}
           </p>
@@ -208,17 +184,15 @@ export function CommentPopover({
             />
           ) : (
             <>
-              <label htmlFor="inline-comment-input">Comment</label>
+              <label className={styles.commentLabel} htmlFor="inline-comment-input">
+                Comment
+              </label>
               <textarea
+                className={controls.textArea}
                 data-testid="comment-input"
                 id="inline-comment-input"
                 onChange={(event) => setPendingBody(event.target.value)}
                 rows={3}
-                style={{
-                  display: "block",
-                  marginTop: "0.25rem",
-                  width: "100%",
-                }}
                 value={pendingBody}
               />
             </>
@@ -226,30 +200,24 @@ export function CommentPopover({
 
           {errorMessage ? (
             <p
+              className={styles.errorMessage}
               data-testid="comment-popover-error"
-              style={{
-                color: "#b91c1c",
-                fontSize: "0.75rem",
-                margin: "0.5rem 0 0",
-              }}
             >
               {errorMessage}
             </p>
           ) : null}
 
-          <div
-            style={{
-              display: "flex",
-              gap: "0.5rem",
-              justifyContent: "flex-end",
-              marginTop: "0.5rem",
-            }}
-          >
-            <button onClick={() => setOpen(false)} type="button">
+          <div className={styles.actions}>
+            <button
+              className={clsx(controls.buttonBase, controls.buttonSecondary)}
+              onClick={() => setOpen(false)}
+              type="button"
+            >
               Close
             </button>
             {!threadState ? (
               <button
+                className={clsx(controls.buttonBase, controls.buttonPrimary)}
                 data-testid="comment-submit"
                 disabled={pending || pendingBody.trim().length === 0}
                 onClick={() => void submitComment()}

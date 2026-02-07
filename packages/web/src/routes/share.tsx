@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
+import controls from "../styles/Controls.module.css";
+import styles from "./share.module.css";
 import {
   isShareLinkRedeemable,
   loadShareLinkRecord,
@@ -46,36 +48,45 @@ export function ShareRedeemRoute() {
 
   if (!record) {
     return (
-      <main aria-label="Share link redemption">
-        <h1 data-testid="share-redeem-title">Share link redemption</h1>
-        <p data-testid="share-redeem-invalid">Share link is invalid.</p>
+      <main aria-label="Share link redemption" className={styles.page}>
+        <h1 className={styles.title} data-testid="share-redeem-title">
+          Share link redemption
+        </h1>
+        <p className={styles.invalid} data-testid="share-redeem-invalid">
+          Share link is invalid.
+        </p>
       </main>
     );
   }
 
   return (
-    <main aria-label="Share link redemption">
-      <h1 data-testid="share-redeem-title">Share link redemption</h1>
-      <p data-testid="share-redeem-target">
+    <main aria-label="Share link redemption" className={styles.page}>
+      <h1 className={styles.title} data-testid="share-redeem-title">
+        Share link redemption
+      </h1>
+      <p className={styles.metaRow} data-testid="share-redeem-target">
         Target: {record.targetType}/{record.targetId}
       </p>
-      <p data-testid="share-redeem-permission">
+      <p className={styles.metaRow} data-testid="share-redeem-permission">
         Permission: {sharePermissionLabel(record.permission)}
       </p>
-      <p data-testid="share-redeem-expiration">
+      <p className={styles.metaRow} data-testid="share-redeem-expiration">
         Expires: {formatExpiration(record.expiresAt)}
       </p>
-      <p data-testid="share-redeem-max-uses">
+      <p className={styles.metaRow} data-testid="share-redeem-max-uses">
         Max uses: {record.maxUses === null ? "Unlimited" : record.maxUses}
       </p>
-      <p data-testid="share-redeem-use-count">Use count: {record.useCount}</p>
+      <p className={styles.metaRow} data-testid="share-redeem-use-count">
+        Use count: {record.useCount}
+      </p>
 
       {!redeemable ? (
-        <p data-testid="share-redeem-unavailable">
+        <p className={styles.unavailable} data-testid="share-redeem-unavailable">
           Share link is no longer redeemable.
         </p>
       ) : (
         <button
+          className={`${controls.buttonBase} ${controls.buttonPrimary}`}
           data-testid="share-redeem-submit"
           onClick={onRedeem}
           type="button"
@@ -85,7 +96,9 @@ export function ShareRedeemRoute() {
       )}
 
       {redeemed ? (
-        <p data-testid="share-redeem-success">Share link redeemed.</p>
+        <p className={styles.success} data-testid="share-redeem-success">
+          Share link redeemed.
+        </p>
       ) : null}
     </main>
   );

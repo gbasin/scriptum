@@ -1,0 +1,130 @@
+.section {
+  position: relative;
+}
+
+.trigger {
+  align-items: center;
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.875rem;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) 0.625rem;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+  width: 100%;
+}
+
+.trigger:hover {
+  background: var(--color-bg-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.triggerShortcut {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.overlay {
+  align-items: flex-start;
+  background: oklch(0.05 0.01 270 / 0.6);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding-top: 10vh;
+  position: fixed;
+  z-index: var(--z-overlay);
+}
+
+.panel {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-3);
+  max-height: 70vh;
+  overflow: hidden;
+  width: min(42rem, 92vw);
+}
+
+.panelLabel {
+  border-bottom: 1px solid var(--color-border-muted);
+  color: var(--color-text-secondary);
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.625rem 0.875rem 0.25rem;
+  text-transform: uppercase;
+}
+
+.panelInput {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-primary);
+  font-size: 1rem;
+  outline: 0;
+  padding: 0.75rem 0.875rem;
+  width: 100%;
+}
+
+.results {
+  list-style: none;
+  margin: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  padding: 0.75rem;
+}
+
+.itemButton {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-1);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: block;
+  padding: var(--space-2) 0.625rem;
+  text-align: left;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+  width: 100%;
+}
+
+.itemButton:hover,
+.itemButton:focus-visible {
+  background: var(--color-bg-surface-2);
+}
+
+.itemButtonActive {
+  background: oklch(0.58 0.18 283 / 0.16);
+}
+
+.itemTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.itemSubtitle {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger,
+  .itemButton {
+    transition: none;
+  }
+}

@@ -1,0 +1,61 @@
+.page {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-3);
+  display: grid;
+  gap: var(--space-3);
+  max-width: 44rem;
+  padding: var(--space-4);
+}
+
+.heading {
+  font-size: 1.3rem;
+}
+
+.workspaceName {
+  margin: 0;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.tabButton {
+  min-height: 2rem;
+}
+
+.tabButtonActive {
+  background: var(--color-accent-hex);
+  border-color: var(--color-accent-soft);
+  color: oklch(0.99 0.002 280);
+}
+
+.tabPanel {
+  border-top: 1px solid var(--color-border-muted);
+  padding-top: var(--space-3);
+}
+
+.formSection {
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.legend {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0 var(--space-1);
+  text-transform: uppercase;
+}
+
+.emptyMessage {
+  margin: 0;
+}

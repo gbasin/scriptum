@@ -1,4 +1,6 @@
+import clsx from "clsx";
 import type { CursorPosition, SyncState } from "../test/harness";
+import styles from "./StatusBar.module.css";
 
 interface StatusBarProps {
   syncState: SyncState;
@@ -13,19 +15,17 @@ interface StatusBarProps {
 
 interface SyncBadgeConfig {
   label: string;
-  dotColor: string;
   colorName: "green" | "yellow" | "red";
 }
 
 const SYNC_BADGE: Record<SyncState, SyncBadgeConfig> = {
-  synced: { label: "Synced", dotColor: "#16a34a", colorName: "green" },
+  synced: { label: "Synced", colorName: "green" },
   reconnecting: {
     label: "Reconnecting",
-    dotColor: "#eab308",
     colorName: "yellow",
   },
-  offline: { label: "Offline", dotColor: "#dc2626", colorName: "red" },
-  error: { label: "Error", dotColor: "#dc2626", colorName: "red" },
+  offline: { label: "Offline", colorName: "red" },
+  error: { label: "Error", colorName: "red" },
 };
 
 export function StatusBar({
@@ -49,49 +49,43 @@ export function StatusBar({
   return (
     <footer
       aria-label="Status bar"
+      className={styles.root}
       data-testid="status-bar"
-      style={{
-        alignItems: "center",
-        borderTop: "1px solid #e5e7eb",
-        color: "#1f2937",
-        display: "flex",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        fontSize: "0.85rem",
-        gap: "1rem",
-        marginTop: "1rem",
-        paddingTop: "0.5rem",
-      }}
     >
-      <span
-        style={{ alignItems: "center", display: "inline-flex", gap: "0.5rem" }}
-      >
+      <span className={styles.syncCluster}>
         <span
           aria-hidden="true"
+          className={clsx(
+            styles.syncDot,
+            badge.colorName === "green" && styles.dotGreen,
+            badge.colorName === "yellow" && styles.dotYellow,
+            badge.colorName === "red" && styles.dotRed,
+          )}
           data-sync-color={badge.colorName}
           data-testid="status-sync-dot"
-          style={{
-            backgroundColor: badge.dotColor,
-            borderRadius: "999px",
-            display: "inline-block",
-            height: "0.625rem",
-            width: "0.625rem",
-          }}
         />
-        <span aria-label="Sync state" data-testid="sync-state" role="status">
+        <span
+          aria-label="Sync state"
+          className={styles.metric}
+          data-testid="sync-state"
+          role="status"
+        >
           Sync: {badge.label}
         </span>
       </span>
-      <span data-testid="status-cursor">
+      <span className={styles.metric} data-testid="status-cursor">
         Ln {line}, Col {col}
       </span>
-      <span data-testid="status-editor-count">Editors: {activeEditors}</span>
+      <span className={styles.metric} data-testid="status-editor-count">
+        Editors: {activeEditors}
+      </span>
       {pendingUpdates > 0 ? (
-        <span data-testid="status-pending-updates">
+        <span className={styles.metric} data-testid="status-pending-updates">
           Pending: {pendingUpdates}
         </span>
       ) : null}
       {showReconnectProgress ? (
-        <span data-testid="status-reconnect-progress">
+        <span className={styles.metric} data-testid="status-reconnect-progress">
           Syncing... {syncedUpdates}/{reconnectProgress.totalUpdates} updates
         </span>
       ) : null}

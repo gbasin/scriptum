@@ -1,0 +1,94 @@
+.marginButton {
+  align-items: center;
+  border-radius: 9999px;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-height: 1.5rem;
+  padding: 0.25rem 0.5rem;
+  position: absolute;
+  right: var(--space-2);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    filter var(--duration-fast) var(--ease-standard);
+}
+
+.marginButtonOpen {
+  background: oklch(0.89 0.13 88);
+  border: 1px solid oklch(0.74 0.16 80);
+  color: oklch(0.39 0.09 64);
+}
+
+.marginButtonResolved {
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  min-width: 1.5rem;
+  padding: 0.25rem;
+}
+
+.marginButton:hover {
+  filter: brightness(1.04);
+}
+
+.marginButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.resolvedDot {
+  background: var(--color-text-muted);
+  border-radius: 9999px;
+  display: inline-block;
+  height: 0.5rem;
+  width: 0.5rem;
+}
+
+.popover {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-2);
+  max-width: 20rem;
+  padding: var(--space-3);
+  position: absolute;
+  right: var(--space-2);
+  width: 100%;
+  z-index: var(--z-dropdown);
+}
+
+.selectionPreview {
+  background: oklch(0.89 0.13 88 / 0.4);
+  border-radius: var(--radius-1);
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  margin: 0 0 var(--space-2);
+  padding: 0.375rem;
+}
+
+.commentLabel {
+  color: var(--color-text-secondary);
+  display: block;
+  font-size: 0.8rem;
+  margin-bottom: var(--space-1);
+}
+
+.errorMessage {
+  color: oklch(0.56 0.23 30);
+  font-size: 0.75rem;
+  margin: var(--space-2) 0 0;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marginButton {
+    transition: none;
+  }
+}

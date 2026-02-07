@@ -1,6 +1,9 @@
 import type { WorkspaceConfig } from "@scriptum/shared";
+import clsx from "clsx";
 import { useMemo, useState } from "react";
+import controls from "../styles/Controls.module.css";
 import { useWorkspaceStore } from "../store/workspace";
+import styles from "./settings.module.css";
 
 type SettingsTab =
   | "general"
@@ -76,9 +79,15 @@ export function SettingsRoute() {
 
   if (!activeWorkspace) {
     return (
-      <section aria-label="Settings" data-testid="settings-page">
-        <h1>Settings</h1>
-        <p data-testid="settings-empty">No active workspace selected.</p>
+      <section
+        aria-label="Settings"
+        className={styles.page}
+        data-testid="settings-page"
+      >
+        <h1 className={styles.heading}>Settings</h1>
+        <p className={styles.emptyMessage} data-testid="settings-empty">
+          No active workspace selected.
+        </p>
       </section>
     );
   }
@@ -112,26 +121,32 @@ export function SettingsRoute() {
   };
 
   return (
-    <section aria-label="Settings" data-testid="settings-page">
-      <h1>Settings</h1>
-      <p data-testid="settings-workspace-name">
+    <section
+      aria-label="Settings"
+      className={styles.page}
+      data-testid="settings-page"
+    >
+      <h1 className={styles.heading}>Settings</h1>
+      <p className={styles.workspaceName} data-testid="settings-workspace-name">
         Workspace: <strong>{activeWorkspace.name}</strong>
       </p>
 
       <div
         aria-label="Settings tabs"
+        className={styles.tabs}
         data-testid="settings-tabs"
         role="tablist"
-        style={{
-          display: "flex",
-          gap: "0.5rem",
-          marginBottom: "1rem",
-          marginTop: "1rem",
-        }}
       >
         {SETTINGS_TABS.map((tab) => (
           <button
             aria-selected={activeTab === tab.id}
+            className={clsx(
+              controls.buttonBase,
+              styles.tabButton,
+              activeTab === tab.id
+                ? styles.tabButtonActive
+                : controls.buttonSecondary,
+            )}
             data-testid={`settings-tab-${tab.id}`}
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -145,15 +160,17 @@ export function SettingsRoute() {
 
       <div
         aria-label="Settings tab panel"
+        className={styles.tabPanel}
         data-testid="settings-tab-panel"
         role="tabpanel"
       >
         {activeTab === "general" ? (
-          <fieldset data-testid="settings-form-general">
-            <legend>General</legend>
-            <label>
+          <fieldset className={styles.formSection} data-testid="settings-form-general">
+            <legend className={styles.legend}>General</legend>
+            <label className={controls.field}>
               Workspace name
               <input
+                className={controls.textInput}
                 data-testid="settings-general-workspace-name"
                 onChange={(event) => {
                   const workspaceName = event.target.value;
@@ -167,9 +184,10 @@ export function SettingsRoute() {
                 value={config.general.workspaceName}
               />
             </label>
-            <label>
+            <label className={controls.field}>
               Default new document folder
               <input
+                className={controls.textInput}
                 data-testid="settings-general-default-folder"
                 onChange={(event) =>
                   updateConfig((current) => ({
@@ -184,8 +202,9 @@ export function SettingsRoute() {
                 value={config.general.defaultNewDocumentFolder}
               />
             </label>
-            <label>
+            <label className={controls.checkboxRow}>
               <input
+                className={controls.checkbox}
                 checked={config.general.openLastDocumentOnLaunch}
                 data-testid="settings-general-open-last-document"
                 onChange={(event) =>
@@ -205,10 +224,14 @@ export function SettingsRoute() {
         ) : null}
 
         {activeTab === "gitSync" ? (
-          <fieldset data-testid="settings-form-git-sync">
-            <legend>Git Sync</legend>
-            <label>
+          <fieldset
+            className={styles.formSection}
+            data-testid="settings-form-git-sync"
+          >
+            <legend className={styles.legend}>Git Sync</legend>
+            <label className={controls.checkboxRow}>
               <input
+                className={controls.checkbox}
                 checked={config.gitSync.enabled}
                 data-testid="settings-git-sync-enabled"
                 onChange={(event) =>
@@ -224,9 +247,10 @@ export function SettingsRoute() {
               />
               Enable git sync
             </label>
-            <label>
+            <label className={controls.field}>
               Auto commit interval (seconds)
               <input
+                className={controls.textInput}
                 data-testid="settings-git-sync-interval"
                 min={5}
                 onChange={(event) =>
@@ -245,9 +269,10 @@ export function SettingsRoute() {
                 value={config.gitSync.autoCommitIntervalSeconds}
               />
             </label>
-            <label>
+            <label className={controls.field}>
               Commit message template
               <input
+                className={controls.textInput}
                 data-testid="settings-git-sync-message-template"
                 onChange={(event) =>
                   updateConfig((current) => ({
@@ -266,10 +291,11 @@ export function SettingsRoute() {
         ) : null}
 
         {activeTab === "agents" ? (
-          <fieldset data-testid="settings-form-agents">
-            <legend>Agents</legend>
-            <label>
+          <fieldset className={styles.formSection} data-testid="settings-form-agents">
+            <legend className={styles.legend}>Agents</legend>
+            <label className={controls.checkboxRow}>
               <input
+                className={controls.checkbox}
                 checked={config.agents.allowAgentEdits}
                 data-testid="settings-agents-allow-edits"
                 onChange={(event) =>
@@ -285,8 +311,9 @@ export function SettingsRoute() {
               />
               Allow agent edits
             </label>
-            <label>
+            <label className={controls.checkboxRow}>
               <input
+                className={controls.checkbox}
                 checked={config.agents.requireSectionLease}
                 data-testid="settings-agents-require-lease"
                 onChange={(event) =>
@@ -302,9 +329,10 @@ export function SettingsRoute() {
               />
               Require section lease
             </label>
-            <label>
+            <label className={controls.field}>
               Default agent name
               <input
+                className={controls.textInput}
                 data-testid="settings-agents-default-name"
                 onChange={(event) =>
                   updateConfig((current) => ({
@@ -323,11 +351,15 @@ export function SettingsRoute() {
         ) : null}
 
         {activeTab === "permissions" ? (
-          <fieldset data-testid="settings-form-permissions">
-            <legend>Permissions</legend>
-            <label>
+          <fieldset
+            className={styles.formSection}
+            data-testid="settings-form-permissions"
+          >
+            <legend className={styles.legend}>Permissions</legend>
+            <label className={controls.field}>
               Default role
               <select
+                className={controls.selectInput}
                 data-testid="settings-permissions-default-role"
                 onChange={(event) =>
                   updateConfig((current) => ({
@@ -345,8 +377,9 @@ export function SettingsRoute() {
                 <option value="editor">Editor</option>
               </select>
             </label>
-            <label>
+            <label className={controls.checkboxRow}>
               <input
+                className={controls.checkbox}
                 checked={config.permissions.allowExternalInvites}
                 data-testid="settings-permissions-allow-invites"
                 onChange={(event) =>
@@ -362,8 +395,9 @@ export function SettingsRoute() {
               />
               Allow external invites
             </label>
-            <label>
+            <label className={controls.checkboxRow}>
               <input
+                className={controls.checkbox}
                 checked={config.permissions.allowShareLinks}
                 data-testid="settings-permissions-allow-share-links"
                 onChange={(event) =>
@@ -383,11 +417,15 @@ export function SettingsRoute() {
         ) : null}
 
         {activeTab === "appearance" ? (
-          <fieldset data-testid="settings-form-appearance">
-            <legend>Appearance</legend>
-            <label>
+          <fieldset
+            className={styles.formSection}
+            data-testid="settings-form-appearance"
+          >
+            <legend className={styles.legend}>Appearance</legend>
+            <label className={controls.field}>
               Theme
               <select
+                className={controls.selectInput}
                 data-testid="settings-appearance-theme"
                 onChange={(event) =>
                   updateConfig((current) => ({
@@ -410,9 +448,10 @@ export function SettingsRoute() {
                 <option value="dark">Dark</option>
               </select>
             </label>
-            <label>
+            <label className={controls.field}>
               Density
               <select
+                className={controls.selectInput}
                 data-testid="settings-appearance-density"
                 onChange={(event) =>
                   updateConfig((current) => ({
@@ -432,9 +471,10 @@ export function SettingsRoute() {
                 <option value="compact">Compact</option>
               </select>
             </label>
-            <label>
+            <label className={controls.field}>
               Editor font size (px)
               <input
+                className={controls.textInput}
                 data-testid="settings-appearance-font-size"
                 min={10}
                 onChange={(event) =>

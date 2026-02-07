@@ -1,0 +1,203 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--color-bg-surface-1);
+  border-right: 1px solid var(--color-border-muted);
+  padding: var(--space-4);
+  width: 18rem;
+}
+
+.renameBacklinkToast {
+  color: oklch(0.73 0.13 163);
+  font-size: 0.8rem;
+  margin: 0.75rem 0 0;
+}
+
+.documentTreeHeading {
+  margin-bottom: var(--space-1);
+  margin-top: var(--space-4);
+}
+
+.editorArea {
+  flex: 1;
+  padding: var(--space-4);
+}
+
+.outlinePanel {
+  border-left: 1px solid var(--color-border-muted);
+  padding: var(--space-4);
+  width: 16rem;
+}
+
+.panelHeader {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.panelHeading {
+  margin: 0;
+}
+
+.secondaryButton {
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.secondaryButton:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-strong);
+}
+
+.secondaryButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.backlinksSection {
+  margin-top: var(--space-5);
+}
+
+.backlinksTitle {
+  margin: 0 0 var(--space-2);
+}
+
+.backlinksEmpty {
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.backlinksList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.backlinksItem {
+  margin-bottom: var(--space-3);
+}
+
+.backlinkButton {
+  background: transparent;
+  border: 0;
+  color: var(--color-accent-hex);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0;
+  text-align: left;
+}
+
+.backlinkButton:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.backlinkButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.backlinkSnippet {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  margin: 0.2rem 0 0;
+}
+
+.showOutlineButton {
+  align-self: flex-start;
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  margin: var(--space-4) var(--space-4) 0 0;
+  padding: 0.4rem 0.6rem;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.showOutlineButton:hover {
+  background: var(--color-bg-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.showOutlineButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.deleteOverlay {
+  align-items: center;
+  background: oklch(0.16 0.01 270 / 0.62);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: var(--z-modal);
+}
+
+.deleteDialog {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-3);
+  max-width: 28rem;
+  padding: var(--space-4);
+  width: calc(100% - 2rem);
+}
+
+.deleteDialogTitle {
+  margin: 0 0 var(--space-2);
+}
+
+.deleteDialogDescription {
+  margin: 0 0 var(--space-4);
+}
+
+.deleteDialogActions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.dangerButton {
+  background: oklch(0.55 0.22 28);
+  border: 1px solid oklch(0.48 0.21 28);
+  border-radius: var(--radius-2);
+  color: oklch(0.99 0.002 280);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  transition:
+    filter var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.dangerButton:hover {
+  background: oklch(0.58 0.23 28);
+}
+
+.dangerButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .secondaryButton,
+  .showOutlineButton,
+  .dangerButton {
+    transition: none;
+  }
+}

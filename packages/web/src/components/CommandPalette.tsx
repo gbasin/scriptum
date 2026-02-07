@@ -1,6 +1,8 @@
 import type { Document, Workspace } from "@scriptum/shared";
+import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import styles from "./CommandPalette.module.css";
 
 const MAX_RECENT_DOCUMENTS = 5;
 
@@ -314,32 +316,19 @@ export function CommandPalette({
   return (
     <section
       aria-label="Command palette section"
+      className={styles.section}
       data-testid="command-palette-section"
     >
       <button
         aria-expanded={isOpen}
         aria-label="Open command palette"
+        className={styles.trigger}
         data-testid="command-palette-trigger"
         onClick={() => setIsOpen((previous) => !previous)}
-        style={{
-          alignItems: "center",
-          border: "1px solid #d1d5db",
-          borderRadius: "6px",
-          cursor: "pointer",
-          display: "flex",
-          fontSize: "0.875rem",
-          justifyContent: "space-between",
-          marginBottom: "1rem",
-          padding: "0.5rem 0.625rem",
-          width: "100%",
-        }}
         type="button"
       >
         <span>Search files, commands, recent docs</span>
-        <span
-          aria-hidden="true"
-          style={{ color: "#6b7280", fontFamily: "monospace" }}
-        >
+        <span aria-hidden="true" className={styles.triggerShortcut}>
           Cmd+K
         </span>
       </button>
@@ -347,77 +336,34 @@ export function CommandPalette({
       {isOpen && (
         <div
           aria-label="Command palette"
+          className={styles.overlay}
           data-testid="command-palette"
           onMouseDown={closePalette}
-          style={{
-            alignItems: "flex-start",
-            background: "rgba(0, 0, 0, 0.28)",
-            display: "flex",
-            inset: 0,
-            justifyContent: "center",
-            paddingTop: "10vh",
-            position: "fixed",
-            zIndex: 500,
-          }}
         >
-          <div
-            onMouseDown={(event) => event.stopPropagation()}
-            style={{
-              background: "#ffffff",
-              border: "1px solid #d1d5db",
-              borderRadius: "8px",
-              boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)",
-              maxHeight: "70vh",
-              overflow: "hidden",
-              width: "min(42rem, 92vw)",
-            }}
-          >
+          <div className={styles.panel} onMouseDown={(event) => event.stopPropagation()}>
             <label
+              className={styles.panelLabel}
               htmlFor="command-palette-input"
-              style={{
-                borderBottom: "1px solid #e5e7eb",
-                display: "block",
-                fontSize: "0.75rem",
-                fontWeight: 600,
-                letterSpacing: "0.04em",
-                padding: "0.625rem 0.875rem 0.25rem",
-                textTransform: "uppercase",
-              }}
             >
               Command Palette
             </label>
             <input
               autoFocus
+              className={styles.panelInput}
               data-testid="command-palette-input"
               id="command-palette-input"
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Type to search"
-              style={{
-                border: "none",
-                fontSize: "1rem",
-                outline: "none",
-                padding: "0.75rem 0.875rem",
-                width: "100%",
-              }}
               type="text"
               value={query}
             />
             <ul
+              className={styles.results}
               data-testid="command-palette-results"
               role="listbox"
-              style={{
-                listStyle: "none",
-                margin: 0,
-                maxHeight: "50vh",
-                overflowY: "auto",
-                padding: "0.25rem",
-              }}
             >
               {filteredItems.length === 0 && (
-                <li
-                  data-testid="command-palette-empty"
-                  style={{ color: "#6b7280", padding: "0.75rem" }}
-                >
+                <li className={styles.empty} data-testid="command-palette-empty">
                   No matches found.
                 </li>
               )}
@@ -425,25 +371,18 @@ export function CommandPalette({
                 <li key={item.id} role="option">
                   <button
                     aria-selected={index === activeIndex}
+                    className={clsx(
+                      styles.itemButton,
+                      index === activeIndex && styles.itemButtonActive,
+                    )}
                     data-testid={`command-palette-item-${item.id}`}
                     onClick={() => runItem(item)}
-                    style={{
-                      background:
-                        index === activeIndex ? "#eff6ff" : "transparent",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      display: "block",
-                      padding: "0.5rem 0.625rem",
-                      textAlign: "left",
-                      width: "100%",
-                    }}
                     type="button"
                   >
-                    <div style={{ fontSize: "0.875rem", fontWeight: 600 }}>
+                    <div className={styles.itemTitle}>
                       {item.title}
                     </div>
-                    <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>
+                    <div className={styles.itemSubtitle}>
                       {kindLabel(item.kind)} | {item.subtitle}
                     </div>
                   </button>
