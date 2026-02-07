@@ -1,0 +1,5 @@
+- listbox "Completions" [expanded]:
+  - option "/tableInsert a 2-column markdown table." [selected]
+  - option "/codeInsert a fenced TypeScript code block."
+  - option "/imageInsert markdown image syntax."
+  - option "/calloutInsert an Obsidian-style markdown callout block."

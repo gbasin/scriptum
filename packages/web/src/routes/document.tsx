@@ -15,6 +15,7 @@ import {
   setCommentGutterRanges,
   setCommentHighlightRanges,
   setReconciliationInlineEntries,
+  slashCommandsExtension,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import type { Document as ScriptumDocument } from "@scriptum/shared";
@@ -980,6 +981,7 @@ export function DocumentRoute() {
         extensions: [
           markdown(),
           livePreviewExtension(),
+          slashCommandsExtension(),
           reconciliationInlineExtension(),
           commentHighlightExtension(),
           commentGutterExtension(),
