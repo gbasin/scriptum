@@ -44,6 +44,17 @@ export {
   type SectionEditHistoryEntry,
 } from "./reconciliation/detector";
 export {
+  RECONCILIATION_KEEP_BOTH_SEPARATOR,
+  reconciliationInlineExtension,
+  reconciliationInlineState,
+  setReconciliationInlineEntries,
+  type ReconciliationChoice,
+  type ReconciliationInlineEntry,
+  type ReconciliationInlineExtensionOptions,
+  type ReconciliationInlineResolution,
+  type ReconciliationInlineVersion,
+} from "./reconciliation/inline-ui";
+export {
   overlapIndicatorExtension,
   sectionOverlapIndicatorState,
   setSectionOverlaps,
@@ -58,6 +69,15 @@ export {
   setLeases,
   type LeaseBadgeData,
 } from "./section/lease-badge";
+export {
+  attributionExtension,
+  attributionState,
+  AttributionBadgeWidget,
+  setAttributions,
+  type EditorType,
+  type SectionAttribution,
+  type SectionContributor,
+} from "./section/attribution";
 export {
   applySlashCommand,
   slashCommandCompletions,
