@@ -10,12 +10,13 @@ pub mod overlap;
 // `SectionTracker` is the per-document entry point. Call `update()` each
 // time the CRDT text changes; it returns a `SectionDiff` describing what
 // moved. The tracker also maintains per-section `last_edited_by` state,
-// updated from the Yjs awareness origin passed into `update()`.
+// updated from the structured CRDT origin tag passed into `update()`.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use scriptum_common::crdt::origin::OriginTag;
 use scriptum_common::section::parser::parse_sections;
 use scriptum_common::types::Section;
 
@@ -149,7 +150,7 @@ fn content_hashes(markdown: &str, sections: &[Section]) -> Vec<u64> {
 pub struct SectionTracker {
     sections: Vec<Section>,
     markdown: String,
-    last_edited_by: HashMap<String, String>,
+    last_edited_by: HashMap<String, OriginTag>,
 }
 
 impl SectionTracker {
@@ -159,21 +160,21 @@ impl SectionTracker {
 
     /// Rebuild the section tree from updated markdown and return the diff.
     ///
-    /// `edited_by` — name of the editor that triggered this update (from
-    /// Yjs awareness origin). If provided, all added/modified sections
-    /// will have their `last_edited_by` updated.
-    pub fn update(&mut self, markdown: &str, edited_by: Option<&str>) -> SectionDiff {
+    /// `edited_by` — structured CRDT origin attribution for this update. If
+    /// provided, all added/modified sections will have their `last_edited_by`
+    /// metadata updated.
+    pub fn update(&mut self, markdown: &str, edited_by: Option<&OriginTag>) -> SectionDiff {
         let new_sections = parse_sections(markdown);
         let diff = diff_sections(&self.sections, &self.markdown, &new_sections, markdown);
 
-        if let Some(editor) = edited_by {
+        if let Some(origin) = edited_by {
             for change in &diff.changes {
                 match change {
                     SectionChange::Added(s) => {
-                        self.last_edited_by.insert(s.id.clone(), editor.to_string());
+                        self.last_edited_by.insert(s.id.clone(), origin.clone());
                     }
                     SectionChange::Modified { new, .. } => {
-                        self.last_edited_by.insert(new.id.clone(), editor.to_string());
+                        self.last_edited_by.insert(new.id.clone(), origin.clone());
                     }
                     SectionChange::Removed(s) => {
                         self.last_edited_by.remove(&s.id);
@@ -192,9 +193,9 @@ impl SectionTracker {
         &self.sections
     }
 
-    /// Look up the last editor for a section by ID.
-    pub fn last_edited_by(&self, section_id: &str) -> Option<&str> {
-        self.last_edited_by.get(section_id).map(|s| s.as_str())
+    /// Look up the last CRDT origin attribution for a section by ID.
+    pub fn last_edited_by(&self, section_id: &str) -> Option<&OriginTag> {
+        self.last_edited_by.get(section_id)
     }
 }
 
@@ -206,7 +207,21 @@ impl Default for SectionTracker {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{TimeZone, Utc};
+    use scriptum_common::crdt::origin::AuthorType;
+
     use super::*;
+
+    fn test_origin(author_id: &str, author_type: AuthorType, second_offset: i64) -> OriginTag {
+        OriginTag {
+            author_id: author_id.to_string(),
+            author_type,
+            timestamp: Utc
+                .timestamp_opt(1_700_000_000 + second_offset, 0)
+                .single()
+                .expect("timestamp should be representable"),
+        }
+    }
 
     // ── diff_sections ───────────────────────────────────────────────
 
@@ -363,28 +378,32 @@ mod tests {
     #[test]
     fn tracker_tracks_last_edited_by() {
         let mut tracker = SectionTracker::new();
+        let alice = test_origin("alice", AuthorType::Human, 0);
+        let bob = test_origin("bob", AuthorType::Human, 30);
 
         let md1 = "# Root\n\nOriginal.\n";
-        tracker.update(md1, Some("alice"));
-        assert_eq!(tracker.last_edited_by("root"), Some("alice"));
+        tracker.update(md1, Some(&alice));
+        assert_eq!(tracker.last_edited_by("root"), Some(&alice));
 
         let md2 = "# Root\n\nEdited by bob.\n";
-        tracker.update(md2, Some("bob"));
-        assert_eq!(tracker.last_edited_by("root"), Some("bob"));
+        tracker.update(md2, Some(&bob));
+        assert_eq!(tracker.last_edited_by("root"), Some(&bob));
     }
 
     #[test]
     fn tracker_clears_attribution_on_section_removal() {
         let mut tracker = SectionTracker::new();
+        let alice = test_origin("alice", AuthorType::Human, 0);
+        let bob = test_origin("bob", AuthorType::Human, 30);
 
         let md1 = "# Root\n\n## Child\n\nText.\n";
-        tracker.update(md1, Some("alice"));
-        assert_eq!(tracker.last_edited_by("root/child"), Some("alice"));
+        tracker.update(md1, Some(&alice));
+        assert_eq!(tracker.last_edited_by("root/child"), Some(&alice));
 
         let md2 = "# Root\n\nNo child.\n";
-        tracker.update(md2, Some("bob"));
+        tracker.update(md2, Some(&bob));
         assert_eq!(tracker.last_edited_by("root/child"), None);
-        assert_eq!(tracker.last_edited_by("root"), Some("bob"));
+        assert_eq!(tracker.last_edited_by("root"), Some(&bob));
     }
 
     #[test]
@@ -399,25 +418,28 @@ mod tests {
     #[test]
     fn tracker_preserves_attribution_for_unchanged_sections() {
         let mut tracker = SectionTracker::new();
+        let alice = test_origin("alice", AuthorType::Human, 0);
+        let bob = test_origin("bob", AuthorType::Human, 30);
 
         let md1 = "# Root\n\n## A\n\nAlpha.\n\n## B\n\nBeta.\n";
-        tracker.update(md1, Some("alice"));
-        assert_eq!(tracker.last_edited_by("root/a"), Some("alice"));
-        assert_eq!(tracker.last_edited_by("root/b"), Some("alice"));
+        tracker.update(md1, Some(&alice));
+        assert_eq!(tracker.last_edited_by("root/a"), Some(&alice));
+        assert_eq!(tracker.last_edited_by("root/b"), Some(&alice));
 
         // Only modify section B.
         let md2 = "# Root\n\n## A\n\nAlpha.\n\n## B\n\nBeta updated.\n";
-        tracker.update(md2, Some("bob"));
+        tracker.update(md2, Some(&bob));
 
         // A's attribution should still be alice (content unchanged).
-        assert_eq!(tracker.last_edited_by("root/a"), Some("alice"));
+        assert_eq!(tracker.last_edited_by("root/a"), Some(&alice));
         // B was modified → now bob.
-        assert_eq!(tracker.last_edited_by("root/b"), Some("bob"));
+        assert_eq!(tracker.last_edited_by("root/b"), Some(&bob));
     }
 
     #[test]
     fn tracker_handles_deeply_nested_sections() {
         let mut tracker = SectionTracker::new();
+        let claude = test_origin("claude", AuthorType::Agent, 60);
 
         let md = "\
 # Root
@@ -438,7 +460,7 @@ Role-based access.
 
 User, Document, Section.
 ";
-        let diff = tracker.update(md, Some("claude"));
+        let diff = tracker.update(md, Some(&claude));
 
         assert_eq!(tracker.sections().len(), 6);
         assert_eq!(diff.added().count(), 6);
@@ -447,7 +469,7 @@ User, Document, Section.
         for section in tracker.sections() {
             assert_eq!(
                 tracker.last_edited_by(&section.id),
-                Some("claude"),
+                Some(&claude),
                 "section {} should be attributed to claude",
                 section.id
             );

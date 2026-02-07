@@ -2,9 +2,37 @@
 // Provides a higher-level API for Scriptum's CRDT operations.
 
 use anyhow::{Context, Result};
+use scriptum_common::crdt::origin::OriginTag;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
-use yrs::{Doc, GetString, MapRef, ReadTxn, StateVector, Text, TextRef, Transact, Update};
+use yrs::{
+    Doc, GetString, MapRef, ReadTxn, StateVector, Subscription, Text, TextRef, TransactionMut,
+    Transact, Update, UpdateEvent,
+};
+
+/// A single observed Yjs update with CRDT-level origin attribution (if present and decodable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedDocUpdate {
+    pub update: Vec<u8>,
+    pub origin_raw: Option<Vec<u8>>,
+    pub origin_tag: Option<OriginTag>,
+    pub origin_tag_error: Option<String>,
+}
+
+impl ObservedDocUpdate {
+    fn from_event(txn: &TransactionMut, event: &UpdateEvent) -> Self {
+        let origin_raw = txn.origin().map(|origin| origin.as_ref().to_vec());
+        let (origin_tag, origin_tag_error) = match origin_raw.as_deref() {
+            Some(raw_origin) => match OriginTag::from_bytes(raw_origin) {
+                Ok(tag) => (Some(tag), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
+            None => (None, None),
+        };
+
+        Self { update: event.update.clone(), origin_raw, origin_tag, origin_tag_error }
+    }
+}
 
 /// Wrapper around a Yjs document for Scriptum.
 pub struct YDoc {
@@ -52,6 +80,20 @@ impl YDoc {
     pub fn encode_diff(&self, remote_sv: &[u8]) -> Result<Vec<u8>> {
         let sv = StateVector::decode_v1(remote_sv).context("failed to decode state vector")?;
         Ok(self.doc.transact().encode_diff_v1(&sv))
+    }
+
+    /// Observe document updates and decode CRDT origin tags when present.
+    ///
+    /// This wraps `Doc::observe_update_v1` and extracts `OriginTag` from
+    /// `txn.origin()` so downstream consumers can attribute updates to a
+    /// specific human/agent identity and timestamp.
+    pub fn observe_updates_v1<F>(&self, on_update: F) -> Result<Subscription>
+    where
+        F: Fn(ObservedDocUpdate) + Send + Sync + 'static,
+    {
+        self.doc
+            .observe_update_v1(move |txn, event| on_update(ObservedDocUpdate::from_event(txn, event)))
+            .context("failed to register Yjs update observer")
     }
 
     /// Get or create a `Text` shared type by name.
@@ -112,6 +154,11 @@ impl Default for YDoc {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use chrono::{TimeZone, Utc};
+    use scriptum_common::crdt::origin::AuthorType;
+
     use super::*;
     use yrs::{Map, Transact};
 
@@ -367,6 +414,68 @@ mod tests {
     fn test_invalid_state_returns_error() {
         let result = YDoc::from_state(b"not a valid state");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn observe_updates_extracts_origin_tag_from_transaction_origin() {
+        let doc = YDoc::new();
+        let ytext = doc.get_or_insert_text(TEST_TEXT_KEY);
+        let observed: Arc<Mutex<Vec<ObservedDocUpdate>>> = Arc::new(Mutex::new(Vec::new()));
+        let observed_for_cb = Arc::clone(&observed);
+
+        let _subscription = doc
+            .observe_updates_v1(move |update| {
+                observed_for_cb.lock().expect("observer lock should be available").push(update);
+            })
+            .expect("observer should register");
+
+        let origin_tag = OriginTag {
+            author_id: "claude-1".to_string(),
+            author_type: AuthorType::Agent,
+            timestamp: Utc
+                .with_ymd_and_hms(2026, 2, 7, 14, 10, 0)
+                .single()
+                .expect("timestamp should be representable"),
+        };
+        let origin_bytes = origin_tag.to_bytes().expect("origin bytes should encode");
+        {
+            let mut txn = doc.inner().transact_mut_with(origin_bytes.as_slice());
+            ytext.insert(&mut txn, 0, "hello");
+        }
+
+        let updates = observed.lock().expect("observer lock should be available");
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].origin_raw, Some(origin_bytes));
+        assert_eq!(updates[0].origin_tag, Some(origin_tag));
+        assert_eq!(updates[0].origin_tag_error, None);
+        assert!(!updates[0].update.is_empty());
+    }
+
+    #[test]
+    fn observe_updates_surfaces_invalid_origin_payload_without_failing_update() {
+        let doc = YDoc::new();
+        let ytext = doc.get_or_insert_text(TEST_TEXT_KEY);
+        let observed: Arc<Mutex<Vec<ObservedDocUpdate>>> = Arc::new(Mutex::new(Vec::new()));
+        let observed_for_cb = Arc::clone(&observed);
+
+        let _subscription = doc
+            .observe_updates_v1(move |update| {
+                observed_for_cb.lock().expect("observer lock should be available").push(update);
+            })
+            .expect("observer should register");
+
+        let invalid_origin = b"file-watcher".to_vec();
+        {
+            let mut txn = doc.inner().transact_mut_with(invalid_origin.as_slice());
+            ytext.insert(&mut txn, 0, "hello");
+        }
+
+        let updates = observed.lock().expect("observer lock should be available");
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].origin_raw, Some(invalid_origin));
+        assert_eq!(updates[0].origin_tag, None);
+        assert!(updates[0].origin_tag_error.is_some());
+        assert!(!updates[0].update.is_empty());
     }
 
     #[test]
