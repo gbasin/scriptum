@@ -79,8 +79,7 @@ async fn handle_rpc_payload(raw: &[u8], state: &RpcServerState) -> Value {
     match payload {
         Value::Array(items) => {
             if items.is_empty() {
-                return serde_json::to_value(empty_batch_response())
-                    .unwrap_or(Value::Null);
+                return serde_json::to_value(empty_batch_response()).unwrap_or(Value::Null);
             }
 
             let mut responses = Vec::with_capacity(items.len());
@@ -97,8 +96,7 @@ async fn handle_rpc_payload(raw: &[u8], state: &RpcServerState) -> Value {
 
             serde_json::to_value(responses).unwrap_or(Value::Null)
         }
-        _ => serde_json::to_value(handle_raw_request(raw, state).await)
-            .unwrap_or(Value::Null),
+        _ => serde_json::to_value(handle_raw_request(raw, state).await).unwrap_or(Value::Null),
     }
 }
 

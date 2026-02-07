@@ -11,7 +11,6 @@ pub enum PresenceKind {
     Agent,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PresenceUser {
     pub id: String,

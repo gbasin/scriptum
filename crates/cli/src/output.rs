@@ -49,8 +49,7 @@ where
             writeln!(out, "{}", human_fn(value))
         }
         OutputFormat::Json => {
-            serde_json::to_writer(&mut out, value)
-                .map_err(io::Error::other)?;
+            serde_json::to_writer(&mut out, value).map_err(io::Error::other)?;
             writeln!(out)
         }
     }
@@ -73,8 +72,7 @@ where
             writeln!(writer, "{}", human_fn(value))
         }
         OutputFormat::Json => {
-            serde_json::to_writer(&mut *writer, value)
-                .map_err(io::Error::other)?;
+            serde_json::to_writer(&mut *writer, value).map_err(io::Error::other)?;
             writeln!(writer)
         }
     }

@@ -99,7 +99,6 @@ pub struct AiConfig {
     pub model: Option<String>,
 }
 
-
 /// Editor type for this client.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -120,7 +119,6 @@ pub struct WorkspaceConfig {
     /// Sync settings.
     pub sync: SyncConfig,
 }
-
 
 impl WorkspaceConfig {
     /// Load from `<root>/.scriptum/workspace.toml`. Returns defaults if
@@ -219,7 +217,6 @@ pub struct SyncConfig {
     /// Workspace ID on the relay server.
     pub workspace_id: Option<String>,
 }
-
 
 // ── Errors ─────────────────────────────────────────────────────────
 

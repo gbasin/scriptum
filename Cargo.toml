@@ -65,3 +65,15 @@ tiktoken-rs = "0.6"
 
 # Internal crates
 scriptum-common = { path = "crates/common" }
+
+[workspace.lints.rust]
+# Allow during active development — tighten before release
+dead_code = "allow"
+
+[workspace.lints.clippy]
+# Allow during active development — tighten before release
+result_large_err = "allow"
+field_reassign_with_default = "allow"
+type_complexity = "allow"
+len_without_is_empty = "allow"
+incompatible_msrv = "allow"

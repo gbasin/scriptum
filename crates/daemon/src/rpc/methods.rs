@@ -54,7 +54,6 @@ pub enum GitSyncPolicy {
     AutoRebase,
 }
 
-
 // ── Git state ───────────────────────────────────────────────────────
 
 /// Git-related state for the RPC server.

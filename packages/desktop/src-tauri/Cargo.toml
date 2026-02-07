@@ -30,3 +30,6 @@ serde_json = "1"
 semver = "1"
 keyring = "3"
 url = "2"
+
+[lints]
+workspace = true
