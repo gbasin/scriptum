@@ -38,11 +38,10 @@ export function TimelineSlider({
       <label className={styles.label} htmlFor="history-timeline-slider">
         History timeline
       </label>
-      <div
+      <fieldset
         aria-label="History view mode"
         className={styles.viewToggleGroup}
         data-testid="history-view-toggle"
-        role="group"
       >
         <button
           aria-pressed={normalizedViewMode === "authorship"}
@@ -70,7 +69,7 @@ export function TimelineSlider({
         >
           Diff from current
         </button>
-      </div>
+      </fieldset>
       <output
         aria-live="polite"
         className={styles.modeLabel}

@@ -117,7 +117,7 @@ function parseTimestamp(iso: string): number | null {
 export function createAuthService(
   options: AuthServiceOptions = {},
 ): AuthService {
-  const localStorageRef = options.localStorage ?? globalThis.localStorage;
+  const _localStorageRef = options.localStorage ?? globalThis.localStorage;
   const sessionStorageRef = options.sessionStorage ?? globalThis.sessionStorage;
   const locationRef = options.location ?? globalThis.location;
   const now = options.now ?? (() => Date.now());

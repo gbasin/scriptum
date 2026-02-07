@@ -73,7 +73,6 @@ export function OfflineBanner({
       aria-label="Offline banner"
       className={clsx(styles.banner, visible ? styles.visible : styles.hidden)}
       data-testid="offline-banner"
-      role="status"
     >
       {visible ? (
         <div className={styles.content}>

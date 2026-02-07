@@ -1,7 +1,6 @@
 import { markdownLanguage } from "@codemirror/lang-markdown";
 import {
   type EditorState,
-  RangeSetBuilder,
   StateField,
 } from "@codemirror/state";
 import {

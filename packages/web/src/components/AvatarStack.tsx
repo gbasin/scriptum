@@ -70,6 +70,7 @@ function Avatar({
       aria-label={`${peer.name}${isAgent ? " (agent)" : ""}`}
       className={clsx(styles.avatar, isAgent && styles.avatarAgent)}
       data-testid={`avatar-${peer.name}`}
+      role="img"
       style={
         {
           "--avatar-bg-color": color,
@@ -100,6 +101,7 @@ function OverflowIndicator({
       aria-label={`${count} more`}
       className={styles.overflowIndicator}
       data-testid="avatar-overflow"
+      role="img"
       style={
         {
           "--avatar-font-size": `${Math.max(size * 0.35, 9)}px`,
@@ -139,11 +141,12 @@ export function AvatarStack({
     size * 0.4;
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: styled div used intentionally for layout
     <div
       aria-label="Online users"
       className={styles.stack}
       data-testid="avatar-stack"
-      role="group"
+      role="list"
       style={
         {
           "--stack-height": `${size}px`,

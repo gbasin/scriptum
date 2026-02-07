@@ -6,7 +6,7 @@ import { createDaemonClient, type DaemonClient } from "./daemon-client";
 import { registerAgentsResource } from "./resources/agents";
 import { registerDocResources } from "./resources/docs";
 import { registerWorkspaceResource } from "./resources/workspace";
-import { type AgentNameResolver } from "./shared";
+import type { AgentNameResolver } from "./shared";
 import { registerPassthroughTools } from "./tools/passthrough";
 import { registerStatusTool } from "./tools/status";
 import { registerSubscribeTool } from "./tools/subscribe";

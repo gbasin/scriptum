@@ -286,7 +286,7 @@ function mapDocument(value: unknown): Document {
     path: requireString("document", record, ["path"]),
     title: requireString("document", record, ["title"]),
     ...(readString(record, ["bodyMd", "body_md"])
-      ? { bodyMd: readString(record, ["bodyMd", "body_md"])! }
+      ? { bodyMd: readString(record, ["bodyMd", "body_md"]) as string }
       : {}),
     tags,
     headSeq:
@@ -444,7 +444,6 @@ async function parseApiError(
   let code: string | null = null;
   let retryable = response.status === 429 || response.status >= 500;
   let requestId: string | null = null;
-  let details: unknown;
 
   try {
     parsed = await readJsonResponse<RelayErrorEnvelope>(response);
@@ -459,7 +458,7 @@ async function parseApiError(
   code = readString(errorRecord, ["code"]);
   retryable = readBoolean(errorRecord, ["retryable"]) ?? retryable;
   requestId = readString(errorRecord, ["request_id", "requestId"]);
-  details = errorRecord?.details;
+  const details = errorRecord?.details;
 
   return new ApiClientError(
     response.status,

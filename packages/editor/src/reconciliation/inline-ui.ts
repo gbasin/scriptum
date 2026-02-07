@@ -326,7 +326,7 @@ function sortEntries(
 }
 
 function buildDecorations(
-  state: EditorState,
+  _state: EditorState,
   entries: readonly NormalizedReconciliationInlineEntry[],
 ): DecorationSet {
   if (entries.length === 0) {

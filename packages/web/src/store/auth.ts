@@ -197,7 +197,7 @@ export function createAuthStore(
           accessExpiresAt: result.access_expires_at,
           refreshToken: result.refresh_token,
           refreshExpiresAt: result.refresh_expires_at,
-          user: prevState.user!,
+          user: prevState.user ?? { id: "", email: "", display_name: "" },
         };
         saveSession(session);
 

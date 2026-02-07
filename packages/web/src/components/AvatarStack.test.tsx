@@ -118,7 +118,7 @@ describe("AvatarStack", () => {
     const peers = [makePeer("alice")];
     const html = renderToString(<AvatarStack peers={peers} />);
 
-    expect(html).toContain('role="group"');
+    expect(html).toContain('role="list"');
     expect(html).toContain('aria-label="Online users"');
   });
 

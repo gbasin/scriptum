@@ -35,7 +35,7 @@ const isMacOs = process.platform === "darwin";
 const hasDesktopWebDriverConfig =
   webdriverBaseUrl.length > 0 && rawCapabilities.length > 0;
 
-const INVOKE_SCRIPT = String.raw`
+const INVOKE_SCRIPT = `
 const commandName = arguments[0];
 const commandArgs = arguments[1] ?? {};
 const done = arguments[arguments.length - 1];

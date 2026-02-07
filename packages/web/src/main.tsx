@@ -18,7 +18,9 @@ startThemeSync(useWorkspaceStore);
 startAppearanceSync(useWorkspaceStore);
 startGitSyncPollingSync(useWorkspaceStore);
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Missing #root element");
+createRoot(rootElement).render(
   <StrictMode>
     <App />
   </StrictMode>,

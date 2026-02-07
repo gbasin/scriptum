@@ -48,7 +48,6 @@ export function StatusBar({
 
   return (
     <footer
-      aria-label="Status bar"
       className={styles.root}
       data-testid="status-bar"
     >
@@ -64,14 +63,13 @@ export function StatusBar({
           data-sync-color={badge.colorName}
           data-testid="status-sync-dot"
         />
-        <span
+        <output
           aria-label="Sync state"
           className={styles.metric}
           data-testid="sync-state"
-          role="status"
         >
           Sync: {badge.label}
-        </span>
+        </output>
       </span>
       <span className={styles.metric} data-testid="status-cursor">
         Ln {line}, Col {col}

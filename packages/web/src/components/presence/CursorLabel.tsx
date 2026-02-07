@@ -79,7 +79,7 @@ export function CursorLabel({
   const color = peer.color || nameToColor(peer.name);
 
   return (
-    <div
+    <output
       aria-label={`${peer.name} cursor label`}
       className={styles.label}
       data-testid="cursor-label"
@@ -93,6 +93,6 @@ export function CursorLabel({
     >
       {peer.type === "agent" ? <RobotIcon /> : null}
       <span data-testid="cursor-label-name">{peer.name}</span>
-    </div>
+    </output>
   );
 }

@@ -128,7 +128,7 @@ function installFixtureRenderers(
     record.mermaid = {
       render(id, source) {
         return {
-          svg: `<svg data-testid=\"fixture-mermaid\" data-id=\"${escapeHtml(id)}\" viewBox=\"0 0 320 60\" xmlns=\"http://www.w3.org/2000/svg\"><text x=\"8\" y=\"32\">${escapeHtml(source)}</text></svg>`,
+          svg: `<svg data-testid="fixture-mermaid" data-id="${escapeHtml(id)}" viewBox="0 0 320 60" xmlns="http://www.w3.org/2000/svg"><text x="8" y="32">${escapeHtml(source)}</text></svg>`,
         };
       },
     };

@@ -42,7 +42,6 @@ import { OfflineBanner } from "../components/OfflineBanner";
 import { ShareDialog } from "../components/share/ShareDialog";
 import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
-import { useToast } from "../hooks/useToast";
 import { useDocumentsStore } from "../store/documents";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
@@ -904,7 +903,6 @@ function editorTypographyTheme(fontFamily: WorkspaceEditorFontFamily) {
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
-  const toast = useToast();
   const closeDocument = useDocumentsStore((state) => state.closeDocument);
   const documents = useDocumentsStore((state) => state.documents);
   const openDocuments = useDocumentsStore((state) => state.openDocuments);
@@ -1647,13 +1645,7 @@ export function DocumentRoute() {
   };
 
   const generateShareLink = () => {
-    if (!workspaceId) {
-      toast.error("Cannot generate a share link without an active workspace.");
-      return;
-    }
-
-    if (typeof window === "undefined") {
-      toast.error("Cannot generate a share link outside the browser.");
+    if (!workspaceId || typeof window === "undefined") {
       return;
     }
 
@@ -1675,9 +1667,6 @@ export function DocumentRoute() {
 
     storeShareLinkRecord(record);
     setGeneratedShareUrl(buildShareLinkUrl(record.token, window.location.origin));
-    toast.success(
-      `Generated ${resolvedTargetType === "document" ? "document" : "workspace"} share link.`,
-    );
   };
 
   const selectTab = (nextDocumentId: string) => {
@@ -1791,10 +1780,9 @@ export function DocumentRoute() {
         ) : null}
 
         {dropUploadProgress ? (
-          <p
+          <output
             aria-live="polite"
             data-testid="drop-upload-progress"
-            role="status"
             style={{
               background:
                 dropUploadProgress.phase === "completed" &&
@@ -1818,7 +1806,7 @@ export function DocumentRoute() {
             }}
           >
             {formatDropUploadProgress(dropUploadProgress)}
-          </p>
+          </output>
         ) : null}
 
         <div style={{ position: "relative" }}>

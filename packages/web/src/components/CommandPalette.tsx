@@ -402,7 +402,6 @@ export function CommandPalette({
                     Command Palette
                   </label>
                   <input
-                    autoFocus
                     className={styles.panelInput}
                     data-testid="command-palette-input"
                     id="command-palette-input"
@@ -414,7 +413,6 @@ export function CommandPalette({
                   <ul
                     className={styles.results}
                     data-testid="command-palette-results"
-                    role="listbox"
                   >
                     {filteredItems.length === 0 ? (
                       <li className={styles.empty} data-testid="command-palette-empty">
@@ -422,7 +420,7 @@ export function CommandPalette({
                       </li>
                     ) : null}
                     {filteredItems.map((item, index) => (
-                      <li key={item.id} role="option">
+                      <li key={item.id} >
                         <Menu.Item
                           aria-selected={index === activeIndex}
                           className={clsx(

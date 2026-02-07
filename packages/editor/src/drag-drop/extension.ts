@@ -223,7 +223,9 @@ export function dragDropUpload(options: DragDropUploadOptions): Extension {
       }
 
       event.preventDefault();
-      event.dataTransfer!.dropEffect = "copy";
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
       return true;
     },
     drop(event, view) {

@@ -48,9 +48,8 @@ describe("buildTree", () => {
 
   it("nests deeply", () => {
     const tree = buildTree(DOCUMENTS);
-    const guides = tree
-      .find((n) => n.name === "docs")!
-      .children.find((n) => n.name === "guides")!;
+    const docsNode = tree.find((n) => n.name === "docs");
+    const guides = docsNode!.children.find((n) => n.name === "guides")!;
 
     expect(guides.children).toHaveLength(1);
     expect(guides.children[0].name).toBe("getting-started.md");

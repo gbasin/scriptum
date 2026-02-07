@@ -74,7 +74,7 @@ function normalizeBacklink(value: unknown): BacklinkEntry | null {
   }
 
   const linkText =
-    linkTextRaw && linkTextRaw.startsWith("[[") && linkTextRaw.endsWith("]]")
+    linkTextRaw?.startsWith("[[") && linkTextRaw.endsWith("]]")
       ? linkTextRaw
       : `[[${linkTextRaw ?? title}]]`;
 

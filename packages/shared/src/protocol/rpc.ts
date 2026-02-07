@@ -215,7 +215,7 @@ export interface DocDiffResult {
   patch_md: string;
 }
 
-export type AgentWhoamiParams = {};
+export type AgentWhoamiParams = Record<string, never>;
 
 export interface AgentWhoamiResult {
   agent_id: string;

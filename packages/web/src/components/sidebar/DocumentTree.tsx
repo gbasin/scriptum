@@ -131,7 +131,9 @@ function applyPreferredOrder(
   const preferredOrder = preferredOrderByParent[parent];
   const preferredIndex = new Map<string, number>();
   if (preferredOrder) {
-    preferredOrder.forEach((path, index) => preferredIndex.set(path, index));
+    for (const [index, path] of preferredOrder.entries()) {
+      preferredIndex.set(path, index);
+    }
   }
 
   const ordered = nodes
@@ -333,16 +335,18 @@ function TreeNodeItem({
         className={styles.treeItem}
         data-testid={`tree-node-${node.fullPath}`}
         role="treeitem"
+        tabIndex={0}
       >
         <div className={styles.renameRow}>
           <span aria-hidden="true" className={styles.treeIcon}>
             {fileIcon(node.name)}
           </span>
           <input
-            autoFocus
             className={clsx(controls.textInput, styles.renameInput)}
             data-testid={`tree-rename-input-${node.document.id}`}
-            onBlur={() => onRenameCommit(node.document!.id)}
+            onBlur={() => {
+              if (node.document) onRenameCommit(node.document.id);
+            }}
             onChange={(event: ChangeEvent<HTMLInputElement>) =>
               onRenameChange(event.target.value)
             }
@@ -387,6 +391,7 @@ function TreeNodeItem({
         data-drop-target={isDropTarget || undefined}
         data-testid={`tree-node-${node.fullPath}`}
         role="treeitem"
+        tabIndex={0}
       >
         {node.document ? (
           <ContextMenu.Root>
@@ -402,7 +407,9 @@ function TreeNodeItem({
                       className={styles.contextMenuItem}
                       data-testid={`context-action-${action}`}
                       key={action}
-                      onClick={() => onContextAction(action, node.document!)}
+                      onClick={() => {
+                        if (node.document) onContextAction(action, node.document);
+                      }}
                     >
                       {label}
                     </ContextMenu.Item>
@@ -417,6 +424,7 @@ function TreeNodeItem({
       </li>
       {isFolder && isExpanded && (
         <li role="none">
+          {/* biome-ignore lint/a11y/useSemanticElements: role="group" is correct for ARIA tree pattern */}
           <ul className={styles.treeGroup} role="group">
             {node.children.map((child) => (
               <TreeNodeItem
@@ -662,6 +670,7 @@ export function DocumentTree({
 
   return (
     <nav aria-label="Document tree" data-testid="document-tree">
+      {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: role="tree" is correct for ARIA tree widget */}
       <ul className={styles.tree} role="tree">
         {orderedTree.map((node) => (
           <TreeNodeItem
