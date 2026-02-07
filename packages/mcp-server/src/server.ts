@@ -61,6 +61,18 @@ const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     description:
       "List active agents in the workspace via daemon agent.list. Forwards all tool arguments as JSON-RPC params.",
   },
+  {
+    name: "scriptum_claim",
+    rpcMethod: "agent.claim",
+    description:
+      "Claim a section lease via daemon agent.claim. Forwards all tool arguments as JSON-RPC params.",
+  },
+  {
+    name: "scriptum_bundle",
+    rpcMethod: "doc.bundle",
+    description:
+      "Fetch a context bundle via daemon doc.bundle. Forwards all tool arguments as JSON-RPC params.",
+  },
 ];
 
 export interface ScriptumMcpServer {
@@ -159,6 +171,36 @@ function registerToolHandlers(
     },
   );
 
+  server.registerTool(
+    "scriptum_subscribe",
+    {
+      description:
+        "Polling subscribe helper. Calls daemon agent.status, compares change token, and reports whether it changed.",
+      inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
+    },
+    async (toolArgs) => {
+      const subscribeParams = toToolPayload(toolArgs);
+      const previousChangeToken = extractPreviousChangeToken(subscribeParams);
+      const statusPayload = await daemonClient.request(
+        "agent.status",
+        {
+          ...stripSubscribeTokenParams(subscribeParams),
+          agent_name: resolveAgentName(),
+        },
+      );
+      const currentChangeToken = extractChangeToken(statusPayload);
+
+      return makeToolResult({
+        changed:
+          previousChangeToken === null
+            ? true
+            : currentChangeToken !== previousChangeToken,
+        change_token: currentChangeToken,
+        status: statusPayload,
+      });
+    },
+  );
+
   for (const definition of PASSTHROUGH_TOOL_DEFINITIONS) {
     server.registerTool(
       definition.name,
@@ -184,6 +226,40 @@ function toToolPayload(value: unknown): ToolPayload {
     return {};
   }
   return value as ToolPayload;
+}
+
+function extractPreviousChangeToken(payload: ToolPayload): string | null {
+  const direct = payload.change_token;
+  if (typeof direct === "string" && direct.length > 0) {
+    return direct;
+  }
+
+  const alias = payload.last_change_token;
+  if (typeof alias === "string" && alias.length > 0) {
+    return alias;
+  }
+
+  return null;
+}
+
+function stripSubscribeTokenParams(payload: ToolPayload): ToolPayload {
+  const { change_token, last_change_token, ...rest } = payload;
+  void change_token;
+  void last_change_token;
+  return rest;
+}
+
+function extractChangeToken(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const value = (payload as Record<string, unknown>).change_token;
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+
+  return value;
 }
 
 function makeToolResult(payload: unknown) {

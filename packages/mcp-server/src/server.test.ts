@@ -48,6 +48,9 @@ describe("mcp server scaffold", () => {
       expect(toolNames).toContain("scriptum_conflicts");
       expect(toolNames).toContain("scriptum_history");
       expect(toolNames).toContain("scriptum_agents");
+      expect(toolNames).toContain("scriptum_subscribe");
+      expect(toolNames).toContain("scriptum_claim");
+      expect(toolNames).toContain("scriptum_bundle");
 
       const resourceList = await client.listResources();
       expect(
@@ -58,7 +61,9 @@ describe("mcp server scaffold", () => {
 
       const toolResult = await client.callTool({
         name: "scriptum_status",
-        arguments: {},
+        arguments: {
+          workspace_id: "ws-1",
+        },
       });
       const statusPayload = readToolTextPayload(toolResult) as {
         forwarded_method: string;
@@ -66,6 +71,30 @@ describe("mcp server scaffold", () => {
       };
       expect(statusPayload.forwarded_method).toBe("agent.status");
       expect(statusPayload.forwarded_params.agent_name).toBe("cursor");
+      expect(statusPayload.forwarded_params.workspace_id).toBe("ws-1");
+
+      const subscribeToolResult = await client.callTool({
+        name: "scriptum_subscribe",
+        arguments: {
+          workspace_id: "ws-1",
+          last_change_token: "token-1",
+        },
+      });
+      const subscribePayload = readToolTextPayload(subscribeToolResult) as {
+        changed: boolean;
+        change_token: string | null;
+        status: {
+          forwarded_method: string;
+          forwarded_params: Record<string, unknown>;
+        };
+      };
+      expect(subscribePayload.changed).toBe(true);
+      expect(subscribePayload.change_token).toBeNull();
+      expect(subscribePayload.status.forwarded_method).toBe("agent.status");
+      expect(subscribePayload.status.forwarded_params).toEqual({
+        workspace_id: "ws-1",
+        agent_name: "cursor",
+      });
 
       const readToolResult = await client.callTool({
         name: "scriptum_read",
@@ -148,10 +177,49 @@ describe("mcp server scaffold", () => {
       };
       expect(agentsToolPayload.forwarded_method).toBe("agent.list");
 
+      const claimToolResult = await client.callTool({
+        name: "scriptum_claim",
+        arguments: {
+          workspace_id: "ws-1",
+          doc_id: "doc-1",
+          section_id: "sec-1",
+          ttl_sec: 600,
+          mode: "shared",
+          note: "rewriting auth",
+        },
+      });
+      const claimPayload = readToolTextPayload(claimToolResult) as {
+        forwarded_method: string;
+      };
+      expect(claimPayload.forwarded_method).toBe("agent.claim");
+
+      const bundleToolResult = await client.callTool({
+        name: "scriptum_bundle",
+        arguments: {
+          workspace_id: "ws-1",
+          doc_id: "doc-1",
+          section_id: "sec-1",
+          include: ["parents", "children", "backlinks"],
+          token_budget: 2048,
+        },
+      });
+      const bundlePayload = readToolTextPayload(bundleToolResult) as {
+        forwarded_method: string;
+      };
+      expect(bundlePayload.forwarded_method).toBe("doc.bundle");
+
       expect(daemonCalls).toEqual([
         {
           method: "agent.status",
           params: {
+            workspace_id: "ws-1",
+            agent_name: "cursor",
+          },
+        },
+        {
+          method: "agent.status",
+          params: {
+            workspace_id: "ws-1",
             agent_name: "cursor",
           },
         },
@@ -203,6 +271,27 @@ describe("mcp server scaffold", () => {
           method: "agent.list",
           params: {
             workspace_id: "ws-1",
+          },
+        },
+        {
+          method: "agent.claim",
+          params: {
+            workspace_id: "ws-1",
+            doc_id: "doc-1",
+            section_id: "sec-1",
+            ttl_sec: 600,
+            mode: "shared",
+            note: "rewriting auth",
+          },
+        },
+        {
+          method: "doc.bundle",
+          params: {
+            workspace_id: "ws-1",
+            doc_id: "doc-1",
+            section_id: "sec-1",
+            include: ["parents", "children", "backlinks"],
+            token_budget: 2048,
           },
         },
       ]);

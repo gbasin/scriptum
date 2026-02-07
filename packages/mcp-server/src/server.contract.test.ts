@@ -7,6 +7,7 @@ import { createServer } from "./server";
 
 const MCP_TO_DAEMON_CONTRACT: Record<string, string> = {
   scriptum_status: "agent.status",
+  scriptum_subscribe: "agent.status",
   scriptum_read: "doc.read",
   scriptum_edit: "doc.edit",
   scriptum_list: "doc.tree",
@@ -14,6 +15,8 @@ const MCP_TO_DAEMON_CONTRACT: Record<string, string> = {
   scriptum_conflicts: "agent.conflicts",
   scriptum_history: "doc.diff",
   scriptum_agents: "agent.list",
+  scriptum_claim: "agent.claim",
+  scriptum_bundle: "doc.bundle",
 };
 
 describe("mcp tool contract", () => {
@@ -40,12 +43,15 @@ describe("mcp tool contract", () => {
 
       expect(names).toEqual([
         "scriptum_agents",
+        "scriptum_bundle",
+        "scriptum_claim",
         "scriptum_conflicts",
         "scriptum_edit",
         "scriptum_history",
         "scriptum_list",
         "scriptum_read",
         "scriptum_status",
+        "scriptum_subscribe",
         "scriptum_tree",
       ]);
     } finally {
@@ -79,7 +85,11 @@ describe("mcp tool contract", () => {
 
       await client.callTool({
         name: "scriptum_status",
-        arguments: {},
+        arguments: { workspace_id: "ws" },
+      });
+      await client.callTool({
+        name: "scriptum_subscribe",
+        arguments: { workspace_id: "ws", last_change_token: "tok-1" },
       });
       await client.callTool({
         name: "scriptum_read",
@@ -114,9 +124,29 @@ describe("mcp tool contract", () => {
         name: "scriptum_agents",
         arguments: { workspace_id: "ws" },
       });
+      await client.callTool({
+        name: "scriptum_claim",
+        arguments: {
+          workspace_id: "ws",
+          doc_id: "doc",
+          section_id: "sec-1",
+          ttl_sec: 300,
+          mode: "shared",
+        },
+      });
+      await client.callTool({
+        name: "scriptum_bundle",
+        arguments: {
+          workspace_id: "ws",
+          doc_id: "doc",
+          include: ["parents", "children"],
+          token_budget: 2048,
+        },
+      });
 
       expect(calls.map((call) => call.method)).toEqual([
         MCP_TO_DAEMON_CONTRACT.scriptum_status,
+        MCP_TO_DAEMON_CONTRACT.scriptum_subscribe,
         MCP_TO_DAEMON_CONTRACT.scriptum_read,
         MCP_TO_DAEMON_CONTRACT.scriptum_edit,
         MCP_TO_DAEMON_CONTRACT.scriptum_list,
@@ -124,6 +154,8 @@ describe("mcp tool contract", () => {
         MCP_TO_DAEMON_CONTRACT.scriptum_conflicts,
         MCP_TO_DAEMON_CONTRACT.scriptum_history,
         MCP_TO_DAEMON_CONTRACT.scriptum_agents,
+        MCP_TO_DAEMON_CONTRACT.scriptum_claim,
+        MCP_TO_DAEMON_CONTRACT.scriptum_bundle,
       ]);
     } finally {
       await client.close();
