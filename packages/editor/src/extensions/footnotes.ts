@@ -1,8 +1,8 @@
 import {
-  EditorState,
+  type EditorState,
+  type Extension,
   RangeSetBuilder,
   StateField,
-  type Extension,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -30,9 +30,10 @@ interface FootnoteSectionEntry {
   readonly number: number;
 }
 
-function activeSelectionLineRange(
-  state: EditorState,
-): { readonly endLine: number; readonly startLine: number } {
+function activeSelectionLineRange(state: EditorState): {
+  readonly endLine: number;
+  readonly startLine: number;
+} {
   const from = state.selection.main.from;
   const to = state.selection.main.to;
   const startLine = state.doc.lineAt(Math.min(from, to)).number;
@@ -41,16 +42,23 @@ function activeSelectionLineRange(
   return { endLine, startLine };
 }
 
-function lineIsInActiveSelection(state: EditorState, lineNumber: number): boolean {
+function lineIsInActiveSelection(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const activeRange = activeSelectionLineRange(state);
-  return lineNumber >= activeRange.startLine && lineNumber <= activeRange.endLine;
+  return (
+    lineNumber >= activeRange.startLine && lineNumber <= activeRange.endLine
+  );
 }
 
 function lineLooksLikeFootnoteContinuation(lineText: string): boolean {
   return /^(?: {4}|\t)/.test(lineText);
 }
 
-function parseFootnoteDefinitions(state: EditorState): ParsedFootnoteDefinition[] {
+function parseFootnoteDefinitions(
+  state: EditorState,
+): ParsedFootnoteDefinition[] {
   const definitions: Omit<ParsedFootnoteDefinition, "number">[] = [];
   let lineNumber = 1;
 

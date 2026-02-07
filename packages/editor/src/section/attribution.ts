@@ -3,10 +3,10 @@
 // with agent/human distinction and hover tooltips.
 
 import {
-  StateEffect,
-  StateField,
   type EditorState,
   type Extension,
+  StateEffect,
+  StateField,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -103,9 +103,7 @@ export class AttributionBadgeWidget extends WidgetType {
 
   private buildTooltip(): string {
     const lines: string[] = [];
-    lines.push(
-      `Last edited by ${this.name} (${this.editorType})`,
-    );
+    lines.push(`Last edited by ${this.name} (${this.editorType})`);
     if (this.lastEditedAt) {
       lines.push(`at ${this.lastEditedAt}`);
     }

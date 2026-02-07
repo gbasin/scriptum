@@ -2,12 +2,12 @@ import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
 import {
+  AttributionBadgeWidget,
   attributionExtension,
   attributionState,
-  AttributionBadgeWidget,
-  setAttributions,
   type EditorType,
   type SectionContributor,
+  setAttributions,
 } from "./attribution";
 
 interface BadgeInfo {
@@ -264,32 +264,74 @@ describe("AttributionBadgeWidget", () => {
   });
 
   it("eq returns false when name differs", () => {
-    const a = new AttributionBadgeWidget("Alice", "human", "#e06c75", undefined, []);
-    const b = new AttributionBadgeWidget("Bob", "human", "#e06c75", undefined, []);
+    const a = new AttributionBadgeWidget(
+      "Alice",
+      "human",
+      "#e06c75",
+      undefined,
+      [],
+    );
+    const b = new AttributionBadgeWidget(
+      "Bob",
+      "human",
+      "#e06c75",
+      undefined,
+      [],
+    );
     expect(a.eq(b)).toBe(false);
   });
 
   it("eq returns false when type differs", () => {
-    const a = new AttributionBadgeWidget("Agent", "human", "#e06c75", undefined, []);
-    const b = new AttributionBadgeWidget("Agent", "agent", "#e06c75", undefined, []);
+    const a = new AttributionBadgeWidget(
+      "Agent",
+      "human",
+      "#e06c75",
+      undefined,
+      [],
+    );
+    const b = new AttributionBadgeWidget(
+      "Agent",
+      "agent",
+      "#e06c75",
+      undefined,
+      [],
+    );
     expect(a.eq(b)).toBe(false);
   });
 
   it("eq returns false when contributors differ", () => {
-    const a = new AttributionBadgeWidget("Alice", "human", "#e06c75", undefined, [
-      { name: "Alice", type: "human", charCount: 100 },
-    ]);
-    const b = new AttributionBadgeWidget("Alice", "human", "#e06c75", undefined, [
-      { name: "Alice", type: "human", charCount: 200 },
-    ]);
+    const a = new AttributionBadgeWidget(
+      "Alice",
+      "human",
+      "#e06c75",
+      undefined,
+      [{ name: "Alice", type: "human", charCount: 100 }],
+    );
+    const b = new AttributionBadgeWidget(
+      "Alice",
+      "human",
+      "#e06c75",
+      undefined,
+      [{ name: "Alice", type: "human", charCount: 200 }],
+    );
     expect(a.eq(b)).toBe(false);
   });
 
   it("eq returns false when contributor count differs", () => {
-    const a = new AttributionBadgeWidget("Alice", "human", "#e06c75", undefined, [
-      { name: "Alice", type: "human", charCount: 100 },
-    ]);
-    const b = new AttributionBadgeWidget("Alice", "human", "#e06c75", undefined, []);
+    const a = new AttributionBadgeWidget(
+      "Alice",
+      "human",
+      "#e06c75",
+      undefined,
+      [{ name: "Alice", type: "human", charCount: 100 }],
+    );
+    const b = new AttributionBadgeWidget(
+      "Alice",
+      "human",
+      "#e06c75",
+      undefined,
+      [],
+    );
     expect(a.eq(b)).toBe(false);
   });
 });

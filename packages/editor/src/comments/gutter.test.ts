@@ -1,10 +1,10 @@
 import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 import {
+  type CommentDecorationStatus,
   commentGutterExtension,
   commentGutterState,
   setCommentGutterRanges,
-  type CommentDecorationStatus,
 } from "./gutter";
 
 interface GutterEntry {
@@ -84,7 +84,9 @@ describe("comment gutter", () => {
         ]),
       ],
     }).state;
-    expect(collectGutterEntries(state)).toEqual([{ line: 2, status: "resolved" }]);
+    expect(collectGutterEntries(state)).toEqual([
+      { line: 2, status: "resolved" },
+    ]);
 
     state = state.update({
       changes: {
@@ -94,7 +96,9 @@ describe("comment gutter", () => {
       },
     }).state;
 
-    expect(collectGutterEntries(state)).toEqual([{ line: 3, status: "resolved" }]);
+    expect(collectGutterEntries(state)).toEqual([
+      { line: 3, status: "resolved" },
+    ]);
   });
 });
 
@@ -116,4 +120,3 @@ function collectGutterEntries(state: EditorState): GutterEntry[] {
   entries.sort((left, right) => left.line - right.line);
   return entries;
 }
-

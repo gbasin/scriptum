@@ -82,7 +82,9 @@ export function markdownForUploadedFile(
   const linkUrl = `<${result.url}>`;
   if (isImageFile(file)) {
     const fallbackAlt = basenameWithoutExtension(file.name).trim() || "image";
-    const altText = sanitizeLabel((result.label ?? fallbackAlt).trim() || "image");
+    const altText = sanitizeLabel(
+      (result.label ?? fallbackAlt).trim() || "image",
+    );
     return `![${altText}](${linkUrl})`;
   }
   const label = sanitizeLabel((result.label ?? file.name).trim() || "file");

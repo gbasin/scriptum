@@ -53,7 +53,10 @@ export class ReconciliationDetector {
   readonly windowMs: number;
   readonly thresholdRatio: number;
 
-  private readonly entriesBySection = new Map<string, SectionEditHistoryEntry[]>();
+  private readonly entriesBySection = new Map<
+    string,
+    SectionEditHistoryEntry[]
+  >();
 
   constructor(options: ReconciliationDetectorOptions = {}) {
     this.windowMs = normalizeWindowMs(options.windowMs);
@@ -92,7 +95,9 @@ export class ReconciliationDetector {
         entry.timestampMs >= evalStartMs &&
         entry.timestampMs <= normalized.timestampMs,
     );
-    const relevantBefore = relevantAfter.filter((entry) => entry !== normalized);
+    const relevantBefore = relevantAfter.filter(
+      (entry) => entry !== normalized,
+    );
 
     const beforeStats = buildStats(sectionId, relevantBefore);
     const afterStats = buildStats(sectionId, relevantAfter);
@@ -116,7 +121,10 @@ export class ReconciliationDetector {
     nowMs = Date.now(),
   ): readonly SectionEditHistoryEntry[] {
     const normalizedSectionId = normalizeNonEmpty(sectionId, "sectionId");
-    const pruned = this.pruneSection(normalizedSectionId, normalizeTimestamp(nowMs));
+    const pruned = this.pruneSection(
+      normalizedSectionId,
+      normalizeTimestamp(nowMs),
+    );
     return [...pruned];
   }
 
@@ -125,7 +133,10 @@ export class ReconciliationDetector {
     nowMs = Date.now(),
   ): ReconciliationWindowStats {
     const normalizedSectionId = normalizeNonEmpty(sectionId, "sectionId");
-    const pruned = this.pruneSection(normalizedSectionId, normalizeTimestamp(nowMs));
+    const pruned = this.pruneSection(
+      normalizedSectionId,
+      normalizeTimestamp(nowMs),
+    );
     return buildStats(normalizedSectionId, pruned);
   }
 
@@ -147,7 +158,9 @@ export class ReconciliationDetector {
     }
 
     const minTimestampMs = nowMs - this.windowMs;
-    const pruned = entries.filter((entry) => entry.timestampMs >= minTimestampMs);
+    const pruned = entries.filter(
+      (entry) => entry.timestampMs >= minTimestampMs,
+    );
 
     if (pruned.length === 0) {
       this.entriesBySection.delete(sectionId);

@@ -3,10 +3,10 @@
 // on a section. Badge color matches the agent's cursor color.
 
 import {
-  StateEffect,
-  StateField,
   type EditorState,
   type Extension,
+  StateEffect,
+  StateField,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -56,7 +56,10 @@ export class LeaseBadgeWidget extends WidgetType {
     badge.className = "cm-lease-badge";
     badge.style.backgroundColor = this.color;
     badge.textContent = `${this.agentName} editing`;
-    badge.setAttribute("aria-label", `${this.agentName} is editing this section`);
+    badge.setAttribute(
+      "aria-label",
+      `${this.agentName} is editing this section`,
+    );
 
     if (this.expiresAt != null) {
       const remaining = Math.max(0, this.expiresAt - Date.now());
@@ -140,7 +143,11 @@ function buildDecorations(
     decorations.push({
       from: docLine.to,
       decoration: Decoration.widget({
-        widget: new LeaseBadgeWidget(lease.agentName, lease.color, lease.expiresAt),
+        widget: new LeaseBadgeWidget(
+          lease.agentName,
+          lease.color,
+          lease.expiresAt,
+        ),
         side: 1,
       }),
     });

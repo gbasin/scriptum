@@ -8,10 +8,10 @@ import * as Y from "yjs";
 import {
   LABEL_HIDE_DELAY_MS,
   nameToColor,
+  type RemotePeer,
   remoteCursorExtension,
   remotePeersField,
   setRemotePeers,
-  type RemotePeer,
 } from "./cursors";
 
 // ── nameToColor ──────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ describe("remoteCursorExtension", () => {
       user: { name: "alice", color: "#e06c75" },
     });
 
-    let time = 1000;
+    const time = 1000;
     const view = makeEditor(awareness, () => time, "hello world");
 
     // Trigger awareness change
@@ -326,9 +326,7 @@ describe("remoteCursorExtension", () => {
     // Cursor position didn't change, so lastMovedAt should still be 10_000
     expect(peers[0].lastMovedAt).toBe(10_000);
     // Now the time difference exceeds LABEL_HIDE_DELAY_MS
-    expect(time - peers[0].lastMovedAt).toBeGreaterThan(
-      LABEL_HIDE_DELAY_MS,
-    );
+    expect(time - peers[0].lastMovedAt).toBeGreaterThan(LABEL_HIDE_DELAY_MS);
 
     view.destroy();
   });
@@ -404,13 +402,9 @@ describe("remoteCursorExtension", () => {
     expect(peers[0].selectionFrom).toBe(2);
     expect(peers[0].selectionTo).toBe(7);
 
-    const highlights = view.dom.querySelectorAll(
-      ".cm-remote-selection",
-    );
+    const highlights = view.dom.querySelectorAll(".cm-remote-selection");
     expect(highlights.length).toBe(1);
-    expect(highlights[0].getAttribute("data-peer-color")).toBe(
-      "#61afef",
-    );
+    expect(highlights[0].getAttribute("data-peer-color")).toBe("#61afef");
 
     view.destroy();
   });
@@ -435,9 +429,7 @@ describe("remoteCursorExtension", () => {
     ]);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const highlights = view.dom.querySelectorAll(
-      ".cm-remote-selection",
-    );
+    const highlights = view.dom.querySelectorAll(".cm-remote-selection");
     expect(highlights.length).toBe(1);
     expect(highlights[0].getAttribute("data-peer-color")).toBe(
       nameToColor("zara"),
@@ -466,9 +458,7 @@ describe("remoteCursorExtension", () => {
     ]);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const highlights = view.dom.querySelectorAll(
-      ".cm-remote-selection",
-    );
+    const highlights = view.dom.querySelectorAll(".cm-remote-selection");
     expect(highlights.length).toBe(0);
 
     view.destroy();

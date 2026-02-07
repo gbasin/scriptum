@@ -1,18 +1,21 @@
 import {
+  type EditorState,
+  type Extension,
   RangeSet,
   RangeSetBuilder,
   StateEffect,
   StateField,
-  type EditorState,
-  type Extension,
 } from "@codemirror/state";
 import { EditorView, GutterMarker, gutter } from "@codemirror/view";
-import {
-  type CommentDecorationRange,
-  type CommentDecorationStatus,
+import type {
+  CommentDecorationRange,
+  CommentDecorationStatus,
 } from "./highlight";
 
-export type { CommentDecorationRange, CommentDecorationStatus } from "./highlight";
+export type {
+  CommentDecorationRange,
+  CommentDecorationStatus,
+} from "./highlight";
 
 interface CommentGutterState {
   readonly markers: RangeSet<GutterMarker>;
@@ -21,9 +24,8 @@ interface CommentGutterState {
 
 const OPEN_STATUS: CommentDecorationStatus = "open";
 
-export const setCommentGutterRanges = StateEffect.define<
-  readonly CommentDecorationRange[]
->();
+export const setCommentGutterRanges =
+  StateEffect.define<readonly CommentDecorationRange[]>();
 
 class CommentGutterMarker extends GutterMarker {
   constructor(readonly status: CommentDecorationStatus) {
@@ -31,9 +33,7 @@ class CommentGutterMarker extends GutterMarker {
   }
 
   eq(other: GutterMarker): boolean {
-    return (
-      other instanceof CommentGutterMarker && other.status === this.status
-    );
+    return other instanceof CommentGutterMarker && other.status === this.status;
   }
 
   toDOM() {
@@ -52,7 +52,9 @@ class CommentGutterMarker extends GutterMarker {
 const OPEN_GUTTER_MARKER = new CommentGutterMarker("open");
 const RESOLVED_GUTTER_MARKER = new CommentGutterMarker("resolved");
 
-function sanitizeStatus(status: CommentDecorationStatus | undefined): CommentDecorationStatus {
+function sanitizeStatus(
+  status: CommentDecorationStatus | undefined,
+): CommentDecorationStatus {
   if (status === "resolved") {
     return status;
   }
@@ -61,7 +63,7 @@ function sanitizeStatus(status: CommentDecorationStatus | undefined): CommentDec
 
 function normalizeRanges(
   state: EditorState,
-  ranges: readonly CommentDecorationRange[]
+  ranges: readonly CommentDecorationRange[],
 ): readonly CommentDecorationRange[] {
   const maxPosition = state.doc.length;
   const normalized: CommentDecorationRange[] = [];
@@ -87,7 +89,7 @@ function normalizeRanges(
 function mapRangesThroughChanges(
   state: EditorState,
   ranges: readonly CommentDecorationRange[],
-  changes: { mapPos: (pos: number, assoc?: number) => number }
+  changes: { mapPos: (pos: number, assoc?: number) => number },
 ): readonly CommentDecorationRange[] {
   const mappedRanges = ranges.map((range) => {
     const from = changes.mapPos(range.from, 1);
@@ -104,7 +106,7 @@ function mapRangesThroughChanges(
 
 function mergeStatus(
   existingStatus: CommentDecorationStatus | undefined,
-  nextStatus: CommentDecorationStatus
+  nextStatus: CommentDecorationStatus,
 ): CommentDecorationStatus {
   if (existingStatus === "open" || nextStatus === "open") {
     return "open";
@@ -114,7 +116,7 @@ function mergeStatus(
 
 function buildMarkers(
   state: EditorState,
-  ranges: readonly CommentDecorationRange[]
+  ranges: readonly CommentDecorationRange[],
 ): RangeSet<GutterMarker> {
   if (ranges.length === 0) {
     return RangeSet.empty;
@@ -136,7 +138,9 @@ function buildMarkers(
   }
 
   const builder = new RangeSetBuilder<GutterMarker>();
-  const lineNumbers = Array.from(statusByLine.keys()).sort((left, right) => left - right);
+  const lineNumbers = Array.from(statusByLine.keys()).sort(
+    (left, right) => left - right,
+  );
 
   for (const lineNumber of lineNumbers) {
     const line = state.doc.line(lineNumber);
@@ -144,7 +148,7 @@ function buildMarkers(
     builder.add(
       line.from,
       line.from,
-      status === "resolved" ? RESOLVED_GUTTER_MARKER : OPEN_GUTTER_MARKER
+      status === "resolved" ? RESOLVED_GUTTER_MARKER : OPEN_GUTTER_MARKER,
     );
   }
 
@@ -169,7 +173,7 @@ export const commentGutterState = StateField.define<CommentGutterState>({
       nextRanges = mapRangesThroughChanges(
         transaction.state,
         current.ranges,
-        transaction.changes
+        transaction.changes,
       );
     }
 

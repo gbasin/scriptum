@@ -3,25 +3,25 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { describe, expect, it, vi } from "vitest";
 import {
-  markdownForUploadedFile,
-  type DropUploadProgress,
   type DroppedFileUploader,
+  type DropUploadProgress,
+  markdownForUploadedFile,
   uploadDroppedFiles,
 } from "./extension.js";
 
 describe("dragDropUploadExtension helpers", () => {
   it("builds image markdown syntax for uploaded image files", () => {
     const file = new File(["image"], "diagram.png", { type: "image/png" });
-    expect(markdownForUploadedFile(file, { url: "https://cdn.example/diagram.png" })).toBe(
-      "![diagram](<https://cdn.example/diagram.png>)",
-    );
+    expect(
+      markdownForUploadedFile(file, { url: "https://cdn.example/diagram.png" }),
+    ).toBe("![diagram](<https://cdn.example/diagram.png>)");
   });
 
   it("builds link markdown syntax for uploaded non-image files", () => {
     const file = new File(["doc"], "guide.pdf", { type: "application/pdf" });
-    expect(markdownForUploadedFile(file, { url: "https://cdn.example/guide.pdf" })).toBe(
-      "[guide.pdf](<https://cdn.example/guide.pdf>)",
-    );
+    expect(
+      markdownForUploadedFile(file, { url: "https://cdn.example/guide.pdf" }),
+    ).toBe("[guide.pdf](<https://cdn.example/guide.pdf>)");
   });
 });
 
@@ -97,7 +97,9 @@ describe("uploadDroppedFiles", () => {
       },
     );
 
-    expect(inserted).toEqual(["[report.md](<https://uploads.example/report.md>)"]);
+    expect(inserted).toEqual([
+      "[report.md](<https://uploads.example/report.md>)",
+    ]);
     expect(view.state.doc.toString()).toBe(
       "[report.md](<https://uploads.example/report.md>)seed",
     );

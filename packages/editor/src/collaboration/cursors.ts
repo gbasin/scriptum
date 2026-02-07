@@ -140,10 +140,7 @@ const remotePeersField = StateField.define<readonly RemotePeer[]>({
 
 // ── Decoration builder ───────────────────────────────────────────────
 
-function buildDecorations(
-  state: EditorState,
-  now: number,
-): DecorationSet {
+function buildDecorations(state: EditorState, now: number): DecorationSet {
   const peers = state.field(remotePeersField);
   if (peers.length === 0) {
     return Decoration.none;
@@ -156,8 +153,7 @@ function buildDecorations(
     decoration: Decoration;
   }[] = [];
 
-  const clampToDoc = (pos: number) =>
-    Math.min(Math.max(0, pos), docLength);
+  const clampToDoc = (pos: number) => Math.min(Math.max(0, pos), docLength);
 
   for (const peer of peers) {
     const pos = clampToDoc(peer.cursor);
@@ -272,8 +268,7 @@ export function remoteCursorExtension(
       // y-codemirror.next encodes selection as {anchor, head}.
       const anchor =
         typeof cursor.anchor === "number" ? cursor.anchor : undefined;
-      const head =
-        typeof cursor.head === "number" ? cursor.head : undefined;
+      const head = typeof cursor.head === "number" ? cursor.head : undefined;
       if (anchor == null && head == null) continue;
 
       const safeAnchor = anchor ?? head ?? 0;
@@ -321,10 +316,7 @@ export function remoteCursorExtension(
       private awarenessHandler: () => void;
 
       constructor(private view: EditorView) {
-        this.decorations = buildDecorations(
-          this.view.state,
-          nowFn(),
-        );
+        this.decorations = buildDecorations(this.view.state, nowFn());
 
         this.awarenessHandler = () => {
           this.syncPeers();
@@ -366,10 +358,7 @@ export function remoteCursorExtension(
         }
         // Re-render after LABEL_HIDE_DELAY_MS to hide stale labels.
         this.hideTimer = setTimeout(() => {
-          this.decorations = buildDecorations(
-            this.view.state,
-            nowFn(),
-          );
+          this.decorations = buildDecorations(this.view.state, nowFn());
           // Force a decoration update by re-dispatching current peers.
           const peers = this.view.state.field(remotePeersField);
           this.view.dispatch({

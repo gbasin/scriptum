@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ReconciliationDetector,
   RECONCILIATION_THRESHOLD_RATIO,
   RECONCILIATION_WINDOW_MS,
+  ReconciliationDetector,
   shouldTriggerReconciliation,
 } from "./detector";
 

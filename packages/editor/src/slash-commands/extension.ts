@@ -19,7 +19,9 @@ interface SlashCommandMatch {
   readonly query: string;
 }
 
-function matchSlashCommand(context: CompletionContext): SlashCommandMatch | null {
+function matchSlashCommand(
+  context: CompletionContext,
+): SlashCommandMatch | null {
   const line = context.state.doc.lineAt(context.pos);
   const textBeforeCursor = line.text.slice(0, context.pos - line.from);
   const slashIndex = textBeforeCursor.lastIndexOf("/");

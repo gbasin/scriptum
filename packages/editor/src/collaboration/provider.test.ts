@@ -11,8 +11,9 @@ class FakeProvider {
   disconnectCalls = 0;
   destroyCalls = 0;
 
-  private statusHandler: ((event: { status: "connected" | "disconnected" }) => void) | null =
-    null;
+  private statusHandler:
+    | ((event: { status: "connected" | "disconnected" }) => void)
+    | null = null;
 
   constructor(doc: Y.Doc) {
     this.awareness = new Awareness(doc);
@@ -32,7 +33,10 @@ class FakeProvider {
     this.destroyCalls += 1;
   }
 
-  on(_event: "status", handler: (event: { status: "connected" | "disconnected" }) => void): void {
+  on(
+    _event: "status",
+    handler: (event: { status: "connected" | "disconnected" }) => void,
+  ): void {
     this.statusHandler = handler;
   }
 }

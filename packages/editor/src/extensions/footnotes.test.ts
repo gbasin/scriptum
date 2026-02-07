@@ -6,7 +6,9 @@ import { footnotePreview, footnotePreviewDecorations } from "./footnotes.js";
 
 describe("footnotePreview", () => {
   it("renders inline references and a footnote section widget", () => {
-    const source = ["Title", "See footnote [^a].", "", "[^a]: Alpha note"].join("\n");
+    const source = ["Title", "See footnote [^a].", "", "[^a]: Alpha note"].join(
+      "\n",
+    );
     const state = EditorState.create({
       doc: source,
       extensions: [footnotePreview()],
@@ -20,7 +22,9 @@ describe("footnotePreview", () => {
   });
 
   it("keeps raw footnote definition visible when actively editing definition lines", () => {
-    const source = ["Title", "See footnote [^a].", "", "[^a]: Alpha note"].join("\n");
+    const source = ["Title", "See footnote [^a].", "", "[^a]: Alpha note"].join(
+      "\n",
+    );
     const definitionLine = source.indexOf("[^a]:");
     const state = EditorState.create({
       doc: source,
@@ -88,9 +92,13 @@ function footnoteSectionText(state: EditorState): string {
   let text = "";
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: string; toDOM?: () => HTMLElement } })
-      .widget;
-    if (widget?.kind !== "footnote-section" || typeof widget.toDOM !== "function") {
+    const widget = (
+      value.spec as { widget?: { kind?: string; toDOM?: () => HTMLElement } }
+    ).widget;
+    if (
+      widget?.kind !== "footnote-section" ||
+      typeof widget.toDOM !== "function"
+    ) {
       return;
     }
 

@@ -76,7 +76,9 @@ describe("livePreview", () => {
       extensions: [livePreview()],
     });
 
-    expect(collectHeadingClasses(state).has("cm-livePreview-heading-h2")).toBe(true);
+    expect(collectHeadingClasses(state).has("cm-livePreview-heading-h2")).toBe(
+      true,
+    );
 
     const firstLine = state.doc.line(1);
     state = state.update({
@@ -124,9 +126,10 @@ describe("livePreview", () => {
   });
 
   it("renders bold/italic/strikethrough on unfocused lines", () => {
-    const source = ["*active line*", "**bold** and _italic_ and ~~strike~~"].join(
-      "\n",
-    );
+    const source = [
+      "*active line*",
+      "**bold** and _italic_ and ~~strike~~",
+    ].join("\n");
 
     const state = EditorState.create({
       doc: source,
@@ -185,7 +188,10 @@ describe("livePreview", () => {
   });
 
   it("renders image previews on unfocused lines", () => {
-    const source = ["active", "![Alt text](https://example.com/image.png)"].join("\n");
+    const source = [
+      "active",
+      "![Alt text](https://example.com/image.png)",
+    ].join("\n");
     const state = EditorState.create({
       doc: source,
       selection: { anchor: 0 },
@@ -198,7 +204,8 @@ describe("livePreview", () => {
   });
 
   it("keeps active line raw for link and image markdown", () => {
-    const source = "[raw](https://example.com) ![img](https://example.com/a.png)\nline";
+    const source =
+      "[raw](https://example.com) ![img](https://example.com/a.png)\nline";
     const state = EditorState.create({
       doc: source,
       selection: { anchor: 0 },
@@ -359,7 +366,14 @@ describe("livePreview", () => {
   });
 
   it("renders mermaid fenced diagrams on unfocused lines", () => {
-    const source = ["active", "", "```mermaid", "graph TD", "A-->B", "```"].join("\n");
+    const source = [
+      "active",
+      "",
+      "```mermaid",
+      "graph TD",
+      "A-->B",
+      "```",
+    ].join("\n");
     const state = EditorState.create({
       doc: source,
       selection: { anchor: 0 },
@@ -371,7 +385,14 @@ describe("livePreview", () => {
   });
 
   it("keeps active mermaid fenced blocks raw markdown", () => {
-    const source = ["active", "", "```mermaid", "graph TD", "A-->B", "```"].join("\n");
+    const source = [
+      "active",
+      "",
+      "```mermaid",
+      "graph TD",
+      "A-->B",
+      "```",
+    ].join("\n");
     const state = EditorState.create({
       doc: source,
       selection: { anchor: source.indexOf("```mermaid") },
@@ -388,9 +409,11 @@ function collectHeadingClasses(state: EditorState): Set<string> {
   const decorations = state.field(headingPreviewDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const spec = (value as {
-      spec?: { class?: unknown; attributes?: { class?: unknown } };
-    }).spec;
+    const spec = (
+      value as {
+        spec?: { class?: unknown; attributes?: { class?: unknown } };
+      }
+    ).spec;
     const className =
       typeof spec?.class === "string"
         ? spec.class
@@ -429,9 +452,11 @@ function collectInlineClasses(state: EditorState): Set<string> {
   const decorations = state.field(inlineEmphasisDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const spec = (value as {
-      spec?: { class?: unknown; attributes?: { class?: unknown } };
-    }).spec;
+    const spec = (
+      value as {
+        spec?: { class?: unknown; attributes?: { class?: unknown } };
+      }
+    ).spec;
     const className =
       typeof spec?.class === "string"
         ? spec.class
@@ -453,7 +478,10 @@ function collectInlineClasses(state: EditorState): Set<string> {
   return classes;
 }
 
-function hasInlineDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+function hasInlineDecorationOnLine(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(inlineEmphasisDecorations);
   let foundDecoration = false;
@@ -480,7 +508,10 @@ function collectInlineWidgetKinds(state: EditorState): string[] {
   return kinds;
 }
 
-function hasInlineLinkDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+function hasInlineLinkDecorationOnLine(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(inlineLinkDecorations);
   let foundDecoration = false;
@@ -500,13 +531,15 @@ function collectTableWidgets(state: EditorState): Array<{
   const decorations = state.field(tablePreviewDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as {
-      widget?: {
-        kind?: unknown;
-        headers?: unknown;
-        alignments?: unknown;
-      };
-    }).widget;
+    const widget = (
+      value.spec as {
+        widget?: {
+          kind?: unknown;
+          headers?: unknown;
+          alignments?: unknown;
+        };
+      }
+    ).widget;
     if (!widget || widget.kind !== "table") {
       return;
     }
@@ -527,7 +560,10 @@ function collectTableWidgets(state: EditorState): Array<{
   return tables;
 }
 
-function hasTableDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+function hasTableDecorationOnLine(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(tablePreviewDecorations);
   let foundDecoration = false;
@@ -544,9 +580,11 @@ function collectTaskBlockquoteHrClasses(state: EditorState): Set<string> {
   const decorations = state.field(taskBlockquoteHrDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const spec = (value as {
-      spec?: { class?: unknown; attributes?: { class?: unknown } };
-    }).spec;
+    const spec = (
+      value as {
+        spec?: { class?: unknown; attributes?: { class?: unknown } };
+      }
+    ).spec;
     const className =
       typeof spec?.class === "string"
         ? spec.class
@@ -573,7 +611,9 @@ function collectTaskCheckboxStates(state: EditorState): boolean[] {
   const decorations = state.field(taskBlockquoteHrDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown; checked?: unknown } }).widget;
+    const widget = (
+      value.spec as { widget?: { kind?: unknown; checked?: unknown } }
+    ).widget;
     if (!widget || widget.kind !== "task-checkbox") {
       return;
     }
@@ -618,7 +658,9 @@ function collectCodeBlockLanguages(state: EditorState): string[] {
   const decorations = state.field(codeBlockDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown; language?: unknown } }).widget;
+    const widget = (
+      value.spec as { widget?: { kind?: unknown; language?: unknown } }
+    ).widget;
     if (!widget || widget.kind !== "code-block") {
       return;
     }
@@ -654,7 +696,10 @@ function collectMathWidgetKinds(state: EditorState): string[] {
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
     const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
-    if (!widget || (widget.kind !== "math-inline" && widget.kind !== "math-block")) {
+    if (
+      !widget ||
+      (widget.kind !== "math-inline" && widget.kind !== "math-block")
+    ) {
       return;
     }
     kinds.push(widget.kind);
@@ -663,7 +708,10 @@ function collectMathWidgetKinds(state: EditorState): string[] {
   return kinds;
 }
 
-function hasMathDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+function hasMathDecorationOnLine(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(mathPreviewDecorations);
   let foundDecoration = false;
@@ -675,7 +723,10 @@ function hasMathDecorationOnLine(state: EditorState, lineNumber: number): boolea
   return foundDecoration;
 }
 
-function hasCodeBlockDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+function hasCodeBlockDecorationOnLine(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const line = state.doc.line(lineNumber);
   const decorations = state.field(codeBlockDecorations);
   let foundDecoration = false;

@@ -1,8 +1,8 @@
 import {
-  StateEffect,
-  StateField,
   type EditorState,
   type Extension,
+  StateEffect,
+  StateField,
 } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
@@ -33,12 +33,11 @@ interface SectionOverlapIndicatorState {
   readonly decorations: DecorationSet;
 }
 
-export const setSectionOverlaps = StateEffect.define<
-  readonly SectionOverlapData[]
->();
+export const setSectionOverlaps =
+  StateEffect.define<readonly SectionOverlapData[]>();
 
-export const sectionOverlapIndicatorState = StateField.define<SectionOverlapIndicatorState>(
-  {
+export const sectionOverlapIndicatorState =
+  StateField.define<SectionOverlapIndicatorState>({
     create() {
       return {
         overlaps: [],
@@ -72,8 +71,7 @@ export const sectionOverlapIndicatorState = StateField.define<SectionOverlapIndi
         decorations,
       };
     },
-  },
-);
+  });
 
 const sectionOverlapTheme = EditorView.baseTheme({
   ".cm-sectionOverlap": {

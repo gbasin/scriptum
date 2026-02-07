@@ -1,6 +1,6 @@
-import { type Extension } from "@codemirror/state";
+import type { Extension } from "@codemirror/state";
 import { yCollab } from "y-codemirror.next";
-import { Awareness } from "y-protocols/awareness";
+import type { Awareness } from "y-protocols/awareness";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
@@ -11,7 +11,10 @@ export interface CollaborationSocketProvider {
   connect(): void;
   disconnect(): void;
   destroy(): void;
-  on(event: "status", handler: (event: { status: ProviderStatus }) => void): void;
+  on(
+    event: "status",
+    handler: (event: { status: ProviderStatus }) => void,
+  ): void;
 }
 
 interface ProviderFactoryInput {

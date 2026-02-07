@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   RECONCILIATION_KEEP_BOTH_SEPARATOR,
-  reconciliationInlineExtension,
-  setReconciliationInlineEntries,
   type ReconciliationChoice,
   type ReconciliationInlineResolution,
+  reconciliationInlineExtension,
+  setReconciliationInlineEntries,
 } from "./inline-ui";
 
 describe("reconciliationInlineExtension", () => {
@@ -125,10 +125,10 @@ describe("reconciliationInlineExtension", () => {
     clickChoice(view, "rec-keep-both", "keep-both");
 
     const expectedReplacement =
-      "Version A body" +
-      RECONCILIATION_KEEP_BOTH_SEPARATOR +
-      "Version B body";
-    expect(view.state.doc.toString()).toBe(`${before}${expectedReplacement}${after}`);
+      "Version A body" + RECONCILIATION_KEEP_BOTH_SEPARATOR + "Version B body";
+    expect(view.state.doc.toString()).toBe(
+      `${before}${expectedReplacement}${after}`,
+    );
     expect(getReconciliationRoot(view, "rec-keep-both")).toBeNull();
     expect(resolutions).toEqual([
       {
@@ -163,7 +163,10 @@ function createView(
   });
 }
 
-function getReconciliationRoot(view: EditorView, id: string): HTMLElement | null {
+function getReconciliationRoot(
+  view: EditorView,
+  id: string,
+): HTMLElement | null {
   return view.dom.querySelector(`[data-reconciliation-id="${id}"]`);
 }
 

@@ -12,8 +12,11 @@ function collectInlineWidgets(state: EditorState): InlineWidgetToken[] {
   const decorations = state.field(inlineLinkDecorations);
 
   decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown; href?: unknown; src?: unknown } })
-      .widget;
+    const widget = (
+      value.spec as {
+        widget?: { kind?: unknown; href?: unknown; src?: unknown };
+      }
+    ).widget;
     if (!widget) {
       return;
     }
@@ -40,9 +43,11 @@ function stateWithSource(source: string): EditorState {
 describe("live preview security", () => {
   it("rejects javascript and data urls for markdown links", () => {
     const state = stateWithSource(
-      ["active", "[unsafe-js](javascript:alert(1))", "[unsafe-data](data:text/html,boom)"].join(
-        "\n",
-      ),
+      [
+        "active",
+        "[unsafe-js](javascript:alert(1))",
+        "[unsafe-data](data:text/html,boom)",
+      ].join("\n"),
     );
 
     const widgets = collectInlineWidgets(state);
@@ -64,7 +69,9 @@ describe("live preview security", () => {
 
   it("rejects javascript autolinks and keeps safe https links", () => {
     const state = stateWithSource(
-      ["active", "<javascript:alert(1)>", "<https://scriptum.dev/docs>"].join("\n"),
+      ["active", "<javascript:alert(1)>", "<https://scriptum.dev/docs>"].join(
+        "\n",
+      ),
     );
 
     const widgets = collectInlineWidgets(state);
@@ -75,7 +82,11 @@ describe("live preview security", () => {
 
   it("does not render raw html script tags or event handler payloads as preview widgets", () => {
     const state = stateWithSource(
-      ["active", "<script>alert(1)</script>", '<img src="x" onerror="alert(1)">'].join("\n"),
+      [
+        "active",
+        "<script>alert(1)</script>",
+        '<img src="x" onerror="alert(1)">',
+      ].join("\n"),
     );
 
     const widgets = collectInlineWidgets(state);

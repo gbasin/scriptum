@@ -1,11 +1,16 @@
 import {
+  type EditorState,
+  type Extension,
   Facet,
   StateEffect,
   StateField,
-  type EditorState,
-  type Extension,
 } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  WidgetType,
+} from "@codemirror/view";
 
 export const RECONCILIATION_KEEP_BOTH_SEPARATOR = "\n\n---\n\n";
 
@@ -72,9 +77,8 @@ const DEFAULT_RUNTIME_CONFIG: ReconciliationInlineRuntimeConfig = {
   keepBothSeparator: RECONCILIATION_KEEP_BOTH_SEPARATOR,
 };
 
-export const setReconciliationInlineEntries = StateEffect.define<
-  readonly ReconciliationInlineEntry[]
->();
+export const setReconciliationInlineEntries =
+  StateEffect.define<readonly ReconciliationInlineEntry[]>();
 
 const removeReconciliationInlineEntry = StateEffect.define<string>();
 
@@ -90,44 +94,48 @@ const reconciliationRuntimeConfig = Facet.define<
   },
 });
 
-export const reconciliationInlineState = StateField.define<ReconciliationInlineStateValue>({
-  create(state) {
-    const entries: readonly NormalizedReconciliationInlineEntry[] = [];
-    return {
-      entries,
-      decorations: buildDecorations(state, entries),
-    };
-  },
-  provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
-  update(current, transaction) {
-    let nextEntries = current.entries;
+export const reconciliationInlineState =
+  StateField.define<ReconciliationInlineStateValue>({
+    create(state) {
+      const entries: readonly NormalizedReconciliationInlineEntry[] = [];
+      return {
+        entries,
+        decorations: buildDecorations(state, entries),
+      };
+    },
+    provide: (field) =>
+      EditorView.decorations.from(field, (value) => value.decorations),
+    update(current, transaction) {
+      let nextEntries = current.entries;
 
-    for (const effect of transaction.effects) {
-      if (effect.is(setReconciliationInlineEntries)) {
-        nextEntries = normalizeEntries(transaction.state, effect.value);
-      } else if (effect.is(removeReconciliationInlineEntry)) {
-        nextEntries = nextEntries.filter((entry) => entry.id !== effect.value);
+      for (const effect of transaction.effects) {
+        if (effect.is(setReconciliationInlineEntries)) {
+          nextEntries = normalizeEntries(transaction.state, effect.value);
+        } else if (effect.is(removeReconciliationInlineEntry)) {
+          nextEntries = nextEntries.filter(
+            (entry) => entry.id !== effect.value,
+          );
+        }
       }
-    }
 
-    if (nextEntries === current.entries && transaction.docChanged) {
-      nextEntries = mapEntriesThroughChanges(
-        transaction.state,
-        current.entries,
-        transaction.changes,
-      );
-    }
+      if (nextEntries === current.entries && transaction.docChanged) {
+        nextEntries = mapEntriesThroughChanges(
+          transaction.state,
+          current.entries,
+          transaction.changes,
+        );
+      }
 
-    if (nextEntries === current.entries) {
-      return current;
-    }
+      if (nextEntries === current.entries) {
+        return current;
+      }
 
-    return {
-      entries: nextEntries,
-      decorations: buildDecorations(transaction.state, nextEntries),
-    };
-  },
-});
+      return {
+        entries: nextEntries,
+        decorations: buildDecorations(transaction.state, nextEntries),
+      };
+    },
+  });
 
 const reconciliationInlineTheme = EditorView.baseTheme({
   ".cm-reconciliationInline": {
@@ -402,7 +410,9 @@ function resolveEntryChoice(
     return;
   }
 
-  const entry = entryState.entries.find((candidate) => candidate.id === entryId);
+  const entry = entryState.entries.find(
+    (candidate) => candidate.id === entryId,
+  );
   if (!entry) {
     return;
   }
@@ -463,7 +473,10 @@ function mapEntriesThroughChanges(
   const maxPosition = state.doc.length;
   let changed = false;
   const mappedEntries = entries.map((entry) => {
-    const mappedFrom = clampPosition(changes.mapPos(entry.from, 1), maxPosition);
+    const mappedFrom = clampPosition(
+      changes.mapPos(entry.from, 1),
+      maxPosition,
+    );
     const mappedTo = clampPosition(changes.mapPos(entry.to, -1), maxPosition);
     const nextFrom = Math.min(mappedFrom, mappedTo);
     const nextTo = Math.max(mappedFrom, mappedTo);

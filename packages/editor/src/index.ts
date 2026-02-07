@@ -1,89 +1,99 @@
 export {
-  activeLineField,
-  analyzeMarkdownTree,
-  livePreviewExtension,
-  markdownTreeField,
-  type MarkdownTreeAnalysis,
-} from "./live-preview/extension";
+  nameToColor,
+  type RemoteCursorOptions,
+  type RemotePeer,
+  remoteCursorExtension,
+} from "./collaboration/cursors";
 export {
   CollaborationProvider,
-  createCollaborationProvider,
   type CollaborationProviderOptions,
   type CollaborationSocketProvider,
+  createCollaborationProvider,
   type ProviderFactory,
   type ProviderStatus,
   type WebRtcProviderFactory,
 } from "./collaboration/provider";
-export {
-  nameToColor,
-  remoteCursorExtension,
-  type RemoteCursorOptions,
-  type RemotePeer,
-} from "./collaboration/cursors";
-export {
-  commentHighlightExtension,
-  commentHighlightState,
-  setCommentHighlightRanges,
-  type CommentDecorationRange,
-  type CommentDecorationStatus,
-} from "./comments/highlight";
 export {
   commentGutterExtension,
   commentGutterState,
   setCommentGutterRanges,
 } from "./comments/gutter";
 export {
-  ReconciliationDetector,
+  type CommentDecorationRange,
+  type CommentDecorationStatus,
+  commentHighlightExtension,
+  commentHighlightState,
+  setCommentHighlightRanges,
+} from "./comments/highlight";
+export {
+  type DragDropUploadOptions,
+  type DroppedFileUploader,
+  type DroppedFileUploadResult,
+  type DropUploadProgress,
+  dragDropUpload,
+  dragDropUploadExtension,
+  isImageFile,
+  markdownForUploadedFile,
+  uploadDroppedFiles,
+} from "./drag-drop/extension";
+export {
+  footnotePreview,
+  footnotePreviewDecorations,
+  footnotePreviewExtension,
+} from "./extensions/footnotes";
+export {
+  activeLineField,
+  analyzeMarkdownTree,
+  livePreviewExtension,
+  type MarkdownTreeAnalysis,
+  markdownTreeField,
+} from "./live-preview/extension";
+export {
   RECONCILIATION_THRESHOLD_RATIO,
   RECONCILIATION_WINDOW_MS,
-  shouldTriggerReconciliation,
+  ReconciliationDetector,
   type ReconciliationDetectorOptions,
   type ReconciliationTrigger,
   type ReconciliationWindowStats,
   type SectionEditEvent,
   type SectionEditHistoryEntry,
+  shouldTriggerReconciliation,
 } from "./reconciliation/detector";
 export {
   RECONCILIATION_KEEP_BOTH_SEPARATOR,
-  reconciliationInlineExtension,
-  reconciliationInlineState,
-  setReconciliationInlineEntries,
   type ReconciliationChoice,
   type ReconciliationInlineEntry,
   type ReconciliationInlineExtensionOptions,
   type ReconciliationInlineResolution,
   type ReconciliationInlineVersion,
+  reconciliationInlineExtension,
+  reconciliationInlineState,
+  setReconciliationInlineEntries,
 } from "./reconciliation/inline-ui";
 export {
-  overlapIndicatorExtension,
-  sectionOverlapIndicatorState,
-  setSectionOverlaps,
-  type SectionOverlapData,
-  type SectionOverlapSection,
-  type SectionOverlapSeverity,
-} from "./section/overlap-indicator";
-export {
-  leaseBadgeExtension,
-  leaseBadgeState,
-  LeaseBadgeWidget,
-  setLeases,
-  type LeaseBadgeData,
-} from "./section/lease-badge";
-export {
+  AttributionBadgeWidget,
   attributionExtension,
   attributionState,
-  AttributionBadgeWidget,
-  setAttributions,
   type EditorType,
   type SectionAttribution,
   type SectionContributor,
+  setAttributions,
 } from "./section/attribution";
 export {
-  applySlashCommand,
-  slashCommandCompletions,
-  slashCommands,
-  slashCommandsExtension,
-} from "./slash-commands/extension";
+  type LeaseBadgeData,
+  LeaseBadgeWidget,
+  leaseBadgeExtension,
+  leaseBadgeState,
+  setLeases,
+} from "./section/lease-badge";
+export {
+  overlapIndicatorExtension,
+  type SectionOverlapData,
+  type SectionOverlapSection,
+  type SectionOverlapSeverity,
+  sectionOverlapIndicatorState,
+  setSectionOverlaps,
+} from "./section/overlap-indicator";
 export {
   createSlashCommandInsertion,
   getSlashCommand,
@@ -93,18 +103,8 @@ export {
   type SlashCommandName,
 } from "./slash-commands/commands";
 export {
-  footnotePreview,
-  footnotePreviewDecorations,
-  footnotePreviewExtension,
-} from "./extensions/footnotes";
-export {
-  dragDropUpload,
-  dragDropUploadExtension,
-  isImageFile,
-  markdownForUploadedFile,
-  uploadDroppedFiles,
-  type DragDropUploadOptions,
-  type DropUploadProgress,
-  type DroppedFileUploadResult,
-  type DroppedFileUploader,
-} from "./drag-drop/extension";
+  applySlashCommand,
+  slashCommandCompletions,
+  slashCommands,
+  slashCommandsExtension,
+} from "./slash-commands/extension";

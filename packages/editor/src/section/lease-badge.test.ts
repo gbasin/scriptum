@@ -2,9 +2,9 @@ import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
 import {
+  LeaseBadgeWidget,
   leaseBadgeExtension,
   leaseBadgeState,
-  LeaseBadgeWidget,
   setLeases,
 } from "./lease-badge";
 

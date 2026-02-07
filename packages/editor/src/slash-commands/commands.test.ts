@@ -23,11 +23,9 @@ describe("slash command definitions", () => {
 
     expect(insertion.changes).toEqual({
       from,
-      insert: [
-        "| Column 1 | Column 2 |",
-        "| --- | --- |",
-        "|  |  |",
-      ].join("\n"),
+      insert: ["| Column 1 | Column 2 |", "| --- | --- |", "|  |  |"].join(
+        "\n",
+      ),
       to,
     });
     expect(insertion.selection.anchor).toBe(from + command.selectionOffset);

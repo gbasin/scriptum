@@ -1,9 +1,9 @@
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import {
-  EditorState,
+  type EditorState,
+  type Extension,
   RangeSetBuilder,
   StateField,
-  type Extension,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -115,9 +115,10 @@ function activeLineFromState(state: EditorState): number {
   return state.doc.lineAt(state.selection.main.head).number;
 }
 
-function activeSelectionLineRange(
-  state: EditorState,
-): { readonly startLine: number; readonly endLine: number } {
+function activeSelectionLineRange(state: EditorState): {
+  readonly startLine: number;
+  readonly endLine: number;
+} {
   const from = state.selection.main.from;
   const to = state.selection.main.to;
   const startLine = state.doc.lineAt(Math.min(from, to)).number;
@@ -126,9 +127,14 @@ function activeSelectionLineRange(
   return { startLine, endLine };
 }
 
-function lineIsInActiveSelection(state: EditorState, lineNumber: number): boolean {
+function lineIsInActiveSelection(
+  state: EditorState,
+  lineNumber: number,
+): boolean {
   const activeRange = activeSelectionLineRange(state);
-  return lineNumber >= activeRange.startLine && lineNumber <= activeRange.endLine;
+  return (
+    lineNumber >= activeRange.startLine && lineNumber <= activeRange.endLine
+  );
 }
 
 function countTopLevelNodes(tree: Tree): number {
@@ -242,9 +248,11 @@ function addInlineEmphasisDecorations(
   let contentFrom = node.from;
   let contentTo = node.to;
 
-  const firstChild = node.firstChild as
-    | { from: number; to: number; type: { name: string } }
-    | null;
+  const firstChild = node.firstChild as {
+    from: number;
+    to: number;
+    type: { name: string };
+  } | null;
   if (
     firstChild &&
     isInlineMarkNode(firstChild.type.name) &&
@@ -260,9 +268,11 @@ function addInlineEmphasisDecorations(
     contentFrom = firstChild.to;
   }
 
-  const lastChild = node.lastChild as
-    | { from: number; to: number; type: { name: string } }
-    | null;
+  const lastChild = node.lastChild as {
+    from: number;
+    to: number;
+    type: { name: string };
+  } | null;
   if (
     lastChild &&
     isInlineMarkNode(lastChild.type.name) &&
@@ -290,7 +300,11 @@ function addInlineEmphasisDecorations(
 }
 
 function buildInlineEmphasisDecorations(state: EditorState): DecorationSet {
-  const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
+  const decorations: Array<{
+    from: number;
+    to: number;
+    decoration: Decoration;
+  }> = [];
   const tree = markdownLanguage.parser.parse(state.doc.toString());
 
   function walk(node: {
@@ -303,47 +317,40 @@ function buildInlineEmphasisDecorations(state: EditorState): DecorationSet {
   }): void {
     const className = EMPHASIS_CLASS_BY_NODE[node.type.name];
     if (className) {
-      addInlineEmphasisDecorations(
-        decorations,
-        state,
-        node,
-        className,
-      );
+      addInlineEmphasisDecorations(decorations, state, node, className);
     }
 
-    let child = node.firstChild as
-      | {
-          type: { name: string };
-          from: number;
-          to: number;
-          firstChild: unknown;
-          nextSibling: unknown;
-          lastChild: unknown;
-        }
-      | null;
+    let child = node.firstChild as {
+      type: { name: string };
+      from: number;
+      to: number;
+      firstChild: unknown;
+      nextSibling: unknown;
+      lastChild: unknown;
+    } | null;
     while (child) {
       walk(child);
-      child = child.nextSibling as
-        | {
-            type: { name: string };
-            from: number;
-            to: number;
-            firstChild: unknown;
-            nextSibling: unknown;
-            lastChild: unknown;
-          }
-        | null;
+      child = child.nextSibling as {
+        type: { name: string };
+        from: number;
+        to: number;
+        firstChild: unknown;
+        nextSibling: unknown;
+        lastChild: unknown;
+      } | null;
     }
   }
 
-  walk(tree.topNode as unknown as {
-    type: { name: string };
-    from: number;
-    to: number;
-    firstChild: unknown;
-    nextSibling: unknown;
-    lastChild: unknown;
-  });
+  walk(
+    tree.topNode as unknown as {
+      type: { name: string };
+      from: number;
+      to: number;
+      firstChild: unknown;
+      nextSibling: unknown;
+      lastChild: unknown;
+    },
+  );
 
   decorations.sort((left, right) => {
     if (left.from !== right.from) {
@@ -402,7 +409,11 @@ class HorizontalRuleWidget extends WidgetType {
 }
 
 function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
-  const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
+  const decorations: Array<{
+    from: number;
+    to: number;
+    decoration: Decoration;
+  }> = [];
   const tree = markdownLanguage.parser.parse(state.doc.toString());
 
   function walk(node: {
@@ -414,7 +425,10 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
   }): void {
     const nodeType = node.type.name;
 
-    if (nodeType === "Blockquote" && !rangeTouchesActiveLine(state, node.from, node.to)) {
+    if (
+      nodeType === "Blockquote" &&
+      !rangeTouchesActiveLine(state, node.from, node.to)
+    ) {
       const lineStart = state.doc.lineAt(node.from).from;
       decorations.push({
         from: lineStart,
@@ -425,7 +439,10 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
       });
     }
 
-    if (nodeType === "QuoteMark" && !rangeTouchesActiveLine(state, node.from, node.to)) {
+    if (
+      nodeType === "QuoteMark" &&
+      !rangeTouchesActiveLine(state, node.from, node.to)
+    ) {
       decorations.push({
         from: node.from,
         to: node.to,
@@ -435,12 +452,19 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
       });
     }
 
-    if (nodeType === "Task" && !rangeTouchesActiveLine(state, node.from, node.to)) {
-      const marker = node.firstChild as
-        | { type: { name: string }; from: number; to: number }
-        | null;
+    if (
+      nodeType === "Task" &&
+      !rangeTouchesActiveLine(state, node.from, node.to)
+    ) {
+      const marker = node.firstChild as {
+        type: { name: string };
+        from: number;
+        to: number;
+      } | null;
       if (marker && marker.type.name === "TaskMarker") {
-        const markerText = state.doc.sliceString(marker.from, marker.to).toLowerCase();
+        const markerText = state.doc
+          .sliceString(marker.from, marker.to)
+          .toLowerCase();
         const checked = markerText.includes("x");
 
         decorations.push({
@@ -486,36 +510,34 @@ function buildTaskBlockquoteHrDecorations(state: EditorState): DecorationSet {
       });
     }
 
-    let child = node.firstChild as
-      | {
-          type: { name: string };
-          from: number;
-          to: number;
-          firstChild: unknown;
-          nextSibling: unknown;
-        }
-      | null;
+    let child = node.firstChild as {
+      type: { name: string };
+      from: number;
+      to: number;
+      firstChild: unknown;
+      nextSibling: unknown;
+    } | null;
     while (child) {
       walk(child);
-      child = child.nextSibling as
-        | {
-            type: { name: string };
-            from: number;
-            to: number;
-            firstChild: unknown;
-            nextSibling: unknown;
-          }
-        | null;
+      child = child.nextSibling as {
+        type: { name: string };
+        from: number;
+        to: number;
+        firstChild: unknown;
+        nextSibling: unknown;
+      } | null;
     }
   }
 
-  walk(tree.topNode as unknown as {
-    type: { name: string };
-    from: number;
-    to: number;
-    firstChild: unknown;
-    nextSibling: unknown;
-  });
+  walk(
+    tree.topNode as unknown as {
+      type: { name: string };
+      from: number;
+      to: number;
+      firstChild: unknown;
+      nextSibling: unknown;
+    },
+  );
 
   decorations.sort((left, right) => {
     if (left.from !== right.from) {
@@ -553,25 +575,33 @@ function highlightCode(code: string, language: string | null): string {
     return escaped;
   }
 
-  if (language !== "js" && language !== "javascript" && language !== "ts" && language !== "typescript") {
+  if (
+    language !== "js" &&
+    language !== "javascript" &&
+    language !== "ts" &&
+    language !== "typescript"
+  ) {
     return escaped;
   }
 
   const pattern =
     /\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|type|interface|extends)\b|("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|`(?:\\.|[^`])*`)|\b(\d+(?:\.\d+)?)\b/g;
 
-  return escaped.replace(pattern, (match, keyword: string, stringLiteral: string, numberLiteral: string) => {
-    if (keyword) {
-      return `<span class="cm-livePreview-codeToken-keyword">${match}</span>`;
-    }
-    if (stringLiteral) {
-      return `<span class="cm-livePreview-codeToken-string">${match}</span>`;
-    }
-    if (numberLiteral) {
-      return `<span class="cm-livePreview-codeToken-number">${match}</span>`;
-    }
-    return match;
-  });
+  return escaped.replace(
+    pattern,
+    (match, keyword: string, stringLiteral: string, numberLiteral: string) => {
+      if (keyword) {
+        return `<span class="cm-livePreview-codeToken-keyword">${match}</span>`;
+      }
+      if (stringLiteral) {
+        return `<span class="cm-livePreview-codeToken-string">${match}</span>`;
+      }
+      if (numberLiteral) {
+        return `<span class="cm-livePreview-codeToken-number">${match}</span>`;
+      }
+      return match;
+    },
+  );
 }
 
 function sanitizeLanguageClass(language: string): string {
@@ -757,7 +787,9 @@ class MermaidDiagramWidget extends WidgetType {
   }
 
   override eq(other: WidgetType): boolean {
-    return other instanceof MermaidDiagramWidget && other.source === this.source;
+    return (
+      other instanceof MermaidDiagramWidget && other.source === this.source
+    );
   }
 
   override toDOM(): HTMLElement {
@@ -804,7 +836,9 @@ class CodeBlockWidget extends WidgetType {
     const codeNode = document.createElement("code");
     codeNode.className = "cm-livePreview-code";
     if (this.language) {
-      codeNode.classList.add(`cm-livePreview-code-lang-${sanitizeLanguageClass(this.language)}`);
+      codeNode.classList.add(
+        `cm-livePreview-code-lang-${sanitizeLanguageClass(this.language)}`,
+      );
     }
     codeNode.innerHTML = highlightCode(this.code, this.language);
     pre.appendChild(codeNode);
@@ -819,7 +853,11 @@ class CodeBlockWidget extends WidgetType {
 }
 
 function buildCodeBlockDecorations(state: EditorState): DecorationSet {
-  const decorations: Array<{ from: number; to: number; decoration: Decoration }> = [];
+  const decorations: Array<{
+    from: number;
+    to: number;
+    decoration: Decoration;
+  }> = [];
   const tree = markdownLanguage.parser.parse(state.doc.toString());
 
   function walk(node: {
@@ -829,35 +867,36 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
     firstChild: unknown;
     nextSibling: unknown;
   }): void {
-    if (node.type.name === "FencedCode" && !rangeTouchesActiveLine(state, node.from, node.to)) {
+    if (
+      node.type.name === "FencedCode" &&
+      !rangeTouchesActiveLine(state, node.from, node.to)
+    ) {
       let language: string | null = null;
       let code = "";
 
-      let child = node.firstChild as
-        | {
-            type: { name: string };
-            from: number;
-            to: number;
-            firstChild: unknown;
-            nextSibling: unknown;
-          }
-        | null;
+      let child = node.firstChild as {
+        type: { name: string };
+        from: number;
+        to: number;
+        firstChild: unknown;
+        nextSibling: unknown;
+      } | null;
 
       while (child) {
         if (child.type.name === "CodeInfo") {
-          language = detectCodeLanguage(state.doc.sliceString(child.from, child.to));
+          language = detectCodeLanguage(
+            state.doc.sliceString(child.from, child.to),
+          );
         } else if (child.type.name === "CodeText") {
           code = state.doc.sliceString(child.from, child.to);
         }
-        child = child.nextSibling as
-          | {
-              type: { name: string };
-              from: number;
-              to: number;
-              firstChild: unknown;
-              nextSibling: unknown;
-            }
-          | null;
+        child = child.nextSibling as {
+          type: { name: string };
+          from: number;
+          to: number;
+          firstChild: unknown;
+          nextSibling: unknown;
+        } | null;
       }
 
       const widget =
@@ -875,36 +914,34 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
       return;
     }
 
-    let child = node.firstChild as
-      | {
-          type: { name: string };
-          from: number;
-          to: number;
-          firstChild: unknown;
-          nextSibling: unknown;
-        }
-      | null;
+    let child = node.firstChild as {
+      type: { name: string };
+      from: number;
+      to: number;
+      firstChild: unknown;
+      nextSibling: unknown;
+    } | null;
     while (child) {
       walk(child);
-      child = child.nextSibling as
-        | {
-            type: { name: string };
-            from: number;
-            to: number;
-            firstChild: unknown;
-            nextSibling: unknown;
-          }
-        | null;
+      child = child.nextSibling as {
+        type: { name: string };
+        from: number;
+        to: number;
+        firstChild: unknown;
+        nextSibling: unknown;
+      } | null;
     }
   }
 
-  walk(tree.topNode as unknown as {
-    type: { name: string };
-    from: number;
-    to: number;
-    firstChild: unknown;
-    nextSibling: unknown;
-  });
+  walk(
+    tree.topNode as unknown as {
+      type: { name: string };
+      from: number;
+      to: number;
+      firstChild: unknown;
+      nextSibling: unknown;
+    },
+  );
 
   decorations.sort((left, right) => {
     if (left.from !== right.from) {
@@ -1075,7 +1112,11 @@ function buildMathDecorations(state: EditorState): DecorationSet {
   const blockLines = new Set<number>();
 
   for (const block of mathBlocks) {
-    for (let lineNumber = block.startLine; lineNumber <= block.endLine; lineNumber += 1) {
+    for (
+      let lineNumber = block.startLine;
+      lineNumber <= block.endLine;
+      lineNumber += 1
+    ) {
       blockLines.add(lineNumber);
     }
 
@@ -1102,7 +1143,11 @@ function buildMathDecorations(state: EditorState): DecorationSet {
       continue;
     }
 
-    if (inFence || blockLines.has(lineNumber) || lineIsInActiveSelection(state, lineNumber)) {
+    if (
+      inFence ||
+      blockLines.has(lineNumber) ||
+      lineIsInActiveSelection(state, lineNumber)
+    ) {
       continue;
     }
 
@@ -1144,10 +1189,7 @@ function parseDestination(rawDestination: string): string {
   return (separator === -1 ? unwrapped : unwrapped.slice(0, separator)).trim();
 }
 
-function sanitizePreviewHref(
-  rawHref: string,
-  kind: "image" | "link",
-): string {
+function sanitizePreviewHref(rawHref: string, kind: "image" | "link"): string {
   const href = rawHref.trim();
   if (!href) {
     return "";
@@ -1379,9 +1421,7 @@ function parseTableCells(lineText: string): string[] | null {
     return null;
   }
 
-  const withoutLeading = trimmed.startsWith("|")
-    ? trimmed.slice(1)
-    : trimmed;
+  const withoutLeading = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
   const withoutEdges = withoutLeading.endsWith("|")
     ? withoutLeading.slice(0, -1)
     : withoutLeading;
@@ -1419,7 +1459,10 @@ function parseAlignmentRow(separatorText: string): TableAlignment[] | null {
   return alignments;
 }
 
-function normalizeTableRow(row: readonly string[], columnCount: number): string[] {
+function normalizeTableRow(
+  row: readonly string[],
+  columnCount: number,
+): string[] {
   const normalized = row.slice(0, columnCount);
   while (normalized.length < columnCount) {
     normalized.push("");

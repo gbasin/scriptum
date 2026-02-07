@@ -1,8 +1,8 @@
 import {
-  StateEffect,
-  StateField,
   type EditorState,
   type Extension,
+  StateEffect,
+  StateField,
 } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
@@ -25,7 +25,9 @@ const OPEN_STATUS: CommentDecorationStatus = "open";
 export const setCommentHighlightRanges =
   StateEffect.define<readonly CommentDecorationRange[]>();
 
-function sanitizeStatus(status: CommentDecorationStatus | undefined): CommentDecorationStatus {
+function sanitizeStatus(
+  status: CommentDecorationStatus | undefined,
+): CommentDecorationStatus {
   if (status === "resolved") {
     return status;
   }
@@ -34,7 +36,7 @@ function sanitizeStatus(status: CommentDecorationStatus | undefined): CommentDec
 
 function normalizeRanges(
   state: EditorState,
-  ranges: readonly CommentDecorationRange[]
+  ranges: readonly CommentDecorationRange[],
 ): readonly CommentDecorationRange[] {
   const maxPosition = state.doc.length;
   const normalized: CommentDecorationRange[] = [];
@@ -60,7 +62,7 @@ function normalizeRanges(
 function mapRangesThroughChanges(
   state: EditorState,
   ranges: readonly CommentDecorationRange[],
-  changes: { mapPos: (pos: number, assoc?: number) => number }
+  changes: { mapPos: (pos: number, assoc?: number) => number },
 ): readonly CommentDecorationRange[] {
   const mappedRanges = ranges.map((range) => {
     const from = changes.mapPos(range.from, 1);
@@ -76,7 +78,7 @@ function mapRangesThroughChanges(
 }
 
 function buildHighlightDecorations(
-  ranges: readonly CommentDecorationRange[]
+  ranges: readonly CommentDecorationRange[],
 ): DecorationSet {
   if (ranges.length === 0) {
     return Decoration.none;
@@ -93,7 +95,7 @@ function buildHighlightDecorations(
             : "cm-commentHighlight cm-commentHighlight-open",
       }),
     })),
-    true
+    true,
   );
 }
 
@@ -117,7 +119,7 @@ export const commentHighlightState = StateField.define<CommentHighlightState>({
       nextRanges = mapRangesThroughChanges(
         transaction.state,
         current.ranges,
-        transaction.changes
+        transaction.changes,
       );
     }
 
@@ -147,4 +149,3 @@ const commentHighlightTheme = EditorView.baseTheme({
 export function commentHighlightExtension(): Extension {
   return [commentHighlightState, commentHighlightTheme];
 }
-

@@ -34,24 +34,19 @@ function createTemplate(rawTemplate: string): {
   };
 }
 
-const tableTemplate = createTemplate([
-  "| Column 1 | Column 2 |",
-  "| --- | --- |",
-  "| <$cursor$> |  |",
-].join("\n"));
+const tableTemplate = createTemplate(
+  ["| Column 1 | Column 2 |", "| --- | --- |", "| <$cursor$> |  |"].join("\n"),
+);
 
-const codeTemplate = createTemplate([
-  "```ts",
-  "<$cursor$>",
-  "```",
-].join("\n"));
+const codeTemplate = createTemplate(["```ts", "<$cursor$>", "```"].join("\n"));
 
-const imageTemplate = createTemplate("![<$cursor$>alt text](https://example.com/image.png)");
+const imageTemplate = createTemplate(
+  "![<$cursor$>alt text](https://example.com/image.png)",
+);
 
-const calloutTemplate = createTemplate([
-  "> [!NOTE]",
-  "> <$cursor$>",
-].join("\n"));
+const calloutTemplate = createTemplate(
+  ["> [!NOTE]", "> <$cursor$>"].join("\n"),
+);
 
 const slashCommandDefinitionsInternal: readonly SlashCommandDefinition[] = [
   {
@@ -77,14 +72,18 @@ const slashCommandDefinitionsInternal: readonly SlashCommandDefinition[] = [
 ];
 
 const slashCommandByName = new Map(
-  slashCommandDefinitionsInternal.map((command) => [command.name, command] as const),
+  slashCommandDefinitionsInternal.map(
+    (command) => [command.name, command] as const,
+  ),
 );
 
 export function listSlashCommands(): readonly SlashCommandDefinition[] {
   return slashCommandDefinitionsInternal;
 }
 
-export function getSlashCommand(name: SlashCommandName): SlashCommandDefinition {
+export function getSlashCommand(
+  name: SlashCommandName,
+): SlashCommandDefinition {
   const command = slashCommandByName.get(name);
   if (!command) {
     throw new Error(`Unknown slash command: ${name}`);

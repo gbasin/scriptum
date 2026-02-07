@@ -7,7 +7,9 @@ import { applySlashCommand, slashCommandCompletions } from "./extension.js";
 describe("slash command autocomplete", () => {
   it("offers slash commands when typing slash", () => {
     const state = EditorState.create({ doc: "/" });
-    const result = slashCommandCompletions(new CompletionContext(state, 1, false));
+    const result = slashCommandCompletions(
+      new CompletionContext(state, 1, false),
+    );
 
     expect(result?.from).toBe(0);
     expect(result?.to).toBe(1);
@@ -21,7 +23,9 @@ describe("slash command autocomplete", () => {
 
   it("filters slash command options by typed prefix", () => {
     const state = EditorState.create({ doc: "/c" });
-    const result = slashCommandCompletions(new CompletionContext(state, 2, false));
+    const result = slashCommandCompletions(
+      new CompletionContext(state, 2, false),
+    );
 
     expect(result?.options.map((option) => option.label)).toEqual([
       "/code",
