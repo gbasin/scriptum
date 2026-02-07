@@ -1,0 +1,75 @@
+.viewport {
+  display: grid;
+  gap: var(--space-2);
+  inset: auto var(--space-3) var(--space-3) auto;
+  max-width: min(24rem, calc(100vw - (var(--space-3) * 2)));
+  pointer-events: none;
+  position: fixed;
+  z-index: var(--z-toast);
+}
+
+.toast {
+  align-items: center;
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+  color: var(--color-text-primary);
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: auto 1fr auto;
+  padding: var(--space-2) var(--space-3);
+  pointer-events: auto;
+}
+
+.marker {
+  border-radius: 999px;
+  height: 0.55rem;
+  width: 0.55rem;
+}
+
+.markerInfo {
+  background: var(--color-accent-hex);
+}
+
+.markerSuccess {
+  background: oklch(0.72 0.15 154);
+}
+
+.markerError {
+  background: oklch(0.64 0.2 27);
+}
+
+.message {
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.dismissButton {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-1);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.1rem 0.35rem;
+}
+
+.dismissButton:hover {
+  background: var(--color-bg-surface-2);
+  border-color: var(--color-border-muted);
+  color: var(--color-text-primary);
+}
+
+.dismissButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+@media (max-width: 48rem) {
+  .viewport {
+    inset: auto var(--space-2) var(--space-2) var(--space-2);
+    max-width: none;
+  }
+}
