@@ -8,7 +8,8 @@
   "scripts": {
     "build": "echo \"@scriptum/shared build\"",
     "lint": "echo \"@scriptum/shared lint\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "typescript": "latest",

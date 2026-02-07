@@ -8,7 +8,8 @@
   "scripts": {
     "build": "echo \"@scriptum/editor build\"",
     "lint": "echo \"@scriptum/editor lint\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@codemirror/autocomplete": "latest",

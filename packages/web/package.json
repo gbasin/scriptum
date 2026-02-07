@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "echo \"@scriptum/web lint\"",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "test:ui:smoke": "playwright test -c playwright.smoke.config.ts"
   },
   "dependencies": {
