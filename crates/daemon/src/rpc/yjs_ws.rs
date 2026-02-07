@@ -23,6 +23,8 @@ use yrs::updates::decoder::{Decode, DecoderV1};
 use yrs::updates::encoder::Encode;
 use yrs::{Doc, GetString, ReadTxn, Transact, Update};
 
+use crate::engine::awareness::AwarenessProtocolWrapper;
+
 const UPDATE_BUFFER_SIZE: usize = 256;
 
 #[derive(Clone)]
@@ -134,6 +136,7 @@ async fn process_incoming_binary(
     socket: &mut WebSocket,
 ) -> Result<()> {
     let protocol = DefaultProtocol;
+    let awareness_protocol = AwarenessProtocolWrapper::new();
     let mut responses = Vec::new();
     let mut broadcast_updates = Vec::new();
 
@@ -173,6 +176,24 @@ async fn process_incoming_binary(
                         .handle_update(&awareness, decoded)
                         .context("failed to process incremental update")?;
                     broadcast_updates.push(Message::Sync(SyncMessage::Update(update)).encode_v1());
+                }
+                message @ (Message::AwarenessQuery | Message::Awareness(_)) => {
+                    let dispatch = awareness_protocol
+                        .handle_message(&awareness, message)
+                        .context("failed to process awareness protocol message")?;
+
+                    responses.extend(
+                        dispatch
+                            .direct_messages
+                            .into_iter()
+                            .map(|response_message| response_message.encode_v1()),
+                    );
+                    broadcast_updates.extend(
+                        dispatch
+                            .broadcast_messages
+                            .into_iter()
+                            .map(|broadcast_message| broadcast_message.encode_v1()),
+                    );
                 }
                 other => {
                     if let Some(response) = protocol
