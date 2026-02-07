@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -6,6 +6,7 @@ use crate::agent::lease::{LeaseClaim, LeaseMode, LeaseStore};
 use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus, SessionStore};
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
+use crate::search::{Fts5Index, IndexEntry, SearchIndex};
 use crate::store::meta_db::MetaDb;
 use crate::store::recovery::{recover_documents_into_manager, StartupRecoveryReport};
 use base64::Engine;
@@ -79,6 +80,7 @@ impl<E: CommandExecutor> GitState<E> {
 pub struct RpcServerState {
     doc_manager: Arc<RwLock<DocManager>>,
     doc_metadata: Arc<RwLock<HashMap<(Uuid, Uuid), DocMetadataRecord>>>,
+    doc_history: Arc<RwLock<HashMap<(Uuid, Uuid), BTreeMap<i64, String>>>>,
     degraded_docs: Arc<RwLock<HashSet<Uuid>>>,
     workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
     shutdown_notifier: Option<broadcast::Sender<()>>,
@@ -213,6 +215,53 @@ struct DocTreeEntry {
 struct DocTreeResult {
     items: Vec<DocTreeEntry>,
     total: usize,
+}
+
+const DOC_SEARCH_DEFAULT_LIMIT: usize = 20;
+const DOC_SEARCH_MAX_LIMIT: usize = 100;
+
+fn default_doc_search_limit() -> usize {
+    DOC_SEARCH_DEFAULT_LIMIT
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocSearchParams {
+    workspace_id: Uuid,
+    q: String,
+    #[serde(default = "default_doc_search_limit")]
+    limit: usize,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocSearchHit {
+    doc_id: Uuid,
+    path: String,
+    title: String,
+    snippet: String,
+    score: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocSearchResult {
+    items: Vec<DocSearchHit>,
+    total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocDiffParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    from_seq: i64,
+    to_seq: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocDiffResult {
+    patch_md: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
@@ -457,6 +506,7 @@ impl Default for RpcServerState {
         Self {
             doc_manager: Arc::new(RwLock::new(DocManager::default())),
             doc_metadata: Arc::new(RwLock::new(HashMap::new())),
+            doc_history: Arc::new(RwLock::new(HashMap::new())),
             degraded_docs: Arc::new(RwLock::new(HashSet::new())),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notifier: None,
@@ -780,6 +830,7 @@ impl RpcServerState {
             etag: format!("doc:{doc_id}:0"),
         };
         self.doc_metadata.write().await.insert((workspace_id, doc_id), metadata);
+        self.record_doc_snapshot(workspace_id, doc_id, 0, markdown).await;
         self.degraded_docs.write().await.remove(&doc_id);
     }
 
@@ -797,6 +848,21 @@ impl RpcServerState {
             created_at: chrono::Utc::now(),
         };
         self.workspaces.write().await.insert(workspace_id, info);
+    }
+
+    async fn record_doc_snapshot(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        seq: i64,
+        content_md: &str,
+    ) {
+        let mut history = self.doc_history.write().await;
+        history
+            .entry((workspace_id, doc_id))
+            .or_default()
+            .entry(seq)
+            .or_insert_with(|| content_md.to_string());
     }
 
     async fn workspace_list(&self, offset: usize, limit: usize) -> WorkspaceListResult {
@@ -912,6 +978,7 @@ impl RpcServerState {
 
         let content_md = doc.get_text_string("content");
         let sections = parse_sections(&content_md);
+        self.record_doc_snapshot(workspace_id, doc_id, metadata.head_seq, &content_md).await;
         let degraded = self.degraded_docs.read().await.contains(&doc_id);
 
         {
@@ -941,7 +1008,7 @@ impl RpcServerState {
                 return Err("doc.edit requires either `ops` or `content_md`".to_string());
             }
 
-            {
+            let current_head_seq = {
                 let mut metadata = self.doc_metadata.write().await;
                 let record = metadata
                     .entry((params.workspace_id, params.doc_id))
@@ -954,7 +1021,15 @@ impl RpcServerState {
                         ));
                     }
                 }
-            }
+                record.head_seq
+            };
+            self.record_doc_snapshot(
+                params.workspace_id,
+                params.doc_id,
+                current_head_seq,
+                &doc.get_text_string("content"),
+            )
+            .await;
 
             if let Some(content_md) = params.content_md.as_deref() {
                 let existing_len = doc.text_len("content");
@@ -967,15 +1042,21 @@ impl RpcServerState {
                     .map_err(|error| format!("failed to apply Yjs ops: {error}"))?;
             }
 
-            let result = {
+            let updated_content = doc.get_text_string("content");
+            let (result, updated_seq) = {
                 let mut metadata = self.doc_metadata.write().await;
                 let record = metadata
                     .entry((params.workspace_id, params.doc_id))
                     .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id));
                 record.head_seq = record.head_seq.saturating_add(1);
                 record.etag = format!("doc:{}:{}", params.doc_id, record.head_seq);
-                DocEditResult { etag: record.etag.clone(), head_seq: record.head_seq }
+                (
+                    DocEditResult { etag: record.etag.clone(), head_seq: record.head_seq },
+                    record.head_seq,
+                )
             };
+            self.record_doc_snapshot(params.workspace_id, params.doc_id, updated_seq, &updated_content)
+                .await;
 
             Ok(result)
         }
@@ -1004,12 +1085,14 @@ impl RpcServerState {
         }
 
         // Ensure metadata entry exists (mirrors read_doc behavior).
-        {
+        let head_seq = {
             let mut metadata = self.doc_metadata.write().await;
             metadata
                 .entry((workspace_id, doc_id))
-                .or_insert_with(|| default_metadata(workspace_id, doc_id));
-        }
+                .or_insert_with(|| default_metadata(workspace_id, doc_id))
+                .head_seq
+        };
+        self.record_doc_snapshot(workspace_id, doc_id, head_seq, &content).await;
 
         DocSectionsResult { doc_id, sections }
     }
@@ -1039,6 +1122,161 @@ impl RpcServerState {
         let total = items.len();
 
         DocTreeResult { items, total }
+    }
+
+    async fn doc_search(&self, params: DocSearchParams) -> Result<DocSearchResult, String> {
+        let query = params.q.trim();
+        if query.is_empty() {
+            return Err("q must not be empty".to_string());
+        }
+        if params.limit == 0 || params.limit > DOC_SEARCH_MAX_LIMIT {
+            return Err(format!(
+                "limit must be between 1 and {}",
+                DOC_SEARCH_MAX_LIMIT
+            ));
+        }
+
+        let offset = decode_doc_search_cursor(params.cursor.as_deref())?;
+        let metadata: Vec<DocMetadataRecord> = self
+            .doc_metadata
+            .read()
+            .await
+            .values()
+            .filter(|record| record.workspace_id == params.workspace_id)
+            .cloned()
+            .collect();
+        if metadata.is_empty() {
+            return Ok(DocSearchResult { items: Vec::new(), total: 0, next_cursor: None });
+        }
+
+        let connection = rusqlite::Connection::open_in_memory()
+            .map_err(|error| format!("failed to initialize in-memory search db: {error}"))?;
+        let index = Fts5Index::new(&connection);
+        index
+            .ensure_schema()
+            .map_err(|error| format!("failed to create search index schema: {error}"))?;
+
+        let mut metadata_by_doc_id = HashMap::with_capacity(metadata.len());
+        for record in metadata {
+            let doc = {
+                let mut manager = self.doc_manager.write().await;
+                manager.subscribe_or_create(record.doc_id)
+            };
+            let content = doc.get_text_string("content");
+            {
+                let mut manager = self.doc_manager.write().await;
+                let _ = manager.unsubscribe(record.doc_id);
+            }
+
+            index
+                .upsert(&IndexEntry {
+                    doc_id: record.doc_id.to_string(),
+                    title: record.title.clone(),
+                    content,
+                })
+                .map_err(|error| format!("failed to index doc {}: {error}", record.doc_id))?;
+            metadata_by_doc_id.insert(record.doc_id.to_string(), record);
+        }
+
+        let hits = index
+            .search(query, metadata_by_doc_id.len())
+            .map_err(|error| format!("failed to search docs: {error}"))?;
+        if offset > hits.len() {
+            return Err(format!("cursor offset {offset} is out of range"));
+        }
+
+        let end = offset.saturating_add(params.limit).min(hits.len());
+        let mut items = Vec::with_capacity(end.saturating_sub(offset));
+        for hit in &hits[offset..end] {
+            if let Some(record) = metadata_by_doc_id.get(&hit.doc_id) {
+                items.push(DocSearchHit {
+                    doc_id: record.doc_id,
+                    path: record.path.clone(),
+                    title: record.title.clone(),
+                    snippet: hit.snippet.clone(),
+                    score: hit.rank,
+                });
+            }
+        }
+
+        let next_cursor = (end < hits.len()).then(|| encode_doc_search_cursor(end));
+        Ok(DocSearchResult {
+            items,
+            total: hits.len(),
+            next_cursor,
+        })
+    }
+
+    async fn doc_diff(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        from_seq: i64,
+        to_seq: i64,
+    ) -> Result<DocDiffResult, String> {
+        if from_seq < 0 || to_seq < 0 {
+            return Err("from_seq and to_seq must be >= 0".to_string());
+        }
+        if from_seq > to_seq {
+            return Err(format!(
+                "from_seq must be <= to_seq (from_seq={from_seq}, to_seq={to_seq})"
+            ));
+        }
+
+        let head_seq = {
+            let mut metadata = self.doc_metadata.write().await;
+            metadata
+                .entry((workspace_id, doc_id))
+                .or_insert_with(|| default_metadata(workspace_id, doc_id))
+                .head_seq
+        };
+
+        if from_seq > head_seq || to_seq > head_seq {
+            return Err(format!(
+                "requested sequence range [{from_seq}, {to_seq}] exceeds head_seq {head_seq}"
+            ));
+        }
+
+        let mut snapshots = {
+            let history = self.doc_history.read().await;
+            let doc_history = history.get(&(workspace_id, doc_id));
+            (
+                doc_history.and_then(|h| h.get(&from_seq).cloned()),
+                doc_history.and_then(|h| h.get(&to_seq).cloned()),
+            )
+        };
+
+        if snapshots.0.is_none() || snapshots.1.is_none() {
+            let doc = {
+                let mut manager = self.doc_manager.write().await;
+                manager.subscribe_or_create(doc_id)
+            };
+            let current_content = doc.get_text_string("content");
+            self.record_doc_snapshot(workspace_id, doc_id, head_seq, &current_content).await;
+            {
+                let mut manager = self.doc_manager.write().await;
+                let _ = manager.unsubscribe(doc_id);
+            }
+
+            let history = self.doc_history.read().await;
+            if let Some(doc_history) = history.get(&(workspace_id, doc_id)) {
+                snapshots.0 = snapshots.0.or_else(|| doc_history.get(&from_seq).cloned());
+                snapshots.1 = snapshots.1.or_else(|| doc_history.get(&to_seq).cloned());
+            }
+        }
+
+        let Some(from_content) = snapshots.0 else {
+            return Err(format!(
+                "sequence {from_seq} is unavailable for doc {doc_id} (head_seq={head_seq})"
+            ));
+        };
+        let Some(to_content) = snapshots.1 else {
+            return Err(format!(
+                "sequence {to_seq} is unavailable for doc {doc_id} (head_seq={head_seq})"
+            ));
+        };
+
+        Ok(DocDiffResult { patch_md: render_markdown_patch(&from_content, &to_content) })
     }
 
     async fn bundle_doc(&self, params: DocBundleParams) -> Result<DocBundleResult, String> {
@@ -1250,6 +1488,8 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
         "doc.bundle" => handle_doc_bundle(request, state).await,
         "doc.edit_section" => handle_doc_edit_section(request, state).await,
         "doc.sections" => handle_doc_sections(request, state).await,
+        "doc.diff" => handle_doc_diff(request, state).await,
+        "doc.search" => handle_doc_search(request, state).await,
         "doc.tree" => handle_doc_tree(request, state).await,
         "agent.whoami" => handle_agent_whoami(request, state),
         "agent.status" => handle_agent_status(request, state),
@@ -1401,6 +1641,59 @@ async fn handle_doc_sections(request: Request, state: &RpcServerState) -> Respon
 
     let result = state.doc_sections(params.workspace_id, params.doc_id).await;
     Response::success(request.id, json!(result))
+}
+
+async fn handle_doc_diff(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_doc_diff_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.doc_diff(params.workspace_id, params.doc_id, params.from_seq, params.to_seq).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => invalid_params_response(request.id, reason),
+    }
+}
+
+fn parse_doc_diff_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<DocDiffParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(request_id, "doc.diff requires params".to_string()));
+    };
+
+    serde_json::from_value::<DocDiffParams>(params).map_err(|error| {
+        invalid_params_response(request_id, format!("failed to decode doc.diff params: {error}"))
+    })
+}
+
+async fn handle_doc_search(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_doc_search_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.doc_search(params).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => invalid_params_response(request.id, reason),
+    }
+}
+
+fn parse_doc_search_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<DocSearchParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(
+            request_id,
+            "doc.search requires params".to_string(),
+        ));
+    };
+
+    serde_json::from_value::<DocSearchParams>(params).map_err(|error| {
+        invalid_params_response(request_id, format!("failed to decode doc.search params: {error}"))
+    })
 }
 
 async fn handle_doc_tree(request: Request, state: &RpcServerState) -> Response {
@@ -1810,6 +2103,130 @@ fn decode_doc_edit_ops_array(values: &[serde_json::Value]) -> Result<Vec<u8>, St
         return Err("doc.edit `ops` byte array must not be empty".to_string());
     }
     Ok(bytes)
+}
+
+fn decode_doc_search_cursor(cursor: Option<&str>) -> Result<usize, String> {
+    let Some(cursor) = cursor else {
+        return Ok(0);
+    };
+    if cursor.trim().is_empty() {
+        return Err("cursor must not be empty".to_string());
+    }
+
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(cursor)
+        .map_err(|error| format!("invalid cursor encoding: {error}"))?;
+    let as_text =
+        String::from_utf8(decoded).map_err(|error| format!("cursor is not valid utf-8: {error}"))?;
+    as_text
+        .parse::<usize>()
+        .map_err(|error| format!("cursor is not a valid offset: {error}"))
+}
+
+fn encode_doc_search_cursor(offset: usize) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(offset.to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarkdownLineEdit<'a> {
+    Equal(&'a str),
+    Delete(&'a str),
+    Insert(&'a str),
+}
+
+fn render_markdown_patch(from_content: &str, to_content: &str) -> String {
+    if from_content == to_content {
+        return String::new();
+    }
+
+    let from_lines = split_markdown_lines(from_content);
+    let to_lines = split_markdown_lines(to_content);
+    let edits = diff_markdown_lines(&from_lines, &to_lines);
+
+    let mut out = String::from("```diff\n");
+    for edit in edits {
+        match edit {
+            MarkdownLineEdit::Equal(line) => {
+                out.push(' ');
+                out.push_str(line);
+                out.push('\n');
+            }
+            MarkdownLineEdit::Delete(line) => {
+                out.push('-');
+                out.push_str(line);
+                out.push('\n');
+            }
+            MarkdownLineEdit::Insert(line) => {
+                out.push('+');
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out.push_str("```");
+    out
+}
+
+fn split_markdown_lines(value: &str) -> Vec<&str> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        value.split('\n').collect()
+    }
+}
+
+fn diff_markdown_lines<'a>(
+    from_lines: &'a [&'a str],
+    to_lines: &'a [&'a str],
+) -> Vec<MarkdownLineEdit<'a>> {
+    const MAX_LCS_CELLS: usize = 4_000_000;
+    let n = from_lines.len();
+    let m = to_lines.len();
+
+    // Bound memory for degenerate large docs; fallback keeps output valid.
+    if n.saturating_mul(m) > MAX_LCS_CELLS {
+        let mut edits = Vec::with_capacity(n + m);
+        edits.extend(from_lines.iter().copied().map(MarkdownLineEdit::Delete));
+        edits.extend(to_lines.iter().copied().map(MarkdownLineEdit::Insert));
+        return edits;
+    }
+
+    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if from_lines[i] == to_lines[j] {
+                lcs[i + 1][j + 1].saturating_add(1)
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+
+    let mut edits = Vec::with_capacity(n.saturating_add(m));
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < n && j < m {
+        if from_lines[i] == to_lines[j] {
+            edits.push(MarkdownLineEdit::Equal(from_lines[i]));
+            i += 1;
+            j += 1;
+        } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+            edits.push(MarkdownLineEdit::Delete(from_lines[i]));
+            i += 1;
+        } else {
+            edits.push(MarkdownLineEdit::Insert(to_lines[j]));
+            j += 1;
+        }
+    }
+    while i < n {
+        edits.push(MarkdownLineEdit::Delete(from_lines[i]));
+        i += 1;
+    }
+    while j < m {
+        edits.push(MarkdownLineEdit::Insert(to_lines[j]));
+        j += 1;
+    }
+    edits
 }
 
 fn invalid_params_response(request_id: RequestId, reason: String) -> Response {
@@ -2338,6 +2755,94 @@ mod tests {
             .and_then(|value| value.as_str())
             .unwrap_or_default();
         assert!(reason.contains("requires either `ops` or `content_md`"));
+    }
+
+    #[tokio::test]
+    async fn doc_diff_returns_markdown_patch_between_sequence_points() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/history.md", "History", "# Title\nold line\n").await;
+
+        let edit_1 = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-diff-1",
+                "content_md": "# Title\nnew line\n"
+            })),
+            RequestId::Number(90),
+        );
+        let edit_1_response = dispatch_request(edit_1, &state).await;
+        assert!(edit_1_response.error.is_none(), "expected first edit to succeed: {edit_1_response:?}");
+
+        let edit_2 = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-diff-2",
+                "content_md": "# Title\nnew line\nextra line\n"
+            })),
+            RequestId::Number(91),
+        );
+        let edit_2_response = dispatch_request(edit_2, &state).await;
+        assert!(edit_2_response.error.is_none(), "expected second edit to succeed: {edit_2_response:?}");
+
+        let diff_request = Request::new(
+            "doc.diff",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "from_seq": 0,
+                "to_seq": 2
+            })),
+            RequestId::Number(92),
+        );
+        let diff_response = dispatch_request(diff_request, &state).await;
+        assert!(diff_response.error.is_none(), "expected doc.diff to succeed: {diff_response:?}");
+        let patch = diff_response
+            .result
+            .as_ref()
+            .and_then(|value| value.get("patch_md"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+
+        assert!(patch.starts_with("```diff\n"));
+        assert!(patch.contains("-old line"));
+        assert!(patch.contains("+new line"));
+        assert!(patch.contains("+extra line"));
+    }
+
+    #[tokio::test]
+    async fn doc_diff_rejects_ranges_beyond_head_seq() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/history.md", "History", "seed").await;
+
+        let request = Request::new(
+            "doc.diff",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "from_seq": 0,
+                "to_seq": 1
+            })),
+            RequestId::Number(93),
+        );
+        let response = dispatch_request(request, &state).await;
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+
+        let reason = error
+            .data
+            .as_ref()
+            .and_then(|value| value.get("reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(reason.contains("head_seq"));
     }
 
     #[tokio::test]
@@ -3137,6 +3642,133 @@ mod tests {
     async fn doc_tree_rejects_missing_params() {
         let state = RpcServerState::default();
         let request = Request::new("doc.tree", None, RequestId::Number(214));
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+    }
+
+    // ── doc.search tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn doc_search_returns_paged_workspace_results() {
+        let state = RpcServerState::default();
+        let ws = Uuid::new_v4();
+        state
+            .seed_doc(
+                ws,
+                Uuid::new_v4(),
+                "docs/alpha.md",
+                "Alpha",
+                "# Alpha\n\nScriptum search supports markdown docs.\n",
+            )
+            .await;
+        state
+            .seed_doc(
+                ws,
+                Uuid::new_v4(),
+                "docs/beta.md",
+                "Beta",
+                "# Beta\n\nAnother Scriptum search result.\n",
+            )
+            .await;
+        state
+            .seed_doc(
+                ws,
+                Uuid::new_v4(),
+                "docs/gamma.md",
+                "Gamma",
+                "# Gamma\n\nNo matching term here.\n",
+            )
+            .await;
+
+        let first_request = Request::new(
+            "doc.search",
+            Some(json!({ "workspace_id": ws, "q": "Scriptum", "limit": 1 })),
+            RequestId::Number(215),
+        );
+        let first_response = dispatch_request(first_request, &state).await;
+        assert!(first_response.error.is_none(), "expected success: {first_response:?}");
+        let first_result = first_response.result.expect("result");
+        let first_items = first_result["items"].as_array().expect("items should be an array");
+        assert_eq!(first_items.len(), 1);
+        assert_eq!(first_result["total"], 2);
+        assert_eq!(first_items[0]["path"], json!("docs/alpha.md"));
+        assert_eq!(first_items[0]["title"], json!("Alpha"));
+        assert!(first_items[0]["doc_id"].as_str().is_some());
+        assert!(first_items[0]["snippet"].as_str().is_some());
+        assert!(first_items[0]["score"].as_f64().is_some());
+        let cursor = first_result["next_cursor"]
+            .as_str()
+            .expect("next_cursor should be present")
+            .to_string();
+
+        let second_request = Request::new(
+            "doc.search",
+            Some(json!({ "workspace_id": ws, "q": "Scriptum", "limit": 1, "cursor": cursor })),
+            RequestId::Number(216),
+        );
+        let second_response = dispatch_request(second_request, &state).await;
+        assert!(second_response.error.is_none(), "expected success: {second_response:?}");
+        let second_result = second_response.result.expect("result");
+        let second_items = second_result["items"].as_array().expect("items should be an array");
+        assert_eq!(second_items.len(), 1);
+        assert_eq!(second_result["total"], 2);
+        assert_eq!(second_items[0]["path"], json!("docs/beta.md"));
+        assert_eq!(second_result.get("next_cursor"), None);
+    }
+
+    #[tokio::test]
+    async fn doc_search_excludes_other_workspaces() {
+        let state = RpcServerState::default();
+        let ws_a = Uuid::new_v4();
+        let ws_b = Uuid::new_v4();
+        state
+            .seed_doc(
+                ws_a,
+                Uuid::new_v4(),
+                "docs/a.md",
+                "A",
+                "# A\n\nScriptum token appears here.\n",
+            )
+            .await;
+        state
+            .seed_doc(
+                ws_b,
+                Uuid::new_v4(),
+                "docs/b.md",
+                "B",
+                "# B\n\nScriptum token appears in another workspace.\n",
+            )
+            .await;
+
+        let request = Request::new(
+            "doc.search",
+            Some(json!({ "workspace_id": ws_a, "q": "Scriptum", "limit": 10 })),
+            RequestId::Number(217),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result");
+        let items = result["items"].as_array().expect("items should be an array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["path"], "docs/a.md");
+        assert_eq!(result["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn doc_search_rejects_invalid_cursor() {
+        let state = RpcServerState::default();
+        let request = Request::new(
+            "doc.search",
+            Some(json!({
+                "workspace_id": Uuid::new_v4(),
+                "q": "Scriptum",
+                "cursor": "not-base64"
+            })),
+            RequestId::Number(218),
+        );
         let response = dispatch_request(request, &state).await;
 
         let error = response.error.expect("error should be present");
