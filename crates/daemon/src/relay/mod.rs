@@ -7,11 +7,15 @@
 // Transport is abstracted via `RelayTransport` for testability.
 // The actual WS transport implementation lives in a separate module.
 
+pub mod mdns;
+
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use tracing::info;
+use url::Url;
 use uuid::Uuid;
 
 use scriptum_common::protocol::ws::WsMessage;
@@ -165,10 +169,22 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
         &self.subscribed_docs
     }
 
+    /// Discover LAN peers advertising Scriptum sync via mDNS.
+    ///
+    /// This enables zero-config peer discovery for direct TCP optimization
+    /// while keeping relay as the always-on durable transport.
+    pub fn discover_lan_peers(
+        &self,
+        timeout: Duration,
+    ) -> Result<Vec<mdns::LanPeerEndpoint>> {
+        mdns::discover_lan_peers(self.config.workspace_id, timeout).map_err(|error| anyhow!(error))
+    }
+
     /// Attempt to connect (or reconnect) to the relay.
     ///
     /// Returns `Connected` event on success, `Disconnected` on failure.
     pub fn connect(&mut self) -> Result<RelayEvent> {
+        validate_relay_url(&self.config.relay_url)?;
         self.state = ConnectionState::Connecting;
 
         // Step 1: Create session via REST API.
@@ -183,6 +199,8 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
                     });
                 }
             };
+
+        validate_ws_url(&session.ws_url)?;
 
         // Step 2: Open WebSocket.
         if let Err(e) = self.transport.connect_ws(&session.ws_url) {
@@ -363,6 +381,38 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
     }
 }
 
+fn validate_relay_url(value: &str) -> Result<()> {
+    let parsed = Url::parse(value).map_err(|error| anyhow!("invalid relay_url `{value}`: {error}"))?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback_host(parsed.host_str()) => Ok(()),
+        _ => Err(anyhow!(
+            "relay_url must use https (http is allowed only for localhost testing)"
+        )),
+    }
+}
+
+fn validate_ws_url(value: &str) -> Result<()> {
+    let parsed = Url::parse(value).map_err(|error| anyhow!("invalid ws_url `{value}`: {error}"))?;
+    match parsed.scheme() {
+        "wss" => Ok(()),
+        "ws" if is_loopback_host(parsed.host_str()) => Ok(()),
+        _ => Err(anyhow!(
+            "ws_url must use wss (ws is allowed only for localhost testing)"
+        )),
+    }
+}
+
+fn is_loopback_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>().is_ok_and(|addr| addr.is_loopback())
+}
+
 // ── Backoff helper (for Duration::saturating_mul with u64) ──────────
 
 trait DurationSaturatingMul {
@@ -468,7 +518,7 @@ mod tests {
         SessionInfo {
             session_id: Uuid::new_v4(),
             session_token: "sess-tok-123".to_string(),
-            ws_url: "ws://relay.test/v1/ws/test".to_string(),
+            ws_url: "wss://relay.test/v1/ws/test".to_string(),
             resume_token: "resume-tok-456".to_string(),
             heartbeat_interval_ms: 15_000,
         }
@@ -500,6 +550,31 @@ mod tests {
         let event = mgr.connect().expect("connect should succeed");
         assert_eq!(event, RelayEvent::Connected);
         assert_eq!(mgr.state(), ConnectionState::Connected);
+    }
+
+    #[test]
+    fn connect_rejects_non_tls_relay_url() {
+        let mut transport = MockTransport::with_session(test_session());
+        transport.queue_recv(hello_ack(false));
+
+        let mut config = test_config();
+        config.relay_url = "http://relay.test".to_string();
+        let mut mgr = RelayConnectionManager::new(config, transport);
+
+        let error = mgr.connect().expect_err("connect should reject insecure relay url");
+        assert!(error.to_string().contains("relay_url must use https"));
+    }
+
+    #[test]
+    fn connect_rejects_non_tls_ws_url() {
+        let mut session = test_session();
+        session.ws_url = "ws://relay.test/v1/ws/test".to_string();
+        let mut transport = MockTransport::with_session(session);
+        transport.queue_recv(hello_ack(false));
+
+        let mut mgr = RelayConnectionManager::new(test_config(), transport);
+        let error = mgr.connect().expect_err("connect should reject insecure ws url");
+        assert!(error.to_string().contains("ws_url must use wss"));
     }
 
     #[test]
