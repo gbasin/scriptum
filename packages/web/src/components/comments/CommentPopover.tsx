@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { type CreateCommentInput, createComment } from "../../lib/api-client";
 import controls from "../../styles/Controls.module.css";
 import styles from "./CommentPopover.module.css";
-import { ThreadList } from "./ThreadList";
+import { ThreadList, type ThreadListProps } from "./ThreadList";
 
 export interface InlineCommentSelection {
   sectionId: string | null;
@@ -32,6 +32,9 @@ export interface CommentPopoverProps {
     documentId: string,
     input: CreateCommentInput,
   ) => Promise<{ thread: CommentThread; message: CommentMessage }>;
+  replyToThread?: ThreadListProps["replyToThread"];
+  resolveThread?: ThreadListProps["resolveThread"];
+  reopenThread?: ThreadListProps["reopenThread"];
 }
 
 export interface CommentPopoverHighlightRange {
@@ -60,6 +63,9 @@ export function CommentPopover({
   activeThread,
   onThreadChange,
   createThread = createComment,
+  replyToThread,
+  resolveThread,
+  reopenThread,
 }: CommentPopoverProps) {
   const [isOpen, setOpen] = useState(false);
   const [pendingBody, setPendingBody] = useState("");
@@ -176,6 +182,9 @@ export function CommentPopover({
                   return next;
                 });
               }}
+              reopenThread={reopenThread}
+              replyToThread={replyToThread}
+              resolveThread={resolveThread}
               thread={threadState.thread}
               workspaceId={workspaceId}
             />

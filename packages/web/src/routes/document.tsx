@@ -19,12 +19,18 @@ import {
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import type {
+  CommentMessage,
+  CommentThread,
   Document as ScriptumDocument,
   WorkspaceEditorFontFamily,
 } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
+import {
+  CommentPopover,
+  type ThreadWithMessages,
+} from "../components/comments/CommentPopover";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { type OpenDocumentTab, TabBar } from "../components/editor/TabBar";
 import {
@@ -36,11 +42,13 @@ import { OfflineBanner } from "../components/OfflineBanner";
 import { ShareDialog } from "../components/share/ShareDialog";
 import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
+import { useToast } from "../hooks/useToast";
 import { useDocumentsStore } from "../store/documents";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
+import type { CreateCommentInput } from "../lib/api-client";
 import {
   buildShareLinkUrl,
   createShareLinkRecord,
@@ -660,6 +668,69 @@ export function commentAnchorTopPx(line: number): number {
   return Math.max(12, (Math.max(1, Math.floor(line)) - 1) * 22 + 12);
 }
 
+function toCommentMessage(
+  message: InlineCommentMessage,
+  threadId: string,
+): CommentMessage {
+  return {
+    author: message.authorName,
+    bodyMd: message.bodyMd,
+    createdAt: message.createdAt,
+    editedAt: null,
+    id: message.id,
+    threadId,
+  };
+}
+
+function toInlineCommentMessage(message: CommentMessage): InlineCommentMessage {
+  const isOwn = message.author === LOCAL_COMMENT_AUTHOR_NAME;
+  return {
+    authorName: message.author,
+    authorUserId: isOwn ? LOCAL_COMMENT_AUTHOR_ID : undefined,
+    bodyMd: message.bodyMd,
+    createdAt: message.createdAt,
+    id: message.id,
+    isOwn,
+  };
+}
+
+function toThreadWithMessages(
+  thread: InlineCommentThread,
+  documentId: string | undefined,
+): ThreadWithMessages {
+  return {
+    messages: thread.messages.map((message) => toCommentMessage(message, thread.id)),
+    thread: {
+      createdAt: thread.messages[0]?.createdAt ?? UNKNOWN_COMMENT_TIMESTAMP,
+      createdBy: thread.messages[0]?.authorUserId ?? LOCAL_COMMENT_AUTHOR_ID,
+      docId: documentId ?? "",
+      endOffsetUtf16: thread.endOffsetUtf16,
+      id: thread.id,
+      resolvedAt:
+        thread.status === "resolved"
+          ? (thread.messages[thread.messages.length - 1]?.createdAt ??
+            UNKNOWN_COMMENT_TIMESTAMP)
+          : null,
+      sectionId: null,
+      startOffsetUtf16: thread.startOffsetUtf16,
+      status: thread.status,
+      version: 1,
+    },
+  };
+}
+
+function toInlineCommentThread(threadWithMessages: ThreadWithMessages): InlineCommentThread {
+  return {
+    endOffsetUtf16: threadWithMessages.thread.endOffsetUtf16,
+    id: threadWithMessages.thread.id,
+    messages: threadWithMessages.messages.map((message) =>
+      toInlineCommentMessage(message),
+    ),
+    startOffsetUtf16: threadWithMessages.thread.startOffsetUtf16,
+    status: threadWithMessages.thread.status,
+  };
+}
+
 function documentTitleFromPath(path: string): string {
   const segments = path
     .split("/")
@@ -833,6 +904,7 @@ function editorTypographyTheme(fontFamily: WorkspaceEditorFontFamily) {
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const closeDocument = useDocumentsStore((state) => state.closeDocument);
   const documents = useDocumentsStore((state) => state.documents);
   const openDocuments = useDocumentsStore((state) => state.openDocuments);
@@ -850,8 +922,6 @@ export function DocumentRoute() {
   >(() => normalizeInlineCommentThreads(readFixtureState().commentThreads));
   const [activeSelection, setActiveSelection] =
     useState<ActiveTextSelection | null>(null);
-  const [isCommentPopoverOpen, setCommentPopoverOpen] = useState(false);
-  const [pendingCommentBody, setPendingCommentBody] = useState("");
   const [isShareDialogOpen, setShareDialogOpen] = useState(false);
   const [shareTargetType, setShareTargetType] =
     useState<ShareLinkTargetType>("document");
@@ -861,8 +931,6 @@ export function DocumentRoute() {
     useState<ShareLinkExpirationOption>("none");
   const [shareMaxUsesInput, setShareMaxUsesInput] = useState("3");
   const [generatedShareUrl, setGeneratedShareUrl] = useState("");
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [editingMessageBody, setEditingMessageBody] = useState("");
   const [dropUploadProgress, setDropUploadProgress] =
     useState<DropUploadProgress | null>(null);
   const activeEditors = fixtureModeEnabled
@@ -999,7 +1067,7 @@ export function DocumentRoute() {
   const commentAnchorTop = activeSelection
     ? commentAnchorTopPx(activeSelection.line)
     : 12;
-  const activeThread = useMemo(() => {
+  const activeInlineThread = useMemo(() => {
     if (!activeSelection) {
       return null;
     }
@@ -1011,8 +1079,13 @@ export function DocumentRoute() {
       ) ?? null
     );
   }, [activeSelection, inlineCommentThreads]);
-  const canComposeInActiveThread =
-    !activeThread || activeThread.status === "open";
+  const activeCommentPopoverThread = useMemo(
+    () =>
+      activeInlineThread
+        ? toThreadWithMessages(activeInlineThread, documentId)
+        : null,
+    [activeInlineThread, documentId],
+  );
   const pendingSyncUpdates = fixtureModeEnabled
     ? fixtureState.pendingSyncUpdates
     : pendingChanges;
@@ -1214,7 +1287,6 @@ export function DocumentRoute() {
 
             if (mainSelection.empty) {
               setActiveSelection(null);
-              setCommentPopoverOpen(false);
               return;
             }
 
@@ -1224,7 +1296,6 @@ export function DocumentRoute() {
             );
             if (selectedText.trim().length === 0) {
               setActiveSelection(null);
-              setCommentPopoverOpen(false);
               return;
             }
 
@@ -1421,11 +1492,6 @@ export function DocumentRoute() {
     ]);
   }, [fixtureModeEnabled, fixtureState.docContent, fixtureState.remotePeers]);
 
-  useEffect(() => {
-    setEditingMessageId(null);
-    setEditingMessageBody("");
-  }, [activeThread?.id, isCommentPopoverOpen]);
-
   const persistCommentThreads = (
     mutator: (threads: readonly InlineCommentThread[]) => InlineCommentThread[],
   ) => {
@@ -1438,70 +1504,72 @@ export function DocumentRoute() {
     });
   };
 
-  const submitInlineComment = () => {
-    if (!activeSelection) {
-      return;
-    }
-    const messageBody = pendingCommentBody.trim();
-    if (!messageBody) {
-      return;
-    }
-
+  const createInlineCommentThread = async (
+    _workspaceId: string,
+    _documentId: string,
+    input: CreateCommentInput,
+  ): Promise<{ thread: CommentThread; message: CommentMessage }> => {
     const nextMessage: InlineCommentMessage = {
       authorName: LOCAL_COMMENT_AUTHOR_NAME,
       authorUserId: LOCAL_COMMENT_AUTHOR_ID,
-      bodyMd: messageBody,
+      bodyMd: input.message.trim(),
+      createdAt: new Date(Date.now()).toISOString(),
+      id: makeClientId("message"),
+      isOwn: true,
+    };
+    const nextThread: InlineCommentThread = {
+      endOffsetUtf16: input.anchor.endOffsetUtf16,
+      id: makeClientId("thread"),
+      messages: [nextMessage],
+      startOffsetUtf16: input.anchor.startOffsetUtf16,
+      status: "open",
+    };
+
+    persistCommentThreads((currentThreads) => [...currentThreads, nextThread]);
+    const created = toThreadWithMessages(nextThread, documentId);
+    return {
+      message: created.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
+      thread: created.thread,
+    };
+  };
+
+  const replaceInlineCommentThread = (nextThread: InlineCommentThread) => {
+    persistCommentThreads((currentThreads) => {
+      const nextIndex = currentThreads.findIndex(
+        (thread) => thread.id === nextThread.id,
+      );
+      if (nextIndex === -1) {
+        return [...currentThreads, nextThread];
+      }
+
+      const updated = [...currentThreads];
+      updated[nextIndex] = nextThread;
+      return updated;
+    });
+  };
+
+  const handleCommentPopoverThreadChange = (thread: ThreadWithMessages) => {
+    replaceInlineCommentThread(toInlineCommentThread(thread));
+  };
+
+  const replyToInlineCommentThread = async (
+    _workspaceId: string,
+    threadId: string,
+    bodyMd: string,
+  ): Promise<CommentMessage> => {
+    const nextMessage: InlineCommentMessage = {
+      authorName: LOCAL_COMMENT_AUTHOR_NAME,
+      authorUserId: LOCAL_COMMENT_AUTHOR_ID,
+      bodyMd: bodyMd.trim(),
       createdAt: new Date(Date.now()).toISOString(),
       id: makeClientId("message"),
       isOwn: true,
     };
 
-    const activeThreadId = activeThread?.id;
-    persistCommentThreads((currentThreads) => {
-      if (activeThreadId) {
-        return appendReplyToThread(currentThreads, activeThreadId, nextMessage);
-      }
-
-      const nextThread: InlineCommentThread = {
-        endOffsetUtf16: activeSelection.to,
-        id: makeClientId("thread"),
-        messages: [nextMessage],
-        startOffsetUtf16: activeSelection.from,
-        status: "open",
-      };
-      return [...currentThreads, nextThread];
-    });
-    setPendingCommentBody("");
-    if (!activeThread) {
-      setCommentPopoverOpen(false);
-    }
-  };
-
-  const beginEditingMessage = (message: InlineCommentMessage) => {
-    if (!message.isOwn) {
-      return;
-    }
-    setEditingMessageId(message.id);
-    setEditingMessageBody(message.bodyMd);
-  };
-
-  const saveEditedMessage = () => {
-    const threadId = activeThread?.id;
-    const messageId = editingMessageId;
-    if (!threadId || !messageId) {
-      return;
-    }
-
     persistCommentThreads((currentThreads) =>
-      updateInlineCommentMessageBody(
-        currentThreads,
-        threadId,
-        messageId,
-        editingMessageBody,
-      ),
+      appendReplyToThread(currentThreads, threadId, nextMessage),
     );
-    setEditingMessageId(null);
-    setEditingMessageBody("");
+    return toCommentMessage(nextMessage, threadId);
   };
 
   const setThreadStatus = (
@@ -1521,6 +1589,54 @@ export function DocumentRoute() {
     setThreadStatus(threadId, "open");
   };
 
+  const resolveInlineCommentThread = async (
+    _workspaceId: string,
+    threadId: string,
+    _ifVersion: number,
+  ): Promise<CommentThread> => {
+    let updatedThread: InlineCommentThread | null = null;
+    persistCommentThreads((currentThreads) => {
+      const nextThreads = updateInlineCommentThreadStatus(
+        currentThreads,
+        threadId,
+        "resolved",
+      );
+      updatedThread =
+        nextThreads.find((thread) => thread.id === threadId) ?? null;
+      return nextThreads;
+    });
+
+    if (!updatedThread) {
+      throw new Error("Thread not found");
+    }
+
+    return toThreadWithMessages(updatedThread, documentId).thread;
+  };
+
+  const reopenInlineCommentThread = async (
+    _workspaceId: string,
+    threadId: string,
+    _ifVersion: number,
+  ): Promise<CommentThread> => {
+    let updatedThread: InlineCommentThread | null = null;
+    persistCommentThreads((currentThreads) => {
+      const nextThreads = updateInlineCommentThreadStatus(
+        currentThreads,
+        threadId,
+        "open",
+      );
+      updatedThread =
+        nextThreads.find((thread) => thread.id === threadId) ?? null;
+      return nextThreads;
+    });
+
+    if (!updatedThread) {
+      throw new Error("Thread not found");
+    }
+
+    return toThreadWithMessages(updatedThread, documentId).thread;
+  };
+
   const openShareDialog = () => {
     setGeneratedShareUrl("");
     setShareDialogOpen(true);
@@ -1531,7 +1647,13 @@ export function DocumentRoute() {
   };
 
   const generateShareLink = () => {
-    if (!workspaceId || typeof window === "undefined") {
+    if (!workspaceId) {
+      toast.error("Cannot generate a share link without an active workspace.");
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      toast.error("Cannot generate a share link outside the browser.");
       return;
     }
 
@@ -1553,6 +1675,9 @@ export function DocumentRoute() {
 
     storeShareLinkRecord(record);
     setGeneratedShareUrl(buildShareLinkUrl(record.token, window.location.origin));
+    toast.success(
+      `Generated ${resolvedTargetType === "document" ? "document" : "workspace"} share link.`,
+    );
   };
 
   const selectTab = (nextDocumentId: string) => {
@@ -1708,320 +1833,28 @@ export function DocumentRoute() {
             }}
           />
 
-          {activeSelection ? (
-            <button
-              aria-label={
-                activeThread?.status === "resolved"
-                  ? "Resolved comment thread"
-                  : "Add comment"
-              }
-              data-testid="comment-margin-button"
-              onClick={() => setCommentPopoverOpen((isOpen) => !isOpen)}
-              style={{
-                alignItems: "center",
-                background:
-                  activeThread?.status === "resolved" ? "#f3f4f6" : "#fde68a",
-                border:
-                  activeThread?.status === "resolved"
-                    ? "1px solid #9ca3af"
-                    : "1px solid #f59e0b",
-                borderRadius: "9999px",
-                cursor: "pointer",
-                display: "inline-flex",
-                fontSize: "0.75rem",
-                fontWeight: 600,
-                gap: "0.25rem",
-                minHeight: "1.5rem",
-                minWidth:
-                  activeThread?.status === "resolved" ? "1.5rem" : undefined,
-                padding:
-                  activeThread?.status === "resolved"
-                    ? "0.25rem"
-                    : "0.25rem 0.5rem",
-                position: "absolute",
-                right: "0.5rem",
-                top: `${commentAnchorTop}px`,
-              }}
-              type="button"
-            >
-              {activeThread?.status === "resolved" ? (
-                <span
-                  aria-hidden="true"
-                  data-testid="comment-margin-resolved-dot"
-                  style={{
-                    background: "#6b7280",
-                    borderRadius: "9999px",
-                    display: "inline-block",
-                    height: "0.5rem",
-                    width: "0.5rem",
-                  }}
-                />
-              ) : (
-                "Comment"
-              )}
-            </button>
-          ) : null}
-
-          {isCommentPopoverOpen && activeSelection ? (
-            <section
-              aria-label="Comment popover"
-              data-testid="comment-popover"
-              style={{
-                background: "#ffffff",
-                border: "1px solid #d1d5db",
-                borderRadius: "0.5rem",
-                boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                maxWidth: "20rem",
-                padding: "0.75rem",
-                position: "absolute",
-                right: "0.5rem",
-                top: `${commentAnchorTop + 32}px`,
-                width: "100%",
-                zIndex: 1,
-              }}
-            >
-              <p
-                data-testid="comment-selection-preview"
-                style={{
-                  background: "rgba(250, 204, 21, 0.28)",
-                  borderRadius: "0.25rem",
-                  fontSize: "0.75rem",
-                  margin: "0 0 0.5rem",
-                  padding: "0.375rem",
-                }}
-              >
-                {activeSelection.selectedText}
-              </p>
-
-              {activeThread ? (
-                activeThread.status === "resolved" ? (
-                  <section
-                    aria-label="Collapsed resolved thread"
-                    data-testid="comment-thread-collapsed"
-                    style={{
-                      alignItems: "center",
-                      borderBottom: "1px solid #e5e7eb",
-                      display: "flex",
-                      gap: "0.5rem",
-                      marginBottom: "0.5rem",
-                      paddingBottom: "0.5rem",
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      data-testid="comment-thread-collapsed-dot"
-                      style={{
-                        background: "#6b7280",
-                        borderRadius: "9999px",
-                        display: "inline-block",
-                        flexShrink: 0,
-                        height: "0.45rem",
-                        width: "0.45rem",
-                      }}
-                    />
-                    <span style={{ color: "#4b5563", fontSize: "0.75rem" }}>
-                      Thread resolved
-                    </span>
-                    <button
-                      data-testid="comment-thread-reopen"
-                      onClick={() => reopenThread(activeThread.id)}
-                      style={{ marginLeft: "auto" }}
-                      type="button"
-                    >
-                      Reopen
-                    </button>
-                  </section>
-                ) : (
-                  <section
-                    aria-label="Thread replies"
-                    data-testid="comment-thread-replies"
-                    style={{
-                      borderBottom: "1px solid #e5e7eb",
-                      marginBottom: "0.5rem",
-                      maxHeight: "12rem",
-                      overflowY: "auto",
-                      paddingBottom: "0.5rem",
-                    }}
-                  >
-                    <div
-                      style={{
-                        alignItems: "center",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginBottom: "0.5rem",
-                      }}
-                    >
-                      <strong style={{ fontSize: "0.75rem" }}>Thread</strong>
-                      <button
-                        data-testid="comment-thread-resolve"
-                        onClick={() => resolveThread(activeThread.id)}
-                        type="button"
-                      >
-                        Resolve
-                      </button>
-                    </div>
-                    {activeThread.messages.length === 0 ? (
-                      <p
-                        style={{
-                          color: "#64748b",
-                          fontSize: "0.75rem",
-                          margin: 0,
-                        }}
-                      >
-                        No replies yet.
-                      </p>
-                    ) : (
-                      <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                        {activeThread.messages.map((message) => {
-                          const isEditing = editingMessageId === message.id;
-                          return (
-                            <li
-                              key={message.id}
-                              style={{
-                                border: "1px solid #e5e7eb",
-                                borderRadius: "0.375rem",
-                                marginBottom: "0.375rem",
-                                padding: "0.375rem",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  alignItems: "center",
-                                  display: "flex",
-                                  fontSize: "0.75rem",
-                                  gap: "0.375rem",
-                                  justifyContent: "space-between",
-                                  marginBottom: "0.25rem",
-                                }}
-                              >
-                                <strong>{message.authorName}</strong>
-                                <time dateTime={message.createdAt}>
-                                  {message.createdAt}
-                                </time>
-                              </div>
-                              {isEditing ? (
-                                <>
-                                  <textarea
-                                    data-testid="comment-edit-input"
-                                    onChange={(event) =>
-                                      setEditingMessageBody(event.target.value)
-                                    }
-                                    rows={3}
-                                    style={{ display: "block", width: "100%" }}
-                                    value={editingMessageBody}
-                                  />
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      gap: "0.5rem",
-                                      justifyContent: "flex-end",
-                                      marginTop: "0.375rem",
-                                    }}
-                                  >
-                                    <button
-                                      data-testid="comment-edit-cancel"
-                                      onClick={() => {
-                                        setEditingMessageId(null);
-                                        setEditingMessageBody("");
-                                      }}
-                                      type="button"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      data-testid="comment-edit-save"
-                                      onClick={saveEditedMessage}
-                                      type="button"
-                                    >
-                                      Save
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <p style={{ margin: 0 }}>{message.bodyMd}</p>
-                                  {message.isOwn ? (
-                                    <button
-                                      data-testid={`comment-edit-${message.id}`}
-                                      onClick={() =>
-                                        beginEditingMessage(message)
-                                      }
-                                      style={{ marginTop: "0.25rem" }}
-                                      type="button"
-                                    >
-                                      Edit
-                                    </button>
-                                  ) : null}
-                                </>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ol>
-                    )}
-                  </section>
-                )
-              ) : null}
-
-              {canComposeInActiveThread ? (
-                <>
-                  <label htmlFor="inline-comment-input">
-                    {activeThread ? "Reply" : "Comment"}
-                  </label>
-                  <textarea
-                    data-testid="comment-input"
-                    id="inline-comment-input"
-                    onChange={(event) =>
-                      setPendingCommentBody(event.target.value)
-                    }
-                    rows={3}
-                    style={{
-                      display: "block",
-                      marginTop: "0.25rem",
-                      width: "100%",
-                    }}
-                    value={pendingCommentBody}
-                  />
-                </>
-              ) : (
-                <p
-                  data-testid="comment-thread-resolved-note"
-                  style={{
-                    color: "#6b7280",
-                    fontSize: "0.75rem",
-                    margin: "0 0 0.5rem",
-                  }}
-                >
-                  This thread is resolved.
-                </p>
-              )}
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.5rem",
-                  justifyContent: "flex-end",
-                  marginTop: "0.5rem",
-                }}
-              >
-                <button
-                  onClick={() => setCommentPopoverOpen(false)}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                {canComposeInActiveThread ? (
-                  <button
-                    data-testid="comment-submit"
-                    onClick={submitInlineComment}
-                    type="button"
-                  >
-                    {activeThread ? "Add reply" : "Add comment"}
-                  </button>
-                ) : null}
-              </div>
-            </section>
-          ) : null}
+          <CommentPopover
+            activeThread={activeCommentPopoverThread}
+            anchorTopPx={commentAnchorTop}
+            createThread={createInlineCommentThread}
+            documentId={documentId ?? "unknown-document"}
+            onThreadChange={handleCommentPopoverThreadChange}
+            reopenThread={reopenInlineCommentThread}
+            replyToThread={replyToInlineCommentThread}
+            resolveThread={resolveInlineCommentThread}
+            selection={
+              activeSelection
+                ? {
+                    sectionId: null,
+                    startOffsetUtf16: activeSelection.from,
+                    endOffsetUtf16: activeSelection.to,
+                    headSeq: timelineIndex,
+                    selectedText: activeSelection.selectedText,
+                  }
+                : null
+            }
+            workspaceId={workspaceId ?? "unknown-workspace"}
+          />
         </div>
       </section>
 
