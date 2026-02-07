@@ -1,0 +1,39 @@
+.fallback {
+  align-content: center;
+  background: var(--color-bg-canvas);
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  margin: 0 auto;
+  max-width: 36rem;
+  min-height: 100vh;
+  padding: var(--space-8) var(--space-4);
+}
+
+.title {
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.message {
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.reloadButton {
+  background: var(--color-accent-hex);
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  color: oklch(0.98 0.002 260);
+  cursor: pointer;
+  font-weight: 600;
+  padding: var(--space-2) var(--space-4);
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.reloadButton:hover {
+  background: var(--color-accent);
+  transform: translateY(-1px);
+}
