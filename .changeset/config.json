@@ -8,7 +8,6 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
-    "scriptum",
     "@scriptum/desktop",
     "@scriptum/editor",
     "@scriptum/shared",
