@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "latest",
     "@codemirror/lang-markdown": "latest",
     "@codemirror/language": "latest",
     "@codemirror/state": "latest",

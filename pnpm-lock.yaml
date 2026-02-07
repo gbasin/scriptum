@@ -39,6 +39,9 @@ importers:
 
   packages/editor:
     dependencies:
+      '@codemirror/autocomplete':
+        specifier: latest
+        version: 6.20.0
       '@codemirror/lang-markdown':
         specifier: latest
         version: 6.5.0
