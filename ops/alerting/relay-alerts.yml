@@ -1,0 +1,69 @@
+groups:
+  - name: scriptum-relay-alerts
+    interval: 30s
+    rules:
+      - alert: ScriptumRelayAvailabilityDrop
+        expr: |
+          (
+            (
+              1 -
+              (
+                (
+                  sum(rate(relay_request_errors_total[15m])) +
+                  sum(rate(relay_ws_errors_total[15m]))
+                ) /
+                clamp_min(
+                  sum(rate(relay_request_rate_total[15m])) +
+                  sum(rate(relay_ws_rate_total[15m])),
+                  1
+                )
+              )
+            ) * 100
+          ) < 99.5
+        labels:
+          severity: page
+          service: relay
+        annotations:
+          summary: Relay availability dropped below 99.5% over 15 minutes
+          description: Combined HTTP and WebSocket success rate is below target.
+          runbook: ops/runbooks/availability-drop.md
+
+      - alert: ScriptumRelaySyncErrorSpike
+        expr: |
+          (
+            sum(rate(relay_ws_errors_total{endpoint="yjs_update"}[10m])) /
+            clamp_min(sum(rate(relay_ws_rate_total{endpoint="yjs_update"}[10m])), 1)
+          ) > 0.01
+        labels:
+          severity: page
+          service: relay
+        annotations:
+          summary: Sync error ratio is above 1% over 10 minutes
+          description: yjs_update WebSocket messages are failing above SLO threshold.
+          runbook: ops/runbooks/sync-error-spike.md
+
+      - alert: ScriptumRelayOutboxGrowthSpike
+        expr: |
+          (
+            sum(outbox_depth) >
+            (10 * clamp_min(sum(outbox_depth offset 15m), 1))
+          )
+          and sum(outbox_depth) >= 100
+        labels:
+          severity: page
+          service: relay
+        annotations:
+          summary: Outbox depth grew 10x over 15 minutes
+          description: Outbox growth indicates relay connectivity or backpressure problems.
+          runbook: ops/runbooks/outbox-growth.md
+
+      - alert: ScriptumRelayLatencyBreach
+        expr: |
+          quantile_over_time(0.95, sync_ack_latency_ms[3h]) > 500
+        labels:
+          severity: ticket
+          service: relay
+        annotations:
+          summary: p95 sync ack latency above 500ms target for 3 hours
+          description: Sustained sync latency regression against SPEC target.
+          runbook: ops/runbooks/latency-breach.md
