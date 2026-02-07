@@ -233,6 +233,108 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use yrs::{Doc, GetString, Text, Transact};
 
+    struct Lcg {
+        state: u64,
+    }
+
+    impl Lcg {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.state = self
+                .state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            self.state
+        }
+
+        fn next_usize(&mut self, upper_exclusive: usize) -> usize {
+            if upper_exclusive == 0 {
+                return 0;
+            }
+            (self.next_u64() as usize) % upper_exclusive
+        }
+
+        fn next_char(&mut self) -> char {
+            // Mix plain ASCII, whitespace, punctuation, and a few multibyte glyphs.
+            match self.next_usize(52) {
+                0..=25 => char::from(b'a' + self.next_usize(26) as u8),
+                26..=35 => char::from(b'0' + self.next_usize(10) as u8),
+                36 => ' ',
+                37 => '\n',
+                38 => '-',
+                39 => '_',
+                40 => '#',
+                41 => '/',
+                42 => '.',
+                43 => ',',
+                44 => ':',
+                45 => ';',
+                46 => '🙂',
+                47 => '☕',
+                48 => 'é',
+                49 => 'ß',
+                50 => '中',
+                _ => '文',
+            }
+        }
+    }
+
+    fn random_string(rng: &mut Lcg, min_len: usize, max_len: usize) -> String {
+        let span = max_len.saturating_sub(min_len).saturating_add(1);
+        let len = min_len + rng.next_usize(span);
+        let mut out = String::with_capacity(len);
+        for _ in 0..len {
+            out.push(rng.next_char());
+        }
+        out
+    }
+
+    fn mutate_text(rng: &mut Lcg, current: &str) -> String {
+        let mut chars: Vec<char> = current.chars().collect();
+
+        match rng.next_usize(5) {
+            0 => {
+                // Insert chunk
+                let index = rng.next_usize(chars.len().saturating_add(1));
+                let insert = random_string(rng, 1, 24);
+                chars.splice(index..index, insert.chars());
+            }
+            1 if !chars.is_empty() => {
+                // Delete range
+                let start = rng.next_usize(chars.len());
+                let max_len = chars.len() - start;
+                let len = 1 + rng.next_usize(max_len);
+                chars.drain(start..start + len);
+            }
+            2 if !chars.is_empty() => {
+                // Replace range
+                let start = rng.next_usize(chars.len());
+                let max_len = chars.len() - start;
+                let len = 1 + rng.next_usize(max_len);
+                let replacement = random_string(rng, 0, 20);
+                chars.splice(start..start + len, replacement.chars());
+            }
+            3 => {
+                // Prefix/suffix burst
+                if rng.next_usize(2) == 0 {
+                    let prefix = random_string(rng, 0, 18);
+                    chars.splice(0..0, prefix.chars());
+                } else {
+                    chars.extend(random_string(rng, 0, 18).chars());
+                }
+            }
+            _ => {
+                // Full rewrite occasionally (rapid-save + large-change pressure)
+                return random_string(rng, 0, 200);
+            }
+        }
+
+        chars.into_iter().collect()
+    }
+
     #[test]
     fn computes_expected_simple_insert_and_delete_ops() {
         assert_eq!(
@@ -309,5 +411,84 @@ mod tests {
             .clone()
             .expect("origin should be captured");
         assert_eq!(origin, FILE_WATCHER_ORIGIN.as_bytes());
+    }
+
+    #[test]
+    fn randomized_rapid_save_sequences_match_expected_content() {
+        for seed in [11_u64, 42, 2_026, 65_537] {
+            let doc = Doc::new();
+            let ytext = doc.get_or_insert_text("content");
+            let mut rng = Lcg::new(seed);
+            let mut expected = random_string(&mut rng, 0, 120);
+
+            {
+                let mut txn = doc.transact_mut();
+                ytext.insert(&mut txn, 0, &expected);
+            }
+
+            for _ in 0..250 {
+                let old = expected.clone();
+                let new = mutate_text(&mut rng, &old);
+                apply_text_diff_to_ytext(&doc, &ytext, &old, &new);
+                let actual = ytext.get_string(&doc.transact());
+                assert_eq!(actual, new, "seed={seed} old={old:?}");
+                expected = new;
+            }
+        }
+    }
+
+    #[test]
+    fn simulated_simultaneous_edits_last_save_wins() {
+        for seed in [7_u64, 99, 1_337] {
+            let doc = Doc::new();
+            let ytext = doc.get_or_insert_text("content");
+            let mut rng = Lcg::new(seed);
+            let mut current = random_string(&mut rng, 10, 140);
+
+            {
+                let mut txn = doc.transact_mut();
+                ytext.insert(&mut txn, 0, &current);
+            }
+
+            for _ in 0..120 {
+                // Two "simultaneous" editors branch from the same base.
+                let from = current.clone();
+                let editor_a = mutate_text(&mut rng, &from);
+                let editor_b = mutate_text(&mut rng, &from);
+
+                // Save A, then rapid-save B: final state should be B.
+                apply_text_diff_to_ytext(&doc, &ytext, &from, &editor_a);
+                apply_text_diff_to_ytext(&doc, &ytext, &editor_a, &editor_b);
+                let actual = ytext.get_string(&doc.transact());
+                assert_eq!(actual, editor_b, "seed={seed} from={from:?}");
+                current = editor_b;
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "nightly: randomized large-diff stress coverage for diff-to-Yjs"]
+    fn randomized_large_diffs_nightly() {
+        for seed in [3_u64, 17, 404, 8_191] {
+            let doc = Doc::new();
+            let ytext = doc.get_or_insert_text("content");
+            let mut rng = Lcg::new(seed);
+            let mut expected = random_string(&mut rng, 4_000, 8_000);
+
+            {
+                let mut txn = doc.transact_mut();
+                ytext.insert(&mut txn, 0, &expected);
+            }
+
+            for _ in 0..40 {
+                let old = expected.clone();
+                // Force heavy rewrites to exercise large replace ranges and UTF-8 offsets.
+                let new = random_string(&mut rng, 3_000, 12_000);
+                apply_text_diff_to_ytext(&doc, &ytext, &old, &new);
+                let actual = ytext.get_string(&doc.transact());
+                assert_eq!(actual, new, "seed={seed}");
+                expected = new;
+            }
+        }
     }
 }
