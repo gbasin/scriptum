@@ -9,6 +9,7 @@ mod error;
 pub mod etag;
 pub mod idempotency;
 mod leader;
+mod metrics;
 mod protocol;
 mod sync;
 pub mod validation;
@@ -17,8 +18,11 @@ mod ws;
 use anyhow::Context;
 use axum::{
     body::Body,
-    extract::DefaultBodyLimit,
-    http::{header::AUTHORIZATION, HeaderMap, Request, StatusCode},
+    extract::{DefaultBodyLimit, State},
+    http::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        HeaderMap, HeaderValue, Request, StatusCode,
+    },
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -32,16 +36,18 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{sync::Arc, time::Instant};
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tracing::{error, info, info_span, Instrument};
 use uuid::Uuid;
 use ws::{DocSyncStore, SyncSessionStore};
 
 use crate::auth::{jwt::JwtAccessTokenService, oauth::OAuthState};
 use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
 use crate::error::{
-    attach_request_id_header, default_code_for_status, request_id_from_headers_or_generate,
-    with_request_id_scope, ErrorCode, RelayError,
+    attach_request_id_header, attach_trace_id_header, default_code_for_status,
+    request_id_from_headers_or_generate, trace_id_from_headers_or_generate, with_request_id_scope,
+    with_trace_id_scope, ErrorCode, RelayError, REQUEST_ID_HEADER, TRACE_ID_HEADER,
 };
+use crate::metrics::{set_global_metrics, RelayMetrics};
 use crate::sync::sequencer::UpdateSequencer;
 
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
@@ -99,6 +105,7 @@ struct ReadinessResponse {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cfg = config::RelayConfig::from_env();
+    cfg.validate_security().context("relay transport security configuration is invalid")?;
 
     tracing_subscriber::fmt()
         .json()
@@ -131,10 +138,14 @@ async fn main() -> anyhow::Result<()> {
         .context("relay PostgreSQL health check failed for readiness checks")?;
     let readiness_probe = Arc::new(ReadinessProbe::from_pool(readiness_pool.clone()));
     let sequencer = UpdateSequencer::new();
+    let metrics = Arc::new(RelayMetrics::default());
+    set_global_metrics(Arc::clone(&metrics));
+    let recovery_started_at = std::time::Instant::now();
     sequencer
         .recover_from_max_server_seq(&readiness_pool)
         .await
         .context("failed to recover relay update sequencer from postgres")?;
+    metrics.set_daemon_recovery_time_ms(recovery_started_at.elapsed().as_millis() as u64);
     readiness_probe.mark_sequencer_recovered();
 
     let membership_store = ws::WorkspaceMembershipStore::from_env()
@@ -152,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
             .await
             .context("failed to build relay workspace API router")?,
         readiness_probe,
+        metrics,
     );
 
     let listener = TcpListener::bind(cfg.listen_addr)
@@ -175,12 +187,14 @@ fn build_router(
     ws_base_url: String,
     api_router: Router,
     readiness_probe: Arc<ReadinessProbe>,
+    metrics: Arc<RelayMetrics>,
 ) -> Router {
     apply_middleware(
         Router::new()
             .route("/health", get(health))
             .route("/healthz", get(health))
             .route("/ready", get(ready))
+            .route("/metrics", get(prometheus_metrics))
             .merge(auth::oauth::router(oauth_state))
             .merge(ws::router(
                 jwt_service,
@@ -191,15 +205,17 @@ fn build_router(
                 ws_base_url,
             ))
             .merge(api_router),
+        Arc::clone(&metrics),
     )
     .layer(Extension(readiness_probe))
+    .layer(Extension(metrics))
 }
 
-fn apply_middleware(router: Router) -> Router {
+fn apply_middleware(router: Router, metrics: Arc<RelayMetrics>) -> Router {
     router
         .layer(cors::cors_layer())
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
-        .layer(middleware::from_fn(request_context_middleware))
+        .layer(middleware::from_fn_with_state(metrics, request_context_middleware))
         .layer(middleware::from_fn(panic_handler))
 }
 
@@ -211,6 +227,14 @@ async fn ready(Extension(readiness_probe): Extension<Arc<ReadinessProbe>>) -> im
     let readiness = readiness_probe.evaluate().await;
     let status = if readiness.ready { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
     (status, Json(readiness))
+}
+
+async fn prometheus_metrics(Extension(metrics): Extension<Arc<RelayMetrics>>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        metrics.render_prometheus(),
+    )
 }
 
 async fn shutdown_signal() {
@@ -237,21 +261,44 @@ async fn shutdown_signal() {
     info!("shutdown signal received");
 }
 
-async fn panic_handler(request: Request<Body>, next: Next) -> Response {
+async fn panic_handler(mut request: Request<Body>, next: Next) -> Response {
     let request_id = request_id_from_headers_or_generate(request.headers());
-    match tokio::spawn(async move { next.run(request).await }).await {
+    let trace_id = trace_id_from_headers_or_generate(request.headers());
+    ensure_request_header(&mut request, REQUEST_ID_HEADER, &request_id);
+    ensure_request_header(&mut request, TRACE_ID_HEADER, &trace_id);
+
+    match tokio::spawn(with_trace_id_scope(
+        trace_id.clone(),
+        with_request_id_scope(request_id.clone(), async move { next.run(request).await }),
+    ))
+    .await
+    {
         Ok(response) => response,
         Err(join_error) => {
-            error!(?join_error, request_id = %request_id, "request handling panicked");
-            RelayError::from_code(ErrorCode::InternalError)
+            error!(
+                ?join_error,
+                request_id = %request_id,
+                trace_id = %trace_id,
+                "request handling panicked"
+            );
+            let mut response = RelayError::from_code(ErrorCode::InternalError)
                 .with_request_id(request_id)
-                .into_response()
+                .into_response();
+            attach_trace_id_header(&mut response, &trace_id);
+            response
         }
     }
 }
 
-async fn request_context_middleware(request: Request<Body>, next: Next) -> Response {
+async fn request_context_middleware(
+    State(metrics): State<Arc<RelayMetrics>>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
     let request_id = request_id_from_headers_or_generate(request.headers());
+    let trace_id = trace_id_from_headers_or_generate(request.headers());
+    ensure_request_header(&mut request, REQUEST_ID_HEADER, &request_id);
+    ensure_request_header(&mut request, TRACE_ID_HEADER, &trace_id);
 
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
@@ -260,13 +307,27 @@ async fn request_context_middleware(request: Request<Body>, next: Next) -> Respo
     let actor_hash = actor_hash_from_headers(request.headers());
     let started_at = Instant::now();
 
-    let mut response = with_request_id_scope(request_id.clone(), next.run(request)).await;
+    let request_span = info_span!(
+        "relay.http.request",
+        request_id = %request_id,
+        trace_id = %trace_id,
+        method = %method,
+        path = %path
+    );
+    let mut response = with_trace_id_scope(
+        trace_id.clone(),
+        with_request_id_scope(request_id.clone(), next.run(request)),
+    )
+    .instrument(request_span)
+    .await;
     attach_request_id_header(&mut response, &request_id);
+    attach_trace_id_header(&mut response, &trace_id);
     let status = response.status();
     let error_code = response_error_code(&response);
 
     info!(
         request_id = %request_id,
+        trace_id = %trace_id,
         workspace_id = workspace_id.as_deref().unwrap_or(""),
         actor_hash = actor_hash.as_deref().unwrap_or(""),
         endpoint = %endpoint,
@@ -276,7 +337,23 @@ async fn request_context_middleware(request: Request<Body>, next: Next) -> Respo
         "relay_request"
     );
 
+    metrics.record_http_request(
+        method.as_str(),
+        &path,
+        status.as_u16(),
+        started_at.elapsed().as_millis() as u64,
+    );
+
     response
+}
+
+fn ensure_request_header(request: &mut Request<Body>, header_name: &'static str, value: &str) {
+    if request.headers().contains_key(header_name) {
+        return;
+    }
+    if let Ok(header_value) = HeaderValue::from_str(value) {
+        request.headers_mut().insert(header_name, header_value);
+    }
 }
 
 fn workspace_id_from_path(path: &str) -> Option<Uuid> {
@@ -329,7 +406,10 @@ mod tests {
 
     use axum::{
         body::{to_bytes, Body},
-        http::{header::AUTHORIZATION, HeaderMap, Method, Request, StatusCode},
+        http::{
+            header::{AUTHORIZATION, CONTENT_TYPE},
+            HeaderMap, Method, Request, StatusCode,
+        },
         response::IntoResponse,
         routing::{get, post},
         Router,
@@ -345,7 +425,8 @@ mod tests {
     };
     use crate::{
         auth::{jwt::JwtAccessTokenService, oauth::OAuthState},
-        error::{ErrorCode, REQUEST_ID_HEADER},
+        error::{ErrorCode, REQUEST_ID_HEADER, TRACE_ID_HEADER},
+        metrics::RelayMetrics,
         ws::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore},
     };
 
@@ -366,6 +447,7 @@ mod tests {
         if sequencer_ready {
             readiness_probe.mark_sequencer_recovered();
         }
+        let metrics = Arc::new(RelayMetrics::default());
         build_router(
             jwt_service,
             session_store,
@@ -375,6 +457,7 @@ mod tests {
             "ws://localhost:8080".to_string(),
             Router::new(),
             readiness_probe,
+            metrics,
         )
     }
 
@@ -391,7 +474,25 @@ mod tests {
             .expect("health request should succeed");
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.headers().contains_key("x-request-id"));
+        assert!(response.headers().contains_key(REQUEST_ID_HEADER));
+        assert!(response.headers().contains_key(TRACE_ID_HEADER));
+    }
+
+    #[tokio::test]
+    async fn health_check_reuses_inbound_trace_id_header() {
+        let response = test_router(true, true)
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header(TRACE_ID_HEADER, "trace-health-123")
+                    .body(Body::empty())
+                    .expect("health request should build"),
+            )
+            .await
+            .expect("health request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(TRACE_ID_HEADER).unwrap(), "trace-health-123");
     }
 
     #[tokio::test]
@@ -469,13 +570,17 @@ mod tests {
             panic!("test panic");
         }
 
-        let app = apply_middleware(Router::new().route("/panic", get(panic_route)));
+        let app = apply_middleware(
+            Router::new().route("/panic", get(panic_route)),
+            Arc::new(RelayMetrics::default()),
+        );
 
         let response = app
             .oneshot(
                 Request::builder()
                     .uri("/panic")
                     .header(REQUEST_ID_HEADER, "req-panic-123")
+                    .header(TRACE_ID_HEADER, "trace-panic-456")
                     .body(Body::empty())
                     .expect("panic request should build"),
             )
@@ -484,6 +589,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(response.headers().get(REQUEST_ID_HEADER).unwrap(), "req-panic-123");
+        assert_eq!(response.headers().get(TRACE_ID_HEADER).unwrap(), "trace-panic-456");
 
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
@@ -502,7 +608,10 @@ mod tests {
         }
 
         let oversized_body = "a".repeat(MAX_REQUEST_BODY_BYTES + 1);
-        let app = apply_middleware(Router::new().route("/echo", post(echo)));
+        let app = apply_middleware(
+            Router::new().route("/echo", post(echo)),
+            Arc::new(RelayMetrics::default()),
+        );
 
         let response = app
             .oneshot(
@@ -595,5 +704,75 @@ mod tests {
     fn response_error_code_falls_back_to_status_mapping() {
         let response = StatusCode::UNAUTHORIZED.into_response();
         assert_eq!(response_error_code(&response), Some("AUTH_INVALID_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_exposes_red_and_custom_metrics() {
+        let app = test_router(true, true);
+
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("health request should build"),
+            )
+            .await
+            .expect("health request should succeed");
+
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/does-not-exist")
+                    .body(Body::empty())
+                    .expect("404 request should build"),
+            )
+            .await
+            .expect("404 request should return response");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .expect("metrics request should build"),
+            )
+            .await
+            .expect("metrics request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .expect("metrics content-type should be present"),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+
+        let body =
+            to_bytes(response.into_body(), usize::MAX).await.expect("metrics body should read");
+        let rendered =
+            String::from_utf8(body.to_vec()).expect("metrics body should be valid utf-8");
+
+        assert!(rendered.contains("relay_request_rate_total"));
+        assert!(rendered.contains("relay_request_errors_total"));
+        assert!(rendered.contains("relay_request_duration_ms_sum"));
+        assert!(rendered.contains("relay_request_duration_ms_count"));
+        assert!(rendered.contains("relay_ws_rate_total"));
+        assert!(rendered.contains("relay_ws_errors_total"));
+        assert!(rendered.contains("relay_ws_duration_ms_sum"));
+        assert!(rendered.contains("relay_ws_duration_ms_count"));
+        assert!(rendered.contains("sync_ack_latency_ms"));
+        assert!(rendered.contains("outbox_depth{workspace_id=\"unknown\"} 0"));
+        assert!(rendered.contains("daemon_recovery_time_ms"));
+        assert!(rendered.contains("git_sync_jobs_total{state=\"queued\"} 0"));
+        assert!(rendered.contains("git_sync_jobs_total{state=\"running\"} 0"));
+        assert!(rendered.contains("git_sync_jobs_total{state=\"completed\"} 0"));
+        assert!(rendered.contains("git_sync_jobs_total{state=\"failed\"} 0"));
+        assert!(rendered.contains("sequence_gap_count"));
+        assert!(rendered.contains("endpoint=\"/health\""));
     }
 }

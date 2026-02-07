@@ -4,7 +4,10 @@ use crate::auth::{
 };
 use crate::awareness::AwarenessStore;
 use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
-use crate::error::{ErrorCode, RelayError};
+use crate::error::{
+    current_trace_id, trace_id_from_headers_or_generate, with_trace_id_scope, ErrorCode, RelayError,
+};
+use crate::metrics;
 use crate::protocol;
 use anyhow::Context;
 use axum::{
@@ -12,7 +15,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Extension, Path, State,
     },
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{get, post},
@@ -306,6 +309,7 @@ pub async fn create_sync_session(
 pub async fn ws_upgrade(
     Path(session_id): Path<Uuid>,
     State(state): State<SyncSessionRouterState>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     if !state.session_store.session_exists(session_id).await {
@@ -316,14 +320,18 @@ pub async fn ws_upgrade(
     let doc_store = state.doc_store.clone();
     let awareness_store = state.awareness_store.clone();
     let membership_store = state.membership_store.clone();
+    let trace_id = trace_id_from_headers_or_generate(&headers);
     ws.max_frame_size(MAX_FRAME_BYTES as usize).on_upgrade(move |socket| async move {
-        handle_socket(
-            session_store,
-            doc_store,
-            awareness_store,
-            membership_store,
-            session_id,
-            socket,
+        with_trace_id_scope(
+            trace_id,
+            handle_socket(
+                session_store,
+                doc_store,
+                awareness_store,
+                membership_store,
+                session_id,
+                socket,
+            ),
         )
         .await;
     })
@@ -337,10 +345,13 @@ async fn handle_socket(
     session_id: Uuid,
     mut socket: WebSocket,
 ) {
+    let trace_id = current_trace_id().unwrap_or_else(|| "unknown".to_string());
+
     if !session_store.mark_connected(session_id).await {
         return;
     }
 
+    let hello_started_at = Instant::now();
     let hello = match socket.recv().await {
         Some(Ok(Message::Text(raw_message))) => {
             match serde_json::from_str::<WsMessage>(&raw_message) {
@@ -354,6 +365,11 @@ async fn handle_socket(
                 {
                     Ok(hello_ack) => hello_ack,
                     Err(error_message) => {
+                        metrics::record_ws_request(
+                            "hello",
+                            true,
+                            hello_started_at.elapsed().as_millis() as u64,
+                        );
                         let _ = send_ws_message(&mut socket, &error_message).await;
                         let _ = socket.send(Message::Close(None)).await;
                         session_store.mark_disconnected(session_id).await;
@@ -361,6 +377,11 @@ async fn handle_socket(
                     }
                 },
                 _ => {
+                    metrics::record_ws_request(
+                        "hello",
+                        true,
+                        hello_started_at.elapsed().as_millis() as u64,
+                    );
                     let _ = send_ws_message(
                         &mut socket,
                         &WsMessage::Error {
@@ -378,15 +399,22 @@ async fn handle_socket(
             }
         }
         _ => {
+            metrics::record_ws_request(
+                "hello",
+                true,
+                hello_started_at.elapsed().as_millis() as u64,
+            );
             session_store.mark_disconnected(session_id).await;
             return;
         }
     };
 
     if send_ws_message(&mut socket, &hello).await.is_err() {
+        metrics::record_ws_request("hello", true, hello_started_at.elapsed().as_millis() as u64);
         session_store.mark_disconnected(session_id).await;
         return;
     }
+    metrics::record_ws_request("hello", false, hello_started_at.elapsed().as_millis() as u64);
 
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel::<WsMessage>();
     if !session_store.register_outbound(session_id, outbound_sender).await {
@@ -406,7 +434,11 @@ async fn handle_socket(
         tokio::select! {
             _ = heartbeat_interval.tick() => {
                 if last_pong.elapsed() > heartbeat_timeout {
-                    warn!(session_id = %session_id, "heartbeat timeout, disconnecting");
+                    warn!(
+                        session_id = %session_id,
+                        trace_id = %trace_id,
+                        "heartbeat timeout, disconnecting"
+                    );
                     break;
                 }
                 if socket.send(Message::Ping(vec![].into())).await.is_err() {
@@ -453,6 +485,7 @@ async fn handle_socket(
 
                         match inbound {
                             WsMessage::Subscribe { doc_id, last_server_seq } => {
+                                let started_at = Instant::now();
                                 match handle_subscribe_message(
                                     &session_store,
                                     &doc_store,
@@ -464,6 +497,11 @@ async fn handle_socket(
                                 .await
                                 {
                                     Ok(outbound_messages) => {
+                                        metrics::record_ws_request(
+                                            "subscribe",
+                                            false,
+                                            started_at.elapsed().as_millis() as u64,
+                                        );
                                         let mut send_failed = false;
                                         for outbound in outbound_messages {
                                             if send_ws_message(&mut socket, &outbound).await.is_err() {
@@ -477,6 +515,11 @@ async fn handle_socket(
                                         }
                                     }
                                     Err(error_message) => {
+                                        metrics::record_ws_request(
+                                            "subscribe",
+                                            true,
+                                            started_at.elapsed().as_millis() as u64,
+                                        );
                                         if send_ws_message(&mut socket, &error_message).await.is_err() {
                                             break;
                                         }
@@ -490,6 +533,7 @@ async fn handle_socket(
                                 base_server_seq,
                                 payload_b64,
                             } => {
+                                let started_at = Instant::now();
                                 match handle_yjs_update_message(
                                     &session_store,
                                     &doc_store,
@@ -503,6 +547,9 @@ async fn handle_socket(
                                 .await
                                 {
                                     Ok(result) => {
+                                        let elapsed_ms = started_at.elapsed().as_millis() as u64;
+                                        metrics::observe_sync_ack_latency_ms(elapsed_ms);
+                                        metrics::record_ws_request("yjs_update", false, elapsed_ms);
                                         if send_ws_message(&mut socket, &result.ack).await.is_err() {
                                             break;
                                         }
@@ -517,6 +564,14 @@ async fn handle_socket(
                                         }
                                     }
                                     Err(error_message) => {
+                                        let elapsed_ms = started_at.elapsed().as_millis() as u64;
+                                        metrics::record_ws_request("yjs_update", true, elapsed_ms);
+                                        if matches!(
+                                            &error_message,
+                                            WsMessage::Error { code, .. } if code == "SYNC_BASE_SERVER_SEQ_MISMATCH"
+                                        ) {
+                                            metrics::increment_sequence_gap_count();
+                                        }
                                         if send_ws_message(&mut socket, &error_message).await.is_err() {
                                             break;
                                         }
@@ -524,6 +579,7 @@ async fn handle_socket(
                                 }
                             }
                             WsMessage::AwarenessUpdate { doc_id, peers } => {
+                                let started_at = Instant::now();
                                 match handle_awareness_update(
                                     &session_store,
                                     &awareness_store,
@@ -534,6 +590,11 @@ async fn handle_socket(
                                 .await
                                 {
                                     Ok(broadcast) => {
+                                        metrics::record_ws_request(
+                                            "awareness_update",
+                                            false,
+                                            started_at.elapsed().as_millis() as u64,
+                                        );
                                         let _ = session_store
                                             .broadcast_to_subscribers_excluding(
                                                 broadcast.workspace_id,
@@ -544,6 +605,11 @@ async fn handle_socket(
                                             .await;
                                     }
                                     Err(error_message) => {
+                                        metrics::record_ws_request(
+                                            "awareness_update",
+                                            true,
+                                            started_at.elapsed().as_millis() as u64,
+                                        );
                                         if send_ws_message(&mut socket, &error_message).await.is_err() {
                                             break;
                                         }
@@ -687,6 +753,7 @@ async fn handle_subscribe_message(
                 error!(
                     error = ?error,
                     session_id = %session_id,
+                    trace_id = current_trace_id().as_deref().unwrap_or(""),
                     actor_user_id = %actor_user_id,
                     workspace_id = %workspace_id,
                     "failed to evaluate websocket subscribe permissions",
@@ -892,18 +959,28 @@ impl DocSyncStore {
         payload_b64: String,
     ) {
         let mut guard = self.docs.write().await;
-        let state = guard.entry((workspace_id, doc_id)).or_default();
-        state.updates.push(DocUpdateState {
-            server_seq,
-            client_id,
-            client_update_id,
-            payload_b64,
-            actor_user_id: None,
-            actor_agent_id: None,
-        });
-        state.dedupe.insert((client_id, client_update_id), server_seq);
-        state.head_server_seq = state.head_server_seq.max(server_seq);
-        state.updates.sort_by_key(|update| update.server_seq);
+        {
+            let state = guard.entry((workspace_id, doc_id)).or_default();
+            let previous_head_server_seq = state.head_server_seq;
+            if server_seq > previous_head_server_seq.saturating_add(1) {
+                metrics::increment_sequence_gap_count();
+            }
+
+            state.updates.push(DocUpdateState {
+                server_seq,
+                client_id,
+                client_update_id,
+                payload_b64,
+                actor_user_id: None,
+                actor_agent_id: None,
+            });
+            state.dedupe.insert((client_id, client_update_id), server_seq);
+            state.head_server_seq = state.head_server_seq.max(server_seq);
+            state.updates.sort_by_key(|update| update.server_seq);
+        }
+
+        let outbox_depth = workspace_outbox_depth(&guard, workspace_id);
+        metrics::set_outbox_depth_for_workspace(workspace_id, outbox_depth);
     }
 
     async fn apply_client_update(
@@ -917,34 +994,43 @@ impl DocSyncStore {
         attribution: UpdateAttribution,
     ) -> ApplyClientUpdateResult {
         let mut guard = self.docs.write().await;
-        let state = guard.entry((workspace_id, doc_id)).or_default();
+        let result = {
+            let state = guard.entry((workspace_id, doc_id)).or_default();
 
-        if let Some(existing_server_seq) = state.dedupe.get(&(client_id, client_update_id)).copied()
-        {
-            return ApplyClientUpdateResult::Duplicate { server_seq: existing_server_seq };
-        }
+            if let Some(existing_server_seq) =
+                state.dedupe.get(&(client_id, client_update_id)).copied()
+            {
+                return ApplyClientUpdateResult::Duplicate { server_seq: existing_server_seq };
+            }
 
-        if base_server_seq > state.head_server_seq {
-            return ApplyClientUpdateResult::RejectedBaseSeq { server_seq: state.head_server_seq };
-        }
+            if base_server_seq > state.head_server_seq {
+                return ApplyClientUpdateResult::RejectedBaseSeq {
+                    server_seq: state.head_server_seq,
+                };
+            }
 
-        let next_server_seq = state.head_server_seq.saturating_add(1);
-        state.head_server_seq = next_server_seq;
-        state.dedupe.insert((client_id, client_update_id), next_server_seq);
-        state.updates.push(DocUpdateState {
-            server_seq: next_server_seq,
-            client_id,
-            client_update_id,
-            payload_b64,
-            actor_user_id: attribution.user_id,
-            actor_agent_id: attribution.agent_id,
-        });
-        state.updates.sort_by_key(|update| update.server_seq);
+            let next_server_seq = state.head_server_seq.saturating_add(1);
+            state.head_server_seq = next_server_seq;
+            state.dedupe.insert((client_id, client_update_id), next_server_seq);
+            state.updates.push(DocUpdateState {
+                server_seq: next_server_seq,
+                client_id,
+                client_update_id,
+                payload_b64,
+                actor_user_id: attribution.user_id,
+                actor_agent_id: attribution.agent_id,
+            });
+            state.updates.sort_by_key(|update| update.server_seq);
 
-        ApplyClientUpdateResult::Applied {
-            server_seq: next_server_seq,
-            broadcast_base_server_seq: next_server_seq.saturating_sub(1),
-        }
+            ApplyClientUpdateResult::Applied {
+                server_seq: next_server_seq,
+                broadcast_base_server_seq: next_server_seq.saturating_sub(1),
+            }
+        };
+
+        let outbox_depth = workspace_outbox_depth(&guard, workspace_id);
+        metrics::set_outbox_depth_for_workspace(workspace_id, outbox_depth);
+        result
     }
 
     async fn build_state_sync_messages(
@@ -1005,6 +1091,13 @@ impl DocSyncStore {
             agent_id: update.actor_agent_id.clone(),
         })
     }
+}
+
+fn workspace_outbox_depth(docs: &HashMap<(Uuid, Uuid), DocSyncState>, workspace_id: Uuid) -> i64 {
+    docs.iter()
+        .filter(|((doc_workspace_id, _), _)| *doc_workspace_id == workspace_id)
+        .map(|(_, state)| state.updates.len() as i64)
+        .sum()
 }
 
 impl SyncSessionStore {
@@ -1181,17 +1274,17 @@ impl SyncSessionStore {
         let mut recipients = Vec::new();
         {
             let guard = self.sessions.read().await;
-            for session in guard.values() {
+            for (session_id, session) in guard.iter() {
                 if session.workspace_id == workspace_id && session.subscriptions.contains(&doc_id) {
                     if let Some(sender) = session.outbound.clone() {
-                        recipients.push(sender);
+                        recipients.push((*session_id, sender));
                     }
                 }
             }
         }
 
         let mut sent_count = 0;
-        for recipient in recipients {
+        for (_session_id, recipient) in recipients {
             if recipient.send(message.clone()).is_ok() {
                 sent_count += 1;
             }
@@ -1217,14 +1310,14 @@ impl SyncSessionStore {
                 }
                 if session.workspace_id == workspace_id && session.subscriptions.contains(&doc_id) {
                     if let Some(sender) = session.outbound.clone() {
-                        recipients.push(sender);
+                        recipients.push((*session_id, sender));
                     }
                 }
             }
         }
 
         let mut sent_count = 0;
-        for recipient in recipients {
+        for (_session_id, recipient) in recipients {
             if recipient.send(message.clone()).is_ok() {
                 sent_count += 1;
             }
@@ -1280,9 +1373,9 @@ mod tests {
     use chrono::{Duration, Utc};
     use futures_util::{SinkExt, StreamExt};
     use scriptum_common::protocol::ws::WsMessage;
-    use std::sync::Arc;
+    use std::{env, sync::Arc};
     use tokio::net::TcpListener;
-    use tokio::time::timeout;
+    use tokio::time::{sleep, timeout, Instant as TokioInstant};
     use tokio_tungstenite::{
         connect_async, tungstenite::Message as WsFrame, MaybeTlsStream, WebSocketStream,
     };
@@ -1299,6 +1392,101 @@ mod tests {
     }
 
     type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    #[derive(Clone, Copy, Debug)]
+    struct LoadStressProfile {
+        concurrent_sessions: usize,
+        updates_per_second: u32,
+        soak_seconds: u64,
+        ack_p95_target_ms: u64,
+        min_updates_per_second_ratio: f64,
+    }
+
+    impl LoadStressProfile {
+        fn smoke() -> Self {
+            Self {
+                concurrent_sessions: 24,
+                updates_per_second: 6,
+                soak_seconds: 4,
+                ack_p95_target_ms: 2_000,
+                min_updates_per_second_ratio: 0.50,
+            }
+        }
+
+        fn weekly_or_pre_release() -> Self {
+            Self {
+                concurrent_sessions: 1_000,
+                updates_per_second: 50,
+                soak_seconds: 3_600,
+                ack_p95_target_ms: 500,
+                min_updates_per_second_ratio: 0.90,
+            }
+        }
+
+        fn with_env_overrides(self) -> Self {
+            Self {
+                concurrent_sessions: parse_env_usize(
+                    "SCRIPTUM_RELAY_LOAD_CONCURRENT_SESSIONS",
+                    self.concurrent_sessions,
+                ),
+                updates_per_second: parse_env_u32(
+                    "SCRIPTUM_RELAY_LOAD_UPDATES_PER_SECOND",
+                    self.updates_per_second,
+                ),
+                soak_seconds: parse_env_u64("SCRIPTUM_RELAY_LOAD_SOAK_SECONDS", self.soak_seconds),
+                ack_p95_target_ms: parse_env_u64(
+                    "SCRIPTUM_RELAY_LOAD_ACK_P95_TARGET_MS",
+                    self.ack_p95_target_ms,
+                ),
+                min_updates_per_second_ratio: parse_env_f64(
+                    "SCRIPTUM_RELAY_LOAD_MIN_UPDATES_RATIO",
+                    self.min_updates_per_second_ratio,
+                ),
+            }
+        }
+    }
+
+    fn parse_env_usize(name: &str, default: usize) -> usize {
+        env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn parse_env_u32(name: &str, default: u32) -> u32 {
+        env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn parse_env_u64(name: &str, default: u64) -> u64 {
+        env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn parse_env_f64(name: &str, default: f64) -> f64 {
+        env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| *value > 0.0)
+            .unwrap_or(default)
+    }
+
+    fn percentile_millis(samples: &mut [u64], percentile: f64) -> u64 {
+        if samples.is_empty() {
+            return 0;
+        }
+        samples.sort_unstable();
+        let rank = ((samples.len() as f64) * percentile).ceil() as usize;
+        let index = rank.saturating_sub(1).min(samples.len() - 1);
+        samples[index]
+    }
 
     async fn ws_send(socket: &mut ClientSocket, message: &WsMessage) {
         let raw = serde_json::to_string(message).expect("ws message should serialize");
@@ -1676,6 +1864,222 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_load_stress_smoke_profile() {
+        run_websocket_load_stress_profile(LoadStressProfile::smoke().with_env_overrides()).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "long-running load suite (1000 sessions, 50 updates/sec/doc, 1h soak)"]
+    async fn websocket_load_stress_weekly_and_pre_release_profile() {
+        let profile = LoadStressProfile::weekly_or_pre_release().with_env_overrides();
+        run_websocket_load_stress_profile(profile).await;
+    }
+
+    async fn run_websocket_load_stress_profile(profile: LoadStressProfile) {
+        let Some(database_url) = env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
+            eprintln!("skipping websocket load/stress test: set SCRIPTUM_RELAY_TEST_DATABASE_URL");
+            return;
+        };
+
+        let pool = create_pg_pool(
+            &database_url,
+            PoolConfig { min_connections: 1, max_connections: 8, ..PoolConfig::default() },
+        )
+        .await
+        .expect("pool should connect to test database");
+        run_migrations(&pool).await.expect("migrations should apply");
+
+        let workspace_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let user_email = format!("relay-load-{}@example.test", Uuid::new_v4().simple());
+        let workspace_slug = format!("relay-load-{}", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)")
+            .bind(user_id)
+            .bind(user_email)
+            .bind("Relay Load Test User")
+            .execute(&pool)
+            .await
+            .expect("user should insert");
+        sqlx::query("INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, $3, $4)")
+            .bind(workspace_id)
+            .bind(workspace_slug)
+            .bind("Relay Load Workspace")
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .expect("workspace should insert");
+        sqlx::query(
+            "INSERT INTO workspace_members (workspace_id, user_id, role, status) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(workspace_id)
+        .bind(user_id)
+        .bind("editor")
+        .bind("active")
+        .execute(&pool)
+        .await
+        .expect("workspace membership should insert");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose local address");
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let session_store = Arc::new(SyncSessionStore::default());
+        let app = router(
+            jwt_service.clone(),
+            session_store.clone(),
+            Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
+            WorkspaceMembershipStore::Postgres(pool.clone()),
+            format!("ws://{addr}"),
+        );
+        let access_token = jwt_service
+            .issue_workspace_token(user_id, workspace_id)
+            .expect("access token should be created");
+
+        let mut sessions = Vec::with_capacity(profile.concurrent_sessions);
+        for _ in 0..profile.concurrent_sessions {
+            sessions.push(create_sync_session_for_test(&app, workspace_id, &access_token).await);
+        }
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("relay websocket server should run for load/stress test");
+        });
+
+        let doc_id = Uuid::new_v4();
+        let mut sockets = Vec::with_capacity(profile.concurrent_sessions);
+        for session in &sessions {
+            let (mut socket, _) =
+                connect_async(session.ws_url.as_str()).await.expect("websocket should connect");
+            ws_send(
+                &mut socket,
+                &WsMessage::Hello {
+                    session_token: session.session_token.clone(),
+                    resume_token: None,
+                },
+            )
+            .await;
+            match ws_recv(&mut socket).await {
+                WsMessage::HelloAck { .. } => {}
+                other => panic!("expected hello ack, got {other:?}"),
+            }
+            ws_send(&mut socket, &WsMessage::Subscribe { doc_id, last_server_seq: Some(0) }).await;
+            sockets.push(socket);
+        }
+
+        let wait_deadline = TokioInstant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let mut all_subscribed = true;
+            for session in &sessions {
+                if !session_store.session_is_subscribed(session.session_id, doc_id).await {
+                    all_subscribed = false;
+                    break;
+                }
+            }
+            if all_subscribed {
+                break;
+            }
+            assert!(
+                TokioInstant::now() < wait_deadline,
+                "timed out waiting for {}/{} sessions to subscribe",
+                profile.concurrent_sessions,
+                profile.concurrent_sessions
+            );
+            sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let mut writer_socket = sockets.remove(0);
+        let mut reader_tasks = Vec::with_capacity(sockets.len());
+        for mut socket in sockets {
+            reader_tasks.push(tokio::spawn(async move {
+                loop {
+                    let next = timeout(std::time::Duration::from_secs(30), socket.next()).await;
+                    match next {
+                        Ok(Some(Ok(WsFrame::Ping(payload)))) => {
+                            if socket.send(WsFrame::Pong(payload)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(Some(Ok(WsFrame::Close(_)))) | Ok(Some(Err(_))) | Ok(None) => break,
+                        Ok(Some(Ok(WsFrame::Text(_))))
+                        | Ok(Some(Ok(WsFrame::Binary(_))))
+                        | Ok(Some(Ok(WsFrame::Pong(_))))
+                        | Ok(Some(Ok(WsFrame::Frame(_))))
+                        | Err(_) => {}
+                    }
+                }
+            }));
+        }
+
+        let total_updates =
+            (profile.updates_per_second as u64).saturating_mul(profile.soak_seconds);
+        let pacing_interval =
+            std::time::Duration::from_secs_f64(1.0 / (profile.updates_per_second as f64));
+        let mut ack_latencies_ms = Vec::with_capacity(total_updates as usize);
+        let benchmark_start = TokioInstant::now();
+
+        for _ in 0..total_updates {
+            let update_id = Uuid::new_v4();
+            let send_started = TokioInstant::now();
+            ws_send(
+                &mut writer_socket,
+                &WsMessage::YjsUpdate {
+                    doc_id,
+                    client_id: Uuid::new_v4(),
+                    client_update_id: update_id,
+                    base_server_seq: 0,
+                    payload_b64: "cGF5bG9hZA==".to_string(),
+                },
+            )
+            .await;
+
+            loop {
+                match ws_recv(&mut writer_socket).await {
+                    WsMessage::Ack { client_update_id, applied, .. }
+                        if client_update_id == update_id =>
+                    {
+                        assert!(applied, "load update ack should be applied");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            ack_latencies_ms.push(send_started.elapsed().as_millis() as u64);
+            sleep(pacing_interval).await;
+        }
+
+        let elapsed = benchmark_start.elapsed();
+        let achieved_updates_per_second = (total_updates as f64) / elapsed.as_secs_f64();
+        let ack_p95_ms = percentile_millis(&mut ack_latencies_ms, 0.95);
+
+        assert!(
+            achieved_updates_per_second
+                >= (profile.updates_per_second as f64) * profile.min_updates_per_second_ratio,
+            "achieved throughput {:.2} updates/sec below minimum {:.2} (target {} updates/sec)",
+            achieved_updates_per_second,
+            (profile.updates_per_second as f64) * profile.min_updates_per_second_ratio,
+            profile.updates_per_second
+        );
+        assert!(
+            ack_p95_ms <= profile.ack_p95_target_ms,
+            "ack p95 {}ms exceeded target {}ms",
+            ack_p95_ms,
+            profile.ack_p95_target_ms
+        );
+
+        let _ = writer_socket.close(None).await;
+        for task in reader_tasks {
+            task.abort();
+        }
+        server_task.abort();
+        let _ = server_task.await;
+    }
+
+    #[tokio::test]
     async fn sync_session_store_tracks_active_connections() {
         let store = SyncSessionStore::default();
         let session_id = Uuid::new_v4();
@@ -1820,14 +2224,10 @@ mod tests {
             other => panic!("expected hello ack, got {other:?}"),
         }
 
-        let reused = handle_hello_message(
-            &store,
-            session_id,
-            session_token,
-            Some(first_resume_token),
-        )
-        .await
-        .expect("reused token hello should still succeed");
+        let reused =
+            handle_hello_message(&store, session_id, session_token, Some(first_resume_token))
+                .await
+                .expect("reused token hello should still succeed");
         match reused {
             WsMessage::HelloAck { resume_accepted, .. } => assert!(!resume_accepted),
             other => panic!("expected hello ack, got {other:?}"),
