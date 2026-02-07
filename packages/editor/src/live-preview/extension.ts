@@ -1,16 +1,6 @@
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import {
-  type EditorState,
-  type Extension,
-  RangeSetBuilder,
-  StateField,
-} from "@codemirror/state";
-import {
-  Decoration,
-  type DecorationSet,
-  EditorView,
-  WidgetType,
-} from "@codemirror/view";
+import { markdown } from "@codemirror/lang-markdown";
+import { type Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { footnotePreview } from "../extensions/footnotes";
 import {
   codeBlockDecorations,
@@ -43,7 +33,6 @@ import {
 } from "./table";
 import {
   activeLines,
-  getGlobalRecord,
   markdownTreeField,
 } from "./shared";
 
