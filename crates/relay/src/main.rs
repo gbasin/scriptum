@@ -22,20 +22,77 @@ use axum::{
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
+    Extension, Json, Router,
 };
+use serde::Serialize;
+use sqlx::PgPool;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{sync::Arc, time::Instant};
 use tokio::net::TcpListener;
 use tracing::{error, info};
 use ws::{DocSyncStore, SyncSessionStore};
 
 use crate::auth::{jwt::JwtAccessTokenService, oauth::OAuthState};
+use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
 use crate::error::{
     attach_request_id_header, request_id_from_headers_or_generate, with_request_id_scope,
     ErrorCode, RelayError,
 };
+use crate::sync::sequencer::UpdateSequencer;
 
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+type DbCheckFuture = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
+type DbCheckFn = dyn Fn() -> DbCheckFuture + Send + Sync;
+
+#[derive(Clone)]
+struct ReadinessProbe {
+    db_check: Arc<DbCheckFn>,
+    sequencer_recovered: Arc<AtomicBool>,
+}
+
+impl ReadinessProbe {
+    fn from_pool(pool: PgPool) -> Self {
+        let pool = Arc::new(pool);
+        let db_check = Arc::new(move || {
+            let pool = Arc::clone(&pool);
+            Box::pin(async move { check_pool_health(&pool).await })
+                as Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>
+        });
+
+        Self { db_check, sequencer_recovered: Arc::new(AtomicBool::new(false)) }
+    }
+
+    #[cfg(test)]
+    fn from_db_check<F>(db_check: F) -> Self
+    where
+        F: Fn() -> DbCheckFuture + Send + Sync + 'static,
+    {
+        Self { db_check: Arc::new(db_check), sequencer_recovered: Arc::new(AtomicBool::new(false)) }
+    }
+
+    fn mark_sequencer_recovered(&self) {
+        self.sequencer_recovered.store(true, Ordering::SeqCst);
+    }
+
+    async fn evaluate(&self) -> ReadinessResponse {
+        let db_connected = (self.db_check)().await.is_ok();
+        let sequencer_recovered = self.sequencer_recovered.load(Ordering::SeqCst);
+        ReadinessResponse {
+            ready: db_connected && sequencer_recovered,
+            db_connected,
+            sequencer_recovered,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct ReadinessResponse {
+    ready: bool,
+    db_connected: bool,
+    sequencer_recovered: bool,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -56,6 +113,23 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(JwtAccessTokenService::new(&cfg.jwt_secret).context("invalid relay JWT secret")?);
     let session_store = Arc::new(SyncSessionStore::default());
     let doc_store = Arc::new(DocSyncStore::default());
+    let readiness_database_url = cfg
+        .database_url
+        .as_deref()
+        .context("SCRIPTUM_RELAY_DATABASE_URL must be set for readiness checks")?;
+    let readiness_pool = create_pg_pool(readiness_database_url, PoolConfig::from_env())
+        .await
+        .context("failed to initialize relay PostgreSQL pool for readiness checks")?;
+    check_pool_health(&readiness_pool)
+        .await
+        .context("relay PostgreSQL health check failed for readiness checks")?;
+    let readiness_probe = Arc::new(ReadinessProbe::from_pool(readiness_pool.clone()));
+    let sequencer = UpdateSequencer::new();
+    sequencer
+        .recover_from_max_server_seq(&readiness_pool)
+        .await
+        .context("failed to recover relay update sequencer from postgres")?;
+    readiness_probe.mark_sequencer_recovered();
     let membership_store = ws::WorkspaceMembershipStore::from_env()
         .await
         .context("failed to initialize websocket workspace membership store")?;
@@ -70,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
         api::build_router_from_env(jwt_service)
             .await
             .context("failed to build relay workspace API router")?,
+        readiness_probe,
     );
 
     let listener = TcpListener::bind(cfg.listen_addr)
@@ -92,14 +167,18 @@ fn build_router(
     oauth_state: OAuthState,
     ws_base_url: String,
     api_router: Router,
+    readiness_probe: Arc<ReadinessProbe>,
 ) -> Router {
     apply_middleware(
         Router::new()
-            .route("/healthz", get(healthz))
+            .route("/health", get(health))
+            .route("/healthz", get(health))
+            .route("/ready", get(ready))
             .merge(auth::oauth::router(oauth_state))
             .merge(ws::router(jwt_service, session_store, doc_store, Arc::new(awareness::AwarenessStore::default()), membership_store, ws_base_url))
             .merge(api_router),
     )
+    .layer(Extension(readiness_probe))
 }
 
 fn apply_middleware(router: Router) -> Router {
@@ -110,8 +189,14 @@ fn apply_middleware(router: Router) -> Router {
         .layer(middleware::from_fn(panic_handler))
 }
 
-async fn healthz() -> (StatusCode, &'static str) {
+async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
+}
+
+async fn ready(Extension(readiness_probe): Extension<Arc<ReadinessProbe>>) -> impl IntoResponse {
+    let readiness = readiness_probe.evaluate().await;
+    let status = if readiness.ready { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    (status, Json(readiness))
 }
 
 async fn shutdown_signal() {
@@ -187,20 +272,32 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use super::{apply_middleware, build_router, MAX_REQUEST_BODY_BYTES};
+    use super::{
+        apply_middleware, build_router, DbCheckFuture, ReadinessProbe, MAX_REQUEST_BODY_BYTES,
+    };
     use crate::{
         auth::{jwt::JwtAccessTokenService, oauth::OAuthState},
         error::REQUEST_ID_HEADER,
         ws::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore},
     };
 
-    fn test_router() -> Router {
+    fn test_router(db_ready: bool, sequencer_ready: bool) -> Router {
         let jwt_service = Arc::new(
             JwtAccessTokenService::new("scriptum_test_secret_that_is_definitely_long_enough")
                 .expect("test jwt service should initialize"),
         );
         let session_store = Arc::new(SyncSessionStore::default());
         let doc_store = Arc::new(DocSyncStore::default());
+        let readiness_probe = Arc::new(ReadinessProbe::from_db_check(move || {
+            if db_ready {
+                Box::pin(async { Ok(()) }) as DbCheckFuture
+            } else {
+                Box::pin(async { Err(anyhow::anyhow!("db unavailable")) }) as DbCheckFuture
+            }
+        }));
+        if sequencer_ready {
+            readiness_probe.mark_sequencer_recovered();
+        }
         build_router(
             jwt_service,
             session_store,
@@ -209,23 +306,93 @@ mod tests {
             OAuthState::from_env(),
             "ws://localhost:8080".to_string(),
             Router::new(),
+            readiness_probe,
         )
     }
 
     #[tokio::test]
     async fn health_check_has_request_id_header() {
-        let response = test_router()
+        let response = test_router(true, true)
             .oneshot(
                 Request::builder()
-                    .uri("/healthz")
+                    .uri("/health")
                     .body(Body::empty())
-                    .expect("healthz request should build"),
+                    .expect("health request should build"),
             )
             .await
-            .expect("healthz request should succeed");
+            .expect("health request should succeed");
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().contains_key("x-request-id"));
+    }
+
+    #[tokio::test]
+    async fn readiness_returns_service_unavailable_when_sequencer_not_recovered() {
+        let response = test_router(true, false)
+            .oneshot(
+                Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .expect("ready request should build"),
+            )
+            .await
+            .expect("ready request should return response");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("ready response body should read");
+        let parsed: Value =
+            serde_json::from_slice(&body).expect("ready response should be valid json");
+        assert_eq!(parsed["ready"], false);
+        assert_eq!(parsed["db_connected"], true);
+        assert_eq!(parsed["sequencer_recovered"], false);
+    }
+
+    #[tokio::test]
+    async fn readiness_returns_service_unavailable_when_database_is_unreachable() {
+        let response = test_router(false, true)
+            .oneshot(
+                Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .expect("ready request should build"),
+            )
+            .await
+            .expect("ready request should return response");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("ready response body should read");
+        let parsed: Value =
+            serde_json::from_slice(&body).expect("ready response should be valid json");
+        assert_eq!(parsed["ready"], false);
+        assert_eq!(parsed["db_connected"], false);
+        assert_eq!(parsed["sequencer_recovered"], true);
+    }
+
+    #[tokio::test]
+    async fn readiness_returns_ok_when_database_and_sequencer_are_ready() {
+        let response = test_router(true, true)
+            .oneshot(
+                Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .expect("ready request should build"),
+            )
+            .await
+            .expect("ready request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("ready response body should read");
+        let parsed: Value =
+            serde_json::from_slice(&body).expect("ready response should be valid json");
+        assert_eq!(parsed["ready"], true);
+        assert_eq!(parsed["db_connected"], true);
+        assert_eq!(parsed["sequencer_recovered"], true);
     }
 
     #[tokio::test]
@@ -293,7 +460,7 @@ mod tests {
             Uuid::new_v4()
         );
 
-        let response = test_router()
+        let response = test_router(true, true)
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
