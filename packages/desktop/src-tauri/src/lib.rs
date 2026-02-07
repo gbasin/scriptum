@@ -34,6 +34,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::auth_redirect_uri,
+            commands::desktop_webdriver_contract,
             commands::auth_open_browser,
             commands::auth_parse_callback,
             commands::auth_store_tokens,
