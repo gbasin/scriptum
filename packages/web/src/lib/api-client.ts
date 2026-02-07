@@ -127,6 +127,21 @@ interface ApiClient {
     documentId: string,
     input: CreateCommentInput,
   ) => Promise<{ thread: CommentThread; message: CommentMessage }>;
+  addCommentMessage: (
+    workspaceId: string,
+    threadId: string,
+    bodyMd: string,
+  ) => Promise<CommentMessage>;
+  resolveCommentThread: (
+    workspaceId: string,
+    threadId: string,
+    ifVersion: number,
+  ) => Promise<CommentThread>;
+  reopenCommentThread: (
+    workspaceId: string,
+    threadId: string,
+    ifVersion: number,
+  ) => Promise<CommentThread>;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -300,6 +315,12 @@ function mapSection(value: unknown): Section {
 function mapCommentThread(value: unknown): CommentThread {
   const record = asRecord(value);
   const statusRaw = readString(record, ["status"]) ?? "open";
+  const createdBy = readString(record, [
+    "createdBy",
+    "created_by",
+    "created_by_user_id",
+    "created_by_agent_id",
+  ]);
 
   return {
     id: requireString("comment thread", record, ["id"]),
@@ -321,10 +342,11 @@ function mapCommentThread(value: unknown): CommentThread {
       (() => {
         throw new Error("Invalid comment thread: missing version");
       })(),
-    createdBy: requireString("comment thread", record, [
-      "createdBy",
-      "created_by",
-    ]),
+    createdBy:
+      createdBy ??
+      (() => {
+        throw new Error("Invalid comment thread: missing createdBy/created_by");
+      })(),
     createdAt: requireString("comment thread", record, [
       "createdAt",
       "created_at",
@@ -336,14 +358,19 @@ function mapCommentThread(value: unknown): CommentThread {
 
 function mapCommentMessage(value: unknown): CommentMessage {
   const record = asRecord(value);
+  const author = readString(record, [
+    "author",
+    "author_name",
+    "author_user_id",
+    "author_agent_id",
+  ]);
   return {
     id: requireString("comment message", record, ["id"]),
     threadId: requireString("comment message", record, [
       "threadId",
       "thread_id",
     ]),
-    author:
-      requireString("comment message", record, ["author", "author_name"]),
+    author: author ?? "Unknown",
     bodyMd: requireString("comment message", record, ["bodyMd", "body_md"]),
     createdAt: requireString("comment message", record, [
       "createdAt",
@@ -581,6 +608,57 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         message: mapCommentMessage(record?.message),
       };
     },
+
+    addCommentMessage: async (workspaceId, threadId, bodyMd) => {
+      const payload = await request<unknown>(
+        `/v1/workspaces/${encodeURIComponent(
+          workspaceId,
+        )}/comments/${encodeURIComponent(threadId)}/messages`,
+        {
+          method: "POST",
+          body: {
+            body_md: bodyMd,
+          },
+        },
+      );
+
+      const record = asRecord(payload);
+      return mapCommentMessage(record?.message);
+    },
+
+    resolveCommentThread: async (workspaceId, threadId, ifVersion) => {
+      const payload = await request<unknown>(
+        `/v1/workspaces/${encodeURIComponent(
+          workspaceId,
+        )}/comments/${encodeURIComponent(threadId)}/resolve`,
+        {
+          method: "POST",
+          body: {
+            if_version: ifVersion,
+          },
+        },
+      );
+
+      const record = asRecord(payload);
+      return mapCommentThread(record?.thread);
+    },
+
+    reopenCommentThread: async (workspaceId, threadId, ifVersion) => {
+      const payload = await request<unknown>(
+        `/v1/workspaces/${encodeURIComponent(
+          workspaceId,
+        )}/comments/${encodeURIComponent(threadId)}/reopen`,
+        {
+          method: "POST",
+          body: {
+            if_version: ifVersion,
+          },
+        },
+      );
+
+      const record = asRecord(payload);
+      return mapCommentThread(record?.thread);
+    },
   };
 }
 
@@ -633,4 +711,28 @@ export async function createComment(
   input: CreateCommentInput,
 ): Promise<{ thread: CommentThread; message: CommentMessage }> {
   return getDefaultClient().createComment(workspaceId, documentId, input);
+}
+
+export async function addCommentMessage(
+  workspaceId: string,
+  threadId: string,
+  bodyMd: string,
+): Promise<CommentMessage> {
+  return getDefaultClient().addCommentMessage(workspaceId, threadId, bodyMd);
+}
+
+export async function resolveCommentThread(
+  workspaceId: string,
+  threadId: string,
+  ifVersion: number,
+): Promise<CommentThread> {
+  return getDefaultClient().resolveCommentThread(workspaceId, threadId, ifVersion);
+}
+
+export async function reopenCommentThread(
+  workspaceId: string,
+  threadId: string,
+  ifVersion: number,
+): Promise<CommentThread> {
+  return getDefaultClient().reopenCommentThread(workspaceId, threadId, ifVersion);
 }

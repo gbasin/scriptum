@@ -188,6 +188,134 @@ describe("api-client", () => {
     expect(headerValue(init, "Idempotency-Key")).toBeNull();
   });
 
+  it("posts threaded comment replies with body_md payload", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(201, {
+        message: {
+          id: "msg-2",
+          thread_id: "thread-1",
+          author_user_id: "user-1",
+          body_md: "Follow-up",
+          created_at: "2026-02-07T00:01:00.000Z",
+          edited_at: null,
+        },
+      }),
+    );
+
+    const client = createApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetch: fetchMock,
+      getAccessToken: async () => "token-1",
+      createIdempotencyKey: () => "idem-456",
+    });
+
+    const message = await client.addCommentMessage(
+      "workspace-1",
+      "thread-1",
+      "Follow-up"
+    );
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/messages"
+    );
+    expect(init?.method).toBe("POST");
+    expect(headerValue(init, "Idempotency-Key")).toBe("idem-456");
+    expect(init?.body).toBe(JSON.stringify({ body_md: "Follow-up" }));
+    expect(message).toEqual({
+      id: "msg-2",
+      threadId: "thread-1",
+      author: "user-1",
+      bodyMd: "Follow-up",
+      createdAt: "2026-02-07T00:01:00.000Z",
+      editedAt: null,
+    });
+  });
+
+  it("posts resolve and reopen transitions with if_version", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          thread: {
+            id: "thread-1",
+            doc_id: "doc-1",
+            section_id: null,
+            start_offset_utf16: 12,
+            end_offset_utf16: 24,
+            status: "resolved",
+            version: 2,
+            created_by_user_id: "user-1",
+            created_at: "2026-02-07T00:00:00.000Z",
+            resolved_at: "2026-02-07T00:02:00.000Z",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          thread: {
+            id: "thread-1",
+            doc_id: "doc-1",
+            section_id: null,
+            start_offset_utf16: 12,
+            end_offset_utf16: 24,
+            status: "open",
+            version: 3,
+            created_by_user_id: "user-1",
+            created_at: "2026-02-07T00:00:00.000Z",
+            resolved_at: null,
+          },
+        }),
+      );
+
+    const client = createApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetch: fetchMock,
+      getAccessToken: async () => "token-1",
+      createIdempotencyKey: () => "idem-789",
+    });
+
+    const resolved = await client.resolveCommentThread(
+      "workspace-1",
+      "thread-1",
+      1
+    );
+    const reopened = await client.reopenCommentThread(
+      "workspace-1",
+      "thread-1",
+      2
+    );
+
+    const [resolveUrl, resolveInit] = fetchMock.mock.calls[0]!;
+    expect(resolveUrl).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/resolve"
+    );
+    expect(resolveInit?.method).toBe("POST");
+    expect(resolveInit?.body).toBe(JSON.stringify({ if_version: 1 }));
+    expect(headerValue(resolveInit, "Idempotency-Key")).toBe("idem-789");
+
+    const [reopenUrl, reopenInit] = fetchMock.mock.calls[1]!;
+    expect(reopenUrl).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/reopen"
+    );
+    expect(reopenInit?.method).toBe("POST");
+    expect(reopenInit?.body).toBe(JSON.stringify({ if_version: 2 }));
+    expect(headerValue(reopenInit, "Idempotency-Key")).toBe("idem-789");
+
+    expect(resolved).toMatchObject({
+      id: "thread-1",
+      status: "resolved",
+      version: 2,
+      createdBy: "user-1",
+    });
+    expect(reopened).toMatchObject({
+      id: "thread-1",
+      status: "open",
+      version: 3,
+      createdBy: "user-1",
+    });
+  });
+
   it("parses relay error envelope into ApiClientError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(409, {
