@@ -26,4 +26,4 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run Rust tests
-        run: cargo nextest run --workspace --all-targets -E 'not test(large_documents)'
+        run: cargo nextest run --workspace --all-targets
