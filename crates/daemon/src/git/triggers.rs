@@ -15,22 +15,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TriggerEvent {
     /// An agent released a section lease (finished editing).
-    LeaseReleased {
-        agent: String,
-        doc_path: String,
-        section_heading: String,
-    },
+    LeaseReleased { agent: String, doc_path: String, section_heading: String },
     /// A comment thread was resolved.
-    CommentResolved {
-        agent: String,
-        doc_path: String,
-        thread_id: String,
-    },
+    CommentResolved { agent: String, doc_path: String, thread_id: String },
     /// Explicit checkpoint requested (via `scriptum checkpoint` CLI).
-    ExplicitCheckpoint {
-        agent: String,
-        message: Option<String>,
-    },
+    ExplicitCheckpoint { agent: String, message: Option<String> },
 }
 
 impl TriggerEvent {
@@ -101,9 +90,7 @@ impl CommitContext {
                 )
             }
             TriggerEvent::ExplicitCheckpoint { agent, message } => {
-                let msg = message
-                    .as_deref()
-                    .unwrap_or("manual checkpoint");
+                let msg = message.as_deref().unwrap_or("manual checkpoint");
                 let file_summary = self.file_summary();
                 format!(
                     "chore: {msg}\n\n\
@@ -119,9 +106,12 @@ impl CommitContext {
         }
 
         let mut parts = Vec::new();
-        let added = self.changed_files.iter().filter(|f| f.change_type == ChangeType::Added).count();
-        let modified = self.changed_files.iter().filter(|f| f.change_type == ChangeType::Modified).count();
-        let deleted = self.changed_files.iter().filter(|f| f.change_type == ChangeType::Deleted).count();
+        let added =
+            self.changed_files.iter().filter(|f| f.change_type == ChangeType::Added).count();
+        let modified =
+            self.changed_files.iter().filter(|f| f.change_type == ChangeType::Modified).count();
+        let deleted =
+            self.changed_files.iter().filter(|f| f.change_type == ChangeType::Deleted).count();
 
         if added > 0 {
             parts.push(format!("{added} added"));
@@ -157,10 +147,7 @@ pub struct TriggerConfig {
 
 impl Default for TriggerConfig {
     fn default() -> Self {
-        Self {
-            min_commit_interval: Duration::from_secs(30),
-            max_batch_size: 10,
-        }
+        Self { min_commit_interval: Duration::from_secs(30), max_batch_size: 10 }
     }
 }
 
@@ -199,7 +186,11 @@ impl TriggerCollector {
         }
 
         // Explicit checkpoints always commit immediately.
-        if self.pending_triggers.iter().any(|t| matches!(t, TriggerEvent::ExplicitCheckpoint { .. })) {
+        if self
+            .pending_triggers
+            .iter()
+            .any(|t| matches!(t, TriggerEvent::ExplicitCheckpoint { .. }))
+        {
             return true;
         }
 
@@ -217,7 +208,10 @@ impl TriggerCollector {
 
     /// Consume pending triggers and produce a commit context.
     /// Returns None if there's nothing to commit.
-    pub fn take_commit_context(&mut self, changed_files: Vec<ChangedFile>) -> Option<CommitContext> {
+    pub fn take_commit_context(
+        &mut self,
+        changed_files: Vec<ChangedFile>,
+    ) -> Option<CommitContext> {
         if self.pending_triggers.is_empty() {
             return None;
         }
@@ -288,9 +282,11 @@ mod tests {
                 doc_path: "docs/api.md".into(),
                 section_heading: "## Auth".into(),
             },
-            changed_files: vec![
-                ChangedFile { path: "docs/api.md".into(), doc_id: None, change_type: ChangeType::Modified },
-            ],
+            changed_files: vec![ChangedFile {
+                path: "docs/api.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Modified,
+            }],
             agents_involved: vec!["alice".into()],
         };
 
@@ -327,8 +323,16 @@ mod tests {
                 message: Some("wip: halfway through refactor".into()),
             },
             changed_files: vec![
-                ChangedFile { path: "docs/api.md".into(), doc_id: None, change_type: ChangeType::Modified },
-                ChangedFile { path: "docs/new.md".into(), doc_id: None, change_type: ChangeType::Added },
+                ChangedFile {
+                    path: "docs/api.md".into(),
+                    doc_id: None,
+                    change_type: ChangeType::Modified,
+                },
+                ChangedFile {
+                    path: "docs/new.md".into(),
+                    doc_id: None,
+                    change_type: ChangeType::Added,
+                },
             ],
             agents_involved: vec!["claude".into()],
         };
@@ -343,10 +347,7 @@ mod tests {
     #[test]
     fn commit_message_for_checkpoint_without_custom_message() {
         let ctx = CommitContext {
-            trigger: TriggerEvent::ExplicitCheckpoint {
-                agent: "alice".into(),
-                message: None,
-            },
+            trigger: TriggerEvent::ExplicitCheckpoint { agent: "alice".into(), message: None },
             changed_files: vec![],
             agents_involved: vec!["alice".into()],
         };
@@ -369,8 +370,16 @@ mod tests {
             trigger: TriggerEvent::ExplicitCheckpoint { agent: "a".into(), message: None },
             changed_files: vec![
                 ChangedFile { path: "a.md".into(), doc_id: None, change_type: ChangeType::Added },
-                ChangedFile { path: "b.md".into(), doc_id: None, change_type: ChangeType::Modified },
-                ChangedFile { path: "c.md".into(), doc_id: None, change_type: ChangeType::Modified },
+                ChangedFile {
+                    path: "b.md".into(),
+                    doc_id: None,
+                    change_type: ChangeType::Modified,
+                },
+                ChangedFile {
+                    path: "c.md".into(),
+                    doc_id: None,
+                    change_type: ChangeType::Modified,
+                },
                 ChangedFile { path: "d.md".into(), doc_id: None, change_type: ChangeType::Deleted },
             ],
             agents_involved: vec!["a".into()],

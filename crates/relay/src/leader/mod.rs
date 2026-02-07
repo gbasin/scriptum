@@ -107,12 +107,7 @@ impl LeaseManager {
         self.acquire_at(workspace_id, client_id, Instant::now())
     }
 
-    fn acquire_at(
-        &mut self,
-        workspace_id: Uuid,
-        client_id: Uuid,
-        now: Instant,
-    ) -> AcquireResult {
+    fn acquire_at(&mut self, workspace_id: Uuid, client_id: Uuid, now: Instant) -> AcquireResult {
         // Check existing lease.
         if let Some(lease) = self.leases.get_mut(&workspace_id) {
             if !lease.is_expired_at(now) {
@@ -176,12 +171,7 @@ impl LeaseManager {
         self.release_at(workspace_id, client_id, Instant::now())
     }
 
-    fn release_at(
-        &mut self,
-        workspace_id: Uuid,
-        client_id: Uuid,
-        now: Instant,
-    ) -> ReleaseResult {
+    fn release_at(&mut self, workspace_id: Uuid, client_id: Uuid, now: Instant) -> ReleaseResult {
         let Some(lease) = self.leases.get(&workspace_id) else {
             return ReleaseResult::NotFound;
         };

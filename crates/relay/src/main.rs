@@ -4,10 +4,10 @@ mod auth;
 mod awareness;
 pub mod config;
 mod cors;
-pub mod etag;
-pub mod idempotency;
 mod db;
 mod error;
+pub mod etag;
+pub mod idempotency;
 mod leader;
 mod protocol;
 mod sync;
@@ -110,7 +110,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     if cfg.is_dev_jwt_secret() {
-        tracing::warn!("using development JWT secret — set SCRIPTUM_RELAY_JWT_SECRET in production");
+        tracing::warn!(
+            "using development JWT secret — set SCRIPTUM_RELAY_JWT_SECRET in production"
+        );
     }
 
     let jwt_service =
@@ -134,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to recover relay update sequencer from postgres")?;
     readiness_probe.mark_sequencer_recovered();
+
     let membership_store = ws::WorkspaceMembershipStore::from_env()
         .await
         .context("failed to initialize websocket workspace membership store")?;
@@ -179,7 +182,14 @@ fn build_router(
             .route("/healthz", get(health))
             .route("/ready", get(ready))
             .merge(auth::oauth::router(oauth_state))
-            .merge(ws::router(jwt_service, session_store, doc_store, Arc::new(awareness::AwarenessStore::default()), membership_store, ws_base_url))
+            .merge(ws::router(
+                jwt_service,
+                session_store,
+                doc_store,
+                Arc::new(awareness::AwarenessStore::default()),
+                membership_store,
+                ws_base_url,
+            ))
             .merge(api_router),
     )
     .layer(Extension(readiness_probe))

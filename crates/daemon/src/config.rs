@@ -52,9 +52,7 @@ impl GlobalConfig {
     /// Load from `~/.scriptum/config.toml`. Returns defaults if the file
     /// doesn't exist or can't be parsed.
     pub fn load() -> Self {
-        global_config_path()
-            .and_then(|p| Self::load_from(&p).ok())
-            .unwrap_or_default()
+        global_config_path().and_then(|p| Self::load_from(&p).ok()).unwrap_or_default()
     }
 
     /// Load from a specific path.
@@ -122,10 +120,7 @@ pub struct WorkspaceConfig {
 
 impl Default for WorkspaceConfig {
     fn default() -> Self {
-        Self {
-            git: GitConfig::default(),
-            sync: SyncConfig::default(),
-        }
+        Self { git: GitConfig::default(), sync: SyncConfig::default() }
     }
 }
 
@@ -431,22 +426,13 @@ branch = "develop"
 
     #[test]
     fn push_policy_serializes_correctly() {
-        assert_eq!(
-            serde_json::to_string(&PushPolicy::AutoRebase).unwrap(),
-            "\"auto_rebase\""
-        );
-        assert_eq!(
-            serde_json::to_string(&PushPolicy::Manual).unwrap(),
-            "\"manual\""
-        );
+        assert_eq!(serde_json::to_string(&PushPolicy::AutoRebase).unwrap(), "\"auto_rebase\"");
+        assert_eq!(serde_json::to_string(&PushPolicy::Manual).unwrap(), "\"manual\"");
     }
 
     #[test]
     fn redaction_policy_serializes_correctly() {
-        assert_eq!(
-            serde_json::to_string(&RedactionPolicy::Redacted).unwrap(),
-            "\"redacted\""
-        );
+        assert_eq!(serde_json::to_string(&RedactionPolicy::Redacted).unwrap(), "\"redacted\"");
     }
 
     #[test]

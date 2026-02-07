@@ -157,10 +157,7 @@ impl SessionStore {
     /// Delete a session by ID.
     pub fn delete(conn: &Connection, session_id: &str) -> Result<bool> {
         let changed = conn
-            .execute(
-                "DELETE FROM agent_sessions WHERE session_id = ?1",
-                params![session_id],
-            )
+            .execute("DELETE FROM agent_sessions WHERE session_id = ?1", params![session_id])
             .context("failed to delete agent session")?;
         Ok(changed > 0)
     }
@@ -184,12 +181,12 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentSession> {
     let seen_raw: String = row.get(4)?;
     let status_raw: String = row.get(5)?;
 
-    let started_at = started_raw
-        .parse::<DateTime<Utc>>()
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?;
-    let last_seen_at = seen_raw
-        .parse::<DateTime<Utc>>()
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e)))?;
+    let started_at = started_raw.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let last_seen_at = seen_raw.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+    })?;
     let status = SessionStatus::parse(&status_raw).ok_or_else(|| {
         rusqlite::Error::FromSqlConversionFailure(
             5,
@@ -228,10 +225,8 @@ mod tests {
     }
 
     fn unique_path(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should work")
-            .as_nanos();
+        let nanos =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time should work").as_nanos();
         let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("scriptum-{prefix}-{nanos}-{seq}.db"))
     }
@@ -282,8 +277,7 @@ mod tests {
     #[test]
     fn get_missing_returns_none() {
         let (db, path) = setup();
-        let result = SessionStore::get(db.connection(), "nonexistent")
-            .expect("get should succeed");
+        let result = SessionStore::get(db.connection(), "nonexistent").expect("get should succeed");
         assert!(result.is_none());
         drop(db);
         cleanup(&path);
@@ -301,8 +295,8 @@ mod tests {
         SessionStore::create(db.connection(), &make_session("s3", "a3", "ws-1", t2)).unwrap();
         SessionStore::create(db.connection(), &make_session("s4", "a4", "ws-2", t1)).unwrap();
 
-        let sessions = SessionStore::list_by_workspace(db.connection(), "ws-1")
-            .expect("list should succeed");
+        let sessions =
+            SessionStore::list_by_workspace(db.connection(), "ws-1").expect("list should succeed");
         assert_eq!(sessions.len(), 3);
         assert_eq!(sessions[0].session_id, "s2"); // most recent
         assert_eq!(sessions[1].session_id, "s3");
@@ -321,8 +315,8 @@ mod tests {
         SessionStore::create(db.connection(), &make_session("s2", "a2", "ws-1", now)).unwrap();
         SessionStore::update_status(db.connection(), "s2", SessionStatus::Disconnected).unwrap();
 
-        let active = SessionStore::list_active(db.connection(), "ws-1")
-            .expect("list_active should succeed");
+        let active =
+            SessionStore::list_active(db.connection(), "ws-1").expect("list_active should succeed");
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].session_id, "s1");
 
@@ -337,8 +331,9 @@ mod tests {
 
         SessionStore::create(db.connection(), &make_session("s1", "a1", "ws-1", now)).unwrap();
 
-        let updated = SessionStore::update_status(db.connection(), "s1", SessionStatus::Disconnected)
-            .expect("update should succeed");
+        let updated =
+            SessionStore::update_status(db.connection(), "s1", SessionStatus::Disconnected)
+                .expect("update should succeed");
         assert!(updated);
 
         let session = SessionStore::get(db.connection(), "s1").unwrap().unwrap();
@@ -399,8 +394,8 @@ mod tests {
         SessionStore::create(db.connection(), &make_session("s1", "a1", "ws-1", old)).unwrap();
         SessionStore::create(db.connection(), &make_session("s2", "a2", "ws-1", recent)).unwrap();
 
-        let removed = SessionStore::prune_older_than(db.connection(), cutoff)
-            .expect("prune should succeed");
+        let removed =
+            SessionStore::prune_older_than(db.connection(), cutoff).expect("prune should succeed");
         assert_eq!(removed, 1);
 
         assert!(SessionStore::get(db.connection(), "s1").unwrap().is_none());

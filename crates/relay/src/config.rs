@@ -51,26 +51,22 @@ impl RelayConfig {
         F: Fn(&str) -> Result<String, std::env::VarError>,
     {
         let host = env("SCRIPTUM_RELAY_HOST").unwrap_or_else(|_| "0.0.0.0".into());
-        let port: u16 = env("SCRIPTUM_RELAY_PORT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(8080);
+        let port: u16 =
+            env("SCRIPTUM_RELAY_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8080);
         let listen_addr = format!("{host}:{port}")
             .parse()
             .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], port)));
 
-        let jwt_secret = env("SCRIPTUM_RELAY_JWT_SECRET").unwrap_or_else(|_| {
-            "scriptum_local_development_jwt_secret_must_be_32_chars".into()
-        });
+        let jwt_secret = env("SCRIPTUM_RELAY_JWT_SECRET")
+            .unwrap_or_else(|_| "scriptum_local_development_jwt_secret_must_be_32_chars".into());
 
-        let ws_base_url = env("SCRIPTUM_RELAY_WS_BASE_URL")
-            .unwrap_or_else(|_| format!("ws://{listen_addr}"));
+        let ws_base_url =
+            env("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("ws://{listen_addr}"));
 
         let database_url = env("SCRIPTUM_RELAY_DATABASE_URL").ok();
         let cors_origins = env("SCRIPTUM_RELAY_CORS_ORIGINS").ok();
 
-        let log_filter =
-            env("SCRIPTUM_RELAY_LOG_FILTER").unwrap_or_else(|_| "info".into());
+        let log_filter = env("SCRIPTUM_RELAY_LOG_FILTER").unwrap_or_else(|_| "info".into());
 
         let share_link_base_url = env("SCRIPTUM_RELAY_SHARE_LINK_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:3000/share".into());
@@ -100,11 +96,7 @@ mod tests {
     fn env_from_map(
         map: HashMap<&'static str, &'static str>,
     ) -> impl Fn(&str) -> Result<String, std::env::VarError> {
-        move |key: &str| {
-            map.get(key)
-                .map(|v| v.to_string())
-                .ok_or(std::env::VarError::NotPresent)
-        }
+        move |key: &str| map.get(key).map(|v| v.to_string()).ok_or(std::env::VarError::NotPresent)
     }
 
     #[test]

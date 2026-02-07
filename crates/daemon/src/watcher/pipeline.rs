@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::{Mutex as StdMutex};
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -160,13 +160,7 @@ pub async fn run_pipeline(
                 )
                 .await
             } else {
-                process_event(
-                    &event,
-                    &doc_manager,
-                    resolver.as_ref(),
-                    hash_store.as_ref(),
-                )
-                .await
+                process_event(&event, &doc_manager, resolver.as_ref(), hash_store.as_ref()).await
             };
 
             let pipeline_event = match result {

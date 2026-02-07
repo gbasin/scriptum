@@ -35,12 +35,7 @@ impl AwarenessStore {
     }
 
     /// Remove all awareness for a session (on disconnect).
-    pub async fn remove_session(
-        &self,
-        workspace_id: Uuid,
-        doc_ids: &[Uuid],
-        session_id: Uuid,
-    ) {
+    pub async fn remove_session(&self, workspace_id: Uuid, doc_ids: &[Uuid], session_id: Uuid) {
         let mut guard = self.state.write().await;
         for doc_id in doc_ids {
             if let Some(doc_state) = guard.get_mut(&(workspace_id, *doc_id)) {
@@ -53,11 +48,7 @@ impl AwarenessStore {
     }
 
     /// Get aggregated awareness for a doc (all sessions' peers merged).
-    pub async fn aggregate(
-        &self,
-        workspace_id: Uuid,
-        doc_id: Uuid,
-    ) -> Vec<serde_json::Value> {
+    pub async fn aggregate(&self, workspace_id: Uuid, doc_id: Uuid) -> Vec<serde_json::Value> {
         let guard = self.state.read().await;
         guard
             .get(&(workspace_id, doc_id))
@@ -86,11 +77,7 @@ impl AwarenessStore {
     }
 
     /// Get typed peer states for a document by parsing raw JSON values.
-    pub async fn peers_for_doc(
-        &self,
-        workspace_id: Uuid,
-        doc_id: Uuid,
-    ) -> Vec<PeerState> {
+    pub async fn peers_for_doc(&self, workspace_id: Uuid, doc_id: Uuid) -> Vec<PeerState> {
         let raw = self.aggregate(workspace_id, doc_id).await;
         raw.into_iter().filter_map(|v| PeerState::from_json(&v)).collect()
     }
@@ -103,16 +90,10 @@ impl AwarenessStore {
             if *ws_id != workspace_id {
                 continue;
             }
-            let peers: Vec<PeerState> = sessions
-                .values()
-                .flatten()
-                .filter_map(|v| PeerState::from_json(v))
-                .collect();
+            let peers: Vec<PeerState> =
+                sessions.values().flatten().filter_map(|v| PeerState::from_json(v)).collect();
             if !peers.is_empty() {
-                results.push(DocPresence {
-                    doc_id: *doc_id,
-                    peers,
-                });
+                results.push(DocPresence { doc_id: *doc_id, peers });
             }
         }
         results
@@ -413,14 +394,7 @@ mod tests {
     async fn peers_for_doc_skips_unparseable_entries() {
         let store = AwarenessStore::default();
         // Valid peer + invalid peer (no name field).
-        store
-            .update(
-                ws_id(),
-                doc_a(),
-                session_1(),
-                vec![alice_peer(), json!({"cursor": 5})],
-            )
-            .await;
+        store.update(ws_id(), doc_a(), session_1(), vec![alice_peer(), json!({"cursor": 5})]).await;
 
         let peers = store.peers_for_doc(ws_id(), doc_a()).await;
         assert_eq!(peers.len(), 1);

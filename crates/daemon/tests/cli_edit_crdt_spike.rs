@@ -67,7 +67,8 @@ async fn edit_section_updates_crdt_content() {
     let ws = Uuid::new_v4();
     let doc = Uuid::new_v4();
 
-    let markdown = "# API Reference\n\n## Authentication\n\nUse API keys.\n\n## Endpoints\n\nGET /users\n";
+    let markdown =
+        "# API Reference\n\n## Authentication\n\nUse API keys.\n\n## Endpoints\n\nGET /users\n";
     seed_doc(&state, ws, doc, "docs/api.md", markdown).await;
 
     // Edit the Authentication section.
@@ -104,15 +105,7 @@ async fn edit_preserves_heading_and_sibling_sections() {
     seed_doc(&state, ws, doc, "docs/readme.md", markdown).await;
 
     // Edit Section A only.
-    edit_section(
-        &state,
-        ws,
-        doc,
-        "## Section A",
-        "\nNew body for A.\n\n",
-        "alice",
-    )
-    .await;
+    edit_section(&state, ws, doc, "## Section A", "\nNew body for A.\n\n", "alice").await;
 
     let content = read_content(&state, ws, doc).await;
     assert!(content.contains("# Title"), "title should remain");
@@ -133,15 +126,7 @@ async fn edit_last_section_works() {
     let markdown = "# Root\n\n## Last Section\n\nOld content.\n";
     seed_doc(&state, ws, doc, "docs/last.md", markdown).await;
 
-    edit_section(
-        &state,
-        ws,
-        doc,
-        "## Last Section",
-        "\nReplaced content.\n",
-        "bob",
-    )
-    .await;
+    edit_section(&state, ws, doc, "## Last Section", "\nReplaced content.\n", "bob").await;
 
     let content = read_content(&state, ws, doc).await;
     assert!(content.contains("## Last Section"));
@@ -173,7 +158,11 @@ async fn edit_nonexistent_section_returns_error() {
 
     assert!(response.error.is_some(), "should return error for missing section");
     let error = response.error.unwrap();
-    assert!(error.message.contains("not found"), "error should mention 'not found': {}", error.message);
+    assert!(
+        error.message.contains("not found"),
+        "error should mention 'not found': {}",
+        error.message
+    );
 }
 
 #[tokio::test]
@@ -201,15 +190,7 @@ async fn crdt_update_syncs_to_second_ydoc_client() {
     assert_eq!(cm_client.get_text_string("content"), markdown);
 
     // Now apply an edit via RPC.
-    edit_section(
-        &state,
-        ws,
-        doc_id,
-        "## Notes",
-        "\nUpdated notes from CLI.\n",
-        "cli-agent",
-    )
-    .await;
+    edit_section(&state, ws, doc_id, "## Notes", "\nUpdated notes from CLI.\n", "cli-agent").await;
 
     // Get the diff from the daemon's CRDT.
     let diff = {

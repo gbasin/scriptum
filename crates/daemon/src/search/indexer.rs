@@ -139,7 +139,11 @@ mod tests {
         let updater = IndexUpdater::new(&idx);
 
         updater
-            .on_doc_updated(doc_a, &PathBuf::from("api.md"), "# API Reference\n\nEndpoints for users.\n")
+            .on_doc_updated(
+                doc_a,
+                &PathBuf::from("api.md"),
+                "# API Reference\n\nEndpoints for users.\n",
+            )
             .unwrap();
 
         let hits = idx.search("Endpoints", 10).unwrap();
@@ -155,10 +159,18 @@ mod tests {
         let updater = IndexUpdater::new(&idx);
 
         updater
-            .on_doc_updated(doc_a, &PathBuf::from("notes.md"), "# Notes\n\nOld content about cats.\n")
+            .on_doc_updated(
+                doc_a,
+                &PathBuf::from("notes.md"),
+                "# Notes\n\nOld content about cats.\n",
+            )
             .unwrap();
         updater
-            .on_doc_updated(doc_a, &PathBuf::from("notes.md"), "# Notes\n\nNew content about dogs.\n")
+            .on_doc_updated(
+                doc_a,
+                &PathBuf::from("notes.md"),
+                "# Notes\n\nNew content about dogs.\n",
+            )
             .unwrap();
 
         let hits = idx.search("cats", 10).unwrap();
@@ -227,12 +239,8 @@ mod tests {
         let idx = Fts5Index::new(&conn);
         let updater = IndexUpdater::new(&idx);
 
-        updater
-            .on_doc_updated(doc_a, &PathBuf::from("a.md"), "# A\n\nContent A.\n")
-            .unwrap();
-        updater
-            .on_doc_updated(doc_b, &PathBuf::from("b.md"), "# B\n\nContent B.\n")
-            .unwrap();
+        updater.on_doc_updated(doc_a, &PathBuf::from("a.md"), "# A\n\nContent A.\n").unwrap();
+        updater.on_doc_updated(doc_b, &PathBuf::from("b.md"), "# B\n\nContent B.\n").unwrap();
 
         updater.on_doc_removed(doc_a).unwrap();
 

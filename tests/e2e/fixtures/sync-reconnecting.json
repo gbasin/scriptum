@@ -5,7 +5,12 @@
     "fixtureName": "default",
     "docContent": "# Reconnecting\n\nConnection is being restored.",
     "syncState": "reconnecting",
-    "gitStatus": { "dirty": true, "ahead": 1, "behind": 1 },
+    "pendingSyncUpdates": 7,
+    "reconnectProgress": {
+      "syncedUpdates": 3,
+      "totalUpdates": 10
+    },
+    "gitStatus": { "dirty": true, "ahead": 1, "behind": 1, "lastCommit": "bead123" },
     "remotePeers": [
       {
         "name": "Alex",

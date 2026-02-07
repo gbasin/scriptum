@@ -52,10 +52,7 @@ struct IdempotencyEntry {
 
 impl IdempotencyStore {
     pub fn new() -> Self {
-        Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            ttl: DEFAULT_TTL,
-        }
+        Self { entries: Arc::new(RwLock::new(HashMap::new())), ttl: DEFAULT_TTL }
     }
 
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
@@ -103,10 +100,7 @@ impl IdempotencyStore {
 /// - Otherwise, process the request and cache the response.
 ///
 /// Non-POST requests and requests without the header pass through unchanged.
-pub async fn idempotency_middleware(
-    request: Request<Body>,
-    next: Next,
-) -> Response<Body> {
+pub async fn idempotency_middleware(request: Request<Body>, next: Next) -> Response<Body> {
     // Only apply to POST requests.
     if request.method() != axum::http::Method::POST {
         return next.run(request).await;
@@ -183,9 +177,10 @@ pub async fn idempotency_middleware(
         .await;
 
     let mut response = Response::from_parts(resp_parts, Body::from(resp_bytes));
-    response
-        .headers_mut()
-        .insert("idempotency-key", HeaderValue::from_str(&key).unwrap_or(HeaderValue::from_static("")));
+    response.headers_mut().insert(
+        "idempotency-key",
+        HeaderValue::from_str(&key).unwrap_or(HeaderValue::from_static("")),
+    );
     response
 }
 
@@ -201,10 +196,7 @@ where
 {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let key = parts
             .headers
             .get(IDEMPOTENCY_KEY_HEADER)
@@ -274,10 +266,7 @@ mod tests {
         let app = test_app(store.clone());
         let resp2 = app.oneshot(post_request("key-2", "data")).await.unwrap();
         assert_eq!(resp2.status(), StatusCode::OK);
-        assert_eq!(
-            resp2.headers().get("idempotency-replay").unwrap(),
-            "true"
-        );
+        assert_eq!(resp2.headers().get("idempotency-replay").unwrap(), "true");
     }
 
     #[tokio::test]
@@ -373,10 +362,7 @@ mod tests {
         let app = test_app(store);
 
         let resp = app.oneshot(post_request("my-key", "data")).await.unwrap();
-        assert_eq!(
-            resp.headers().get("idempotency-key").unwrap(),
-            "my-key"
-        );
+        assert_eq!(resp.headers().get("idempotency-key").unwrap(), "my-key");
     }
 
     #[test]

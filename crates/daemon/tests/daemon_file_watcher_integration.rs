@@ -13,11 +13,11 @@ use std::time::Duration;
 use scriptum_common::protocol::jsonrpc::{Request, RequestId};
 use scriptum_daemon::engine::doc_manager::DocManager;
 use scriptum_daemon::rpc::methods::RpcServerState;
+use scriptum_daemon::watcher::debounce::DebounceConfig;
 use scriptum_daemon::watcher::pipeline::{
-    HashStore, PathResolver, PipelineConfig, PipelineEvent, run_pipeline,
+    run_pipeline, HashStore, PathResolver, PipelineConfig, PipelineEvent,
 };
 use scriptum_daemon::watcher::{FsEventKind, RawFsEvent};
-use scriptum_daemon::watcher::debounce::DebounceConfig;
 use serde_json::json;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use uuid::Uuid;
@@ -243,8 +243,7 @@ async fn rpc_doc_read_returns_content_from_seeded_doc() {
         RequestId::Number(1),
     );
 
-    let response =
-        scriptum_daemon::rpc::methods::dispatch_request(request, &h.rpc_state).await;
+    let response = scriptum_daemon::rpc::methods::dispatch_request(request, &h.rpc_state).await;
 
     assert!(response.error.is_none(), "expected success: {response:?}");
     let result = response.result.expect("result should be populated");

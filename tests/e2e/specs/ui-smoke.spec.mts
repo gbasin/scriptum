@@ -26,6 +26,10 @@ declare global {
       setSyncState(
         state: "synced" | "offline" | "reconnecting" | "error",
       ): void;
+      setPendingSyncUpdates(count: number): void;
+      setReconnectProgress(
+        progress: { syncedUpdates: number; totalUpdates: number } | null,
+      ): void;
       getState(): {
         fixtureName: string;
         docContent: string;
@@ -37,6 +41,8 @@ declare global {
           section?: string;
         }>;
         syncState: "synced" | "offline" | "reconnecting" | "error";
+        pendingSyncUpdates: number;
+        reconnectProgress: { syncedUpdates: number; totalUpdates: number } | null;
         gitStatus: {
           dirty: boolean;
           ahead: number;
@@ -72,6 +78,21 @@ test.describe("ui smoke fixtures @smoke", () => {
       if (fixture.expectations.remotePeerCount !== undefined) {
         expect(stateSnapshot?.remotePeers.length ?? 0).toBe(
           fixture.expectations.remotePeerCount,
+        );
+      }
+      if (fixture.state?.pendingSyncUpdates !== undefined) {
+        expect(stateSnapshot?.pendingSyncUpdates).toBe(
+          fixture.state.pendingSyncUpdates,
+        );
+      }
+      if (fixture.state?.reconnectProgress !== undefined) {
+        expect(stateSnapshot?.reconnectProgress).toEqual(
+          fixture.state.reconnectProgress,
+        );
+      }
+      if (fixture.state?.gitStatus?.lastCommit !== undefined) {
+        expect(stateSnapshot?.gitStatus?.lastCommit).toBe(
+          fixture.state.gitStatus.lastCommit,
         );
       }
 
@@ -118,6 +139,12 @@ async function applyFixtureState(
     if (fixtureState.syncState) {
       api.setSyncState(fixtureState.syncState);
     }
+    if (fixtureState.pendingSyncUpdates !== undefined) {
+      api.setPendingSyncUpdates(fixtureState.pendingSyncUpdates);
+    }
+    if (fixtureState.reconnectProgress !== undefined) {
+      api.setReconnectProgress(fixtureState.reconnectProgress);
+    }
     if (fixtureState.gitStatus) {
       api.setGitStatus(fixtureState.gitStatus);
     }
@@ -155,7 +182,9 @@ async function applyFixtureState(
       <p style="margin: 0;">sync=${state.syncState}</p>
       <p style="margin: 0;">cursor=${state.cursor.line}:${state.cursor.ch}</p>
       <p style="margin: 0;">peers=${peers}</p>
-      <p style="margin: 0;">git=dirty:${state.gitStatus.dirty} ahead:${state.gitStatus.ahead} behind:${state.gitStatus.behind}</p>
+      <p style="margin: 0;">pending=${state.pendingSyncUpdates}</p>
+      <p style="margin: 0;">reconnect=${state.reconnectProgress ? `${state.reconnectProgress.syncedUpdates}/${state.reconnectProgress.totalUpdates}` : "none"}</p>
+      <p style="margin: 0;">git=dirty:${state.gitStatus.dirty} ahead:${state.gitStatus.ahead} behind:${state.gitStatus.behind} last:${state.gitStatus.lastCommit ?? "none"}</p>
     `;
     document.body.appendChild(probe);
   }, state ?? null);

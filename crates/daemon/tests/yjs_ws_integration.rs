@@ -27,9 +27,8 @@ async fn two_ws_clients_sync_over_yjs_endpoint() {
     let protocol = DefaultProtocol;
 
     let room = "workspace-demo:document-readme";
-    let (mut client_a_socket, _) = connect_async(format!("ws://{addr}/yjs/{room}"))
-        .await
-        .expect("client A should connect");
+    let (mut client_a_socket, _) =
+        connect_async(format!("ws://{addr}/yjs/{room}")).await.expect("client A should connect");
     let client_a = Awareness::new(Doc::with_client_id(1));
     {
         let text = client_a.doc().get_or_insert_text("content");
@@ -38,9 +37,8 @@ async fn two_ws_clients_sync_over_yjs_endpoint() {
     }
     handshake(&mut client_a_socket, &client_a, &protocol).await;
 
-    let (mut client_b_socket, _) = connect_async(format!("ws://{addr}/yjs/{room}"))
-        .await
-        .expect("client B should connect");
+    let (mut client_b_socket, _) =
+        connect_async(format!("ws://{addr}/yjs/{room}")).await.expect("client B should connect");
     let client_b = Awareness::new(Doc::with_client_id(2));
     handshake(&mut client_b_socket, &client_b, &protocol).await;
 

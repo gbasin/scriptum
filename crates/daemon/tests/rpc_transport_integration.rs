@@ -88,7 +88,8 @@ async fn ws_rpc_supports_batch_requests() {
         }
     ]);
 
-    let response = send_ws_raw_text(&format!("ws://{ws_addr}/rpc"), &batch_request.to_string()).await;
+    let response =
+        send_ws_raw_text(&format!("ws://{ws_addr}/rpc"), &batch_request.to_string()).await;
     let items = response.as_array().expect("batch response should be an array");
     assert_eq!(items.len(), 2);
 
@@ -173,23 +174,21 @@ async fn send_ws_request(url: &str, request: &Request) -> Response {
 
 async fn send_ws_raw_text(url: &str, payload: &str) -> Value {
     let (mut socket, _) = connect_async(url).await.expect("ws client should connect");
-    socket
-        .send(WsMessage::Text(payload.to_string().into()))
-        .await
-        .expect("ws request should send");
+    socket.send(WsMessage::Text(payload.to_string().into())).await.expect("ws request should send");
 
     loop {
         let next =
             socket.next().await.expect("ws should remain open").expect("ws frame should decode");
         match next {
             WsMessage::Text(body) => {
-                let value = serde_json::from_str::<Value>(&body).expect("text response should decode");
+                let value =
+                    serde_json::from_str::<Value>(&body).expect("text response should decode");
                 let _ = socket.close(None).await;
                 return value;
             }
             WsMessage::Binary(body) => {
-                let value =
-                    serde_json::from_slice::<Value>(body.as_ref()).expect("binary response should decode");
+                let value = serde_json::from_slice::<Value>(body.as_ref())
+                    .expect("binary response should decode");
                 let _ = socket.close(None).await;
                 return value;
             }

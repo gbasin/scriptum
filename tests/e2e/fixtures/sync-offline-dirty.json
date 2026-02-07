@@ -5,6 +5,7 @@
     "fixtureName": "default",
     "docContent": "# Offline Draft\n\nPending local edits.",
     "syncState": "offline",
+    "pendingSyncUpdates": 5,
     "gitStatus": {
       "dirty": true,
       "ahead": 2,

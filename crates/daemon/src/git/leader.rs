@@ -234,10 +234,7 @@ async fn leader_loop<C: LeaseClient>(
             }
             None => {
                 // No lease — try to acquire.
-                match inner
-                    .client
-                    .acquire(inner.config.workspace_id, inner.config.client_id)
-                    .await
+                match inner.client.acquire(inner.config.workspace_id, inner.config.client_id).await
                 {
                     Ok(AcquireResponse::Granted { lease_id }) => {
                         info!(workspace = %inner.config.workspace_id, %lease_id, "became leader");

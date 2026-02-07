@@ -7,7 +7,7 @@
 //   PATCH  /v1/workspaces/{ws_id}/documents/{doc_id}  — update (If-Match)
 //   DELETE /v1/workspaces/{ws_id}/documents/{doc_id}  — soft/hard delete
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::{
@@ -109,6 +109,19 @@ pub struct DeleteDocumentQuery {
     pub hard: Option<bool>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentTagOp {
+    Add,
+    Remove,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateDocumentTagsRequest {
+    pub op: DocumentTagOp,
+    pub tags: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct DocumentEnvelope {
     document: Document,
@@ -153,6 +166,7 @@ struct MemoryDocument {
     updated_at: DateTime<Utc>,
     archived_at: Option<DateTime<Utc>>,
     deleted_at: Option<DateTime<Utc>>,
+    tags: HashSet<String>,
 }
 
 // ── Error ──────────────────────────────────────────────────────────
@@ -220,14 +234,12 @@ fn build_router_with_store(
     let state = DocApiState { store };
 
     Router::new()
-        .route(
-            "/v1/workspaces/{ws_id}/documents",
-            post(create_document).get(list_documents),
-        )
+        .route("/v1/workspaces/{ws_id}/documents", post(create_document).get(list_documents))
         .route(
             "/v1/workspaces/{ws_id}/documents/{doc_id}",
             get(get_document).patch(update_document).delete(delete_document),
         )
+        .route("/v1/workspaces/{ws_id}/documents/{doc_id}/tags", post(update_document_tags))
         .with_state(state)
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
 }
@@ -242,7 +254,8 @@ async fn create_document(
 ) -> Result<(StatusCode, Json<DocumentEnvelope>), DocApiError> {
     validate_path(&payload.path)?;
 
-    let document = state.store.create(ws_id, user.user_id, &payload.path, payload.title.as_deref()).await?;
+    let document =
+        state.store.create(ws_id, user.user_id, &payload.path, payload.title.as_deref()).await?;
 
     Ok((StatusCode::CREATED, Json(DocumentEnvelope { document })))
 }
@@ -304,6 +317,17 @@ async fn delete_document(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn update_document_tags(
+    State(state): State<DocApiState>,
+    Extension(_user): Extension<AuthenticatedUser>,
+    Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<UpdateDocumentTagsRequest>,
+) -> Result<Json<DocumentEnvelope>, DocApiError> {
+    let tags = normalize_tag_names(&payload.tags)?;
+    let document = state.store.update_tags(ws_id, doc_id, payload.op, &tags).await?;
+    Ok(Json(DocumentEnvelope { document }))
+}
+
 // ── Store implementation ───────────────────────────────────────────
 
 impl DocumentStore {
@@ -354,9 +378,7 @@ impl DocumentStore {
     ) -> Result<Document, DocApiError> {
         match self {
             Self::Postgres(pool) => update_pg(pool, workspace_id, doc_id, if_match, payload).await,
-            Self::Memory(store) => {
-                update_mem(store, workspace_id, doc_id, if_match, payload).await
-            }
+            Self::Memory(store) => update_mem(store, workspace_id, doc_id, if_match, payload).await,
         }
     }
 
@@ -369,6 +391,19 @@ impl DocumentStore {
         match self {
             Self::Postgres(pool) => delete_pg(pool, workspace_id, doc_id, hard).await,
             Self::Memory(store) => delete_mem(store, workspace_id, doc_id, hard).await,
+        }
+    }
+
+    async fn update_tags(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        op: DocumentTagOp,
+        tags: &[String],
+    ) -> Result<Document, DocApiError> {
+        match self {
+            Self::Postgres(pool) => update_tags_pg(pool, workspace_id, doc_id, op, tags).await,
+            Self::Memory(store) => update_tags_mem(store, workspace_id, doc_id, op, tags).await,
         }
     }
 }
@@ -456,11 +491,7 @@ async fn list_pg(
     Ok((items, next_cursor))
 }
 
-async fn get_pg(
-    pool: &PgPool,
-    workspace_id: Uuid,
-    doc_id: Uuid,
-) -> Result<Document, DocApiError> {
+async fn get_pg(pool: &PgPool, workspace_id: Uuid, doc_id: Uuid) -> Result<Document, DocApiError> {
     let row = sqlx::query_as::<_, DocumentRow>(
         r#"
         SELECT id, workspace_id, path, title, head_seq, etag, created_by,
@@ -569,6 +600,114 @@ async fn delete_pg(
     Ok(())
 }
 
+async fn update_tags_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    op: DocumentTagOp,
+    tags: &[String],
+) -> Result<Document, DocApiError> {
+    let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
+
+    let exists = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT 1
+        FROM documents
+        WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
+        FOR UPDATE
+        "#,
+    )
+    .bind(doc_id)
+    .bind(workspace_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(map_sqlx_error)?
+    .is_some();
+
+    if !exists {
+        return Err(DocApiError::NotFound);
+    }
+
+    match op {
+        DocumentTagOp::Add => {
+            for tag in tags {
+                let tag_id = sqlx::query_scalar::<_, Uuid>(
+                    r#"
+                    INSERT INTO tags (workspace_id, name)
+                    VALUES ($1, $2)
+                    ON CONFLICT (workspace_id, name) DO UPDATE SET name = EXCLUDED.name
+                    RETURNING id
+                    "#,
+                )
+                .bind(workspace_id)
+                .bind(tag)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+
+                sqlx::query(
+                    r#"
+                    INSERT INTO document_tags (document_id, tag_id)
+                    VALUES ($1, $2)
+                    ON CONFLICT (document_id, tag_id) DO NOTHING
+                    "#,
+                )
+                .bind(doc_id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+            }
+        }
+        DocumentTagOp::Remove => {
+            for tag in tags {
+                let tag_id = sqlx::query_scalar::<_, Uuid>(
+                    r#"
+                    SELECT id
+                    FROM tags
+                    WHERE workspace_id = $1 AND name = $2
+                    "#,
+                )
+                .bind(workspace_id)
+                .bind(tag)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+
+                if let Some(tag_id) = tag_id {
+                    sqlx::query("DELETE FROM document_tags WHERE document_id = $1 AND tag_id = $2")
+                        .bind(doc_id)
+                        .bind(tag_id)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(map_sqlx_error)?;
+                }
+            }
+        }
+    }
+
+    let new_etag = generate_etag();
+    let row = sqlx::query_as::<_, DocumentRow>(
+        r#"
+        UPDATE documents
+        SET etag = $3, updated_at = now()
+        WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
+        RETURNING id, workspace_id, path, title, head_seq, etag, created_by,
+                  created_at, updated_at, archived_at
+        "#,
+    )
+    .bind(doc_id)
+    .bind(workspace_id)
+    .bind(new_etag)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or(DocApiError::NotFound)?;
+
+    tx.commit().await.map_err(map_sqlx_error)?;
+    Ok(row.into())
+}
+
 // ── Memory implementations (for testing) ───────────────────────────
 
 async fn create_mem(
@@ -583,9 +722,7 @@ async fn create_mem(
 
     // Check uniqueness.
     let conflict = store.documents.values().any(|d| {
-        d.workspace_id == workspace_id
-            && d.path_norm == path_norm
-            && d.deleted_at.is_none()
+        d.workspace_id == workspace_id && d.path_norm == path_norm && d.deleted_at.is_none()
     });
     if conflict {
         return Err(DocApiError::Conflict);
@@ -606,6 +743,7 @@ async fn create_mem(
         updated_at: now,
         archived_at: None,
         deleted_at: None,
+        tags: HashSet::new(),
     };
     let result = mem_to_document(&doc);
     store.documents.insert(id, doc);
@@ -704,11 +842,8 @@ async fn delete_mem(
     let mut store = store.write().await;
 
     if hard {
-        let existed = store
-            .documents
-            .remove(&doc_id)
-            .filter(|d| d.workspace_id == workspace_id)
-            .is_some();
+        let existed =
+            store.documents.remove(&doc_id).filter(|d| d.workspace_id == workspace_id).is_some();
         if !existed {
             return Err(DocApiError::NotFound);
         }
@@ -722,6 +857,39 @@ async fn delete_mem(
     }
 
     Ok(())
+}
+
+async fn update_tags_mem(
+    store: &RwLock<MemoryDocumentStore>,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    op: DocumentTagOp,
+    tags: &[String],
+) -> Result<Document, DocApiError> {
+    let mut store = store.write().await;
+    let doc = store
+        .documents
+        .get_mut(&doc_id)
+        .filter(|d| d.workspace_id == workspace_id && d.deleted_at.is_none())
+        .ok_or(DocApiError::NotFound)?;
+
+    match op {
+        DocumentTagOp::Add => {
+            for tag in tags {
+                doc.tags.insert(tag.clone());
+            }
+        }
+        DocumentTagOp::Remove => {
+            for tag in tags {
+                doc.tags.remove(tag);
+            }
+        }
+    }
+
+    doc.etag = generate_etag();
+    doc.updated_at = Utc::now();
+
+    Ok(mem_to_document(doc))
 }
 
 fn mem_to_document(doc: &MemoryDocument) -> Document {
@@ -762,13 +930,11 @@ fn parse_cursor(value: &str) -> Result<DocCursor, DocApiError> {
         .split_once('|')
         .ok_or_else(|| DocApiError::bad_request("cursor format is invalid"))?;
 
-    let ts = ts
-        .parse::<i64>()
-        .map_err(|_| DocApiError::bad_request("cursor timestamp is invalid"))?;
+    let ts =
+        ts.parse::<i64>().map_err(|_| DocApiError::bad_request("cursor timestamp is invalid"))?;
     let updated_at = DateTime::<Utc>::from_timestamp_micros(ts)
         .ok_or_else(|| DocApiError::bad_request("cursor timestamp is invalid"))?;
-    let id = Uuid::parse_str(id)
-        .map_err(|_| DocApiError::bad_request("cursor id is invalid"))?;
+    let id = Uuid::parse_str(id).map_err(|_| DocApiError::bad_request("cursor id is invalid"))?;
 
     Ok(DocCursor { updated_at, id })
 }
@@ -800,11 +966,33 @@ fn validate_path(path: &str) -> Result<(), DocApiError> {
     Ok(())
 }
 
+fn normalize_tag_names(raw_tags: &[String]) -> Result<Vec<String>, DocApiError> {
+    if raw_tags.is_empty() {
+        return Err(DocApiError::bad_request("tags must contain at least one tag"));
+    }
+
+    let mut out = Vec::with_capacity(raw_tags.len());
+    let mut seen = HashSet::with_capacity(raw_tags.len());
+
+    for raw in raw_tags {
+        let tag = raw.trim().to_lowercase();
+        if tag.is_empty() {
+            return Err(DocApiError::bad_request("tag names must not be empty"));
+        }
+        if tag.len() > 64 {
+            return Err(DocApiError::bad_request("tag names must not exceed 64 characters"));
+        }
+        if seen.insert(tag.clone()) {
+            out.push(tag);
+        }
+    }
+
+    Ok(out)
+}
+
 fn extract_if_match(headers: &HeaderMap) -> Result<&str, DocApiError> {
     let value = headers.get(IF_MATCH).ok_or(DocApiError::PreconditionRequired)?;
-    value
-        .to_str()
-        .map_err(|_| DocApiError::bad_request("If-Match header is not valid utf-8"))
+    value.to_str().map_err(|_| DocApiError::bad_request("If-Match header is not valid utf-8"))
 }
 
 fn etag_matches(if_match: &str, current_etag: &str) -> bool {
@@ -865,7 +1053,12 @@ mod tests {
         jwt.issue_workspace_token(user_id, workspace_id).expect("token")
     }
 
-    fn json_request(method: &str, uri: &str, body: serde_json::Value, token: &str) -> Request<Body> {
+    fn json_request(
+        method: &str,
+        uri: &str,
+        body: serde_json::Value,
+        token: &str,
+    ) -> Request<Body> {
         Request::builder()
             .method(method)
             .uri(uri)
@@ -987,10 +1180,7 @@ mod tests {
         let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
 
         let resp = app
-            .oneshot(get_request(
-                &format!("/v1/workspaces/{ws_id}/documents"),
-                &token,
-            ))
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents"), &token))
             .await
             .unwrap();
 
@@ -1025,10 +1215,7 @@ mod tests {
 
         // Get.
         let resp = app
-            .oneshot(get_request(
-                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}"),
-                &token,
-            ))
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &token))
             .await
             .unwrap();
 
@@ -1140,6 +1327,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_document_tags_add_and_remove_returns_document() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store, jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let create_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "tagged.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        let create_body = body_json(create_resp).await;
+        let doc_id = create_body["document"]["id"].as_str().unwrap();
+        let etag_before = create_body["document"]["etag"].as_str().unwrap().to_string();
+
+        let add_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": ["approved", "rfc"]}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(add_resp.status(), StatusCode::OK);
+        let add_body = body_json(add_resp).await;
+        let etag_after_add = add_body["document"]["etag"].as_str().unwrap().to_string();
+        assert_ne!(etag_after_add, etag_before);
+        assert_eq!(add_body["document"]["path"], "tagged.md");
+
+        let remove_resp = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "remove", "tags": ["approved"]}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(remove_resp.status(), StatusCode::OK);
+        let remove_body = body_json(remove_resp).await;
+        let etag_after_remove = remove_body["document"]["etag"].as_str().unwrap().to_string();
+        assert_ne!(etag_after_remove, etag_after_add);
+        assert_eq!(remove_body["document"]["id"], doc_id);
+    }
+
+    #[tokio::test]
+    async fn update_document_tags_rejects_empty_tag_list() {
+        let app = test_router();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let create_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "tagged.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        let create_body = body_json(create_resp).await;
+        let doc_id = create_body["document"]["id"].as_str().unwrap();
+
+        let resp = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": []}),
+                &token,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn soft_delete_hides_from_list() {
         let store = test_store();
         let jwt = test_jwt_service();
@@ -1165,20 +1440,14 @@ mod tests {
         // Soft delete.
         let resp = app
             .clone()
-            .oneshot(delete_request(
-                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}"),
-                &token,
-            ))
+            .oneshot(delete_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &token))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
         // List should be empty.
         let resp = app
-            .oneshot(get_request(
-                &format!("/v1/workspaces/{ws_id}/documents"),
-                &token,
-            ))
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents"), &token))
             .await
             .unwrap();
         let body = body_json(resp).await;

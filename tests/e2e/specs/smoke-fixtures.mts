@@ -23,12 +23,19 @@ export interface GitStatus {
   lastCommit?: string;
 }
 
+export interface ReconnectProgress {
+  syncedUpdates: number;
+  totalUpdates: number;
+}
+
 export interface SmokeFixtureState {
   fixtureName?: string;
   docContent?: string;
   cursor?: CursorPosition;
   remotePeers?: RemotePeer[];
   syncState?: SyncState;
+  pendingSyncUpdates?: number;
+  reconnectProgress?: ReconnectProgress | null;
   gitStatus?: GitStatus;
 }
 
@@ -120,5 +127,34 @@ function validateFixtureSet(fixtures: SmokeFixture[]): void {
     if (!availableSyncStates.has(state)) {
       throw new Error(`fixture set must include sync state: ${state}`);
     }
+  }
+
+  const hasOfflinePendingFixture = fixtures.some(
+    (fixture) =>
+      fixture.state?.syncState === "offline" &&
+      (fixture.state.pendingSyncUpdates ?? 0) > 0,
+  );
+  if (!hasOfflinePendingFixture) {
+    throw new Error(
+      "fixture set must include an offline fixture with pendingSyncUpdates > 0",
+    );
+  }
+
+  const hasReconnectProgressFixture = fixtures.some(
+    (fixture) =>
+      fixture.state?.syncState === "reconnecting" &&
+      (fixture.state.reconnectProgress?.totalUpdates ?? 0) > 0,
+  );
+  if (!hasReconnectProgressFixture) {
+    throw new Error(
+      "fixture set must include a reconnecting fixture with reconnectProgress",
+    );
+  }
+
+  const hasLastCommitFixture = fixtures.some(
+    (fixture) => typeof fixture.state?.gitStatus?.lastCommit === "string",
+  );
+  if (!hasLastCommitFixture) {
+    throw new Error("fixture set must include gitStatus.lastCommit coverage");
   }
 }

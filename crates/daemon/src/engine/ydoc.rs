@@ -127,10 +127,7 @@ mod tests {
         }
 
         fn next_u64(&mut self) -> u64 {
-            self.state = self
-                .state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1);
+            self.state = self.state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             self.state
         }
 
@@ -215,9 +212,8 @@ mod tests {
     }
 
     fn run_randomized_convergence(seed: u64, clients: usize, ops: usize) {
-        let docs = (0..clients)
-            .map(|idx| YDoc::with_client_id((idx + 1) as u64))
-            .collect::<Vec<_>>();
+        let docs =
+            (0..clients).map(|idx| YDoc::with_client_id((idx + 1) as u64)).collect::<Vec<_>>();
 
         let mut rng = Lcg::new(seed);
 

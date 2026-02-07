@@ -33,5 +33,24 @@ describe("loadSmokeFixtures", () => {
     expect(syncStates.has("offline")).toBe(true);
     expect(syncStates.has("reconnecting")).toBe(true);
     expect(syncStates.has("error")).toBe(true);
+    expect(
+      fixtures.some(
+        (fixture) =>
+          fixture.state?.syncState === "offline" &&
+          (fixture.state.pendingSyncUpdates ?? 0) > 0,
+      ),
+    ).toBe(true);
+    expect(
+      fixtures.some(
+        (fixture) =>
+          fixture.state?.syncState === "reconnecting" &&
+          (fixture.state.reconnectProgress?.totalUpdates ?? 0) > 0,
+      ),
+    ).toBe(true);
+    expect(
+      fixtures.some(
+        (fixture) => typeof fixture.state?.gitStatus?.lastCommit === "string",
+      ),
+    ).toBe(true);
   });
 });

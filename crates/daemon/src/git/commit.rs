@@ -207,7 +207,8 @@ mod tests {
         ) -> Pin<Box<dyn Future<Output = Result<String, AiCommitError>> + Send>> {
             *self.captured_system.lock().unwrap() = Some(system.to_string());
             *self.captured_prompt.lock().unwrap() = Some(user_prompt.to_string());
-            let result = self.response.lock().unwrap().take().expect("mock response consumed twice");
+            let result =
+                self.response.lock().unwrap().take().expect("mock response consumed twice");
             Box::pin(async move { result })
         }
     }
@@ -285,8 +286,7 @@ mod tests {
     async fn empty_response_returns_error() {
         let client = MockClient::ok("   \n  ");
 
-        let result =
-            generate_ai_commit_message(&client, "diff", &[], RedactionPolicy::Full).await;
+        let result = generate_ai_commit_message(&client, "diff", &[], RedactionPolicy::Full).await;
 
         assert_eq!(result.unwrap_err(), AiCommitError::EmptyResponse);
     }
@@ -295,8 +295,7 @@ mod tests {
     async fn client_error_propagates() {
         let client = MockClient::err(AiCommitError::ClientError("timeout".into()));
 
-        let result =
-            generate_ai_commit_message(&client, "diff", &[], RedactionPolicy::Full).await;
+        let result = generate_ai_commit_message(&client, "diff", &[], RedactionPolicy::Full).await;
 
         assert_eq!(result.unwrap_err(), AiCommitError::ClientError("timeout".into()));
     }

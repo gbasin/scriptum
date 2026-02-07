@@ -28,6 +28,7 @@
 - Atomic commits; push only when asked
 - Never destructive ops (`reset --hard`, `force push`, `checkout .`, `stash`, `restore`) without explicit consent — other agents may be editing the same worktree
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`
+- Never use git add. Always commit with explicit paths: git commit -m "feat: ..." -- file1 file2
 
 ## Critical Thinking
 
@@ -127,9 +128,8 @@ br sync --status      # Check sync status
 
 ```bash
 git status              # Check what changed
-git add <files>         # Stage code changes
 br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
+git commit -m "..." --file1 file2    # Commit everything
 git push                # Push to remote
 ```
 

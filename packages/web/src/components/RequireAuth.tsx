@@ -2,10 +2,16 @@
 
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
+import { isFixtureModeEnabled } from "../test/setup";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const status = useAuthStore((s) => s.status);
   const location = useLocation();
+  const fixtureModeEnabled = isFixtureModeEnabled();
+
+  if (fixtureModeEnabled) {
+    return <>{children}</>;
+  }
 
   if (status === "unknown") {
     return null; // Session restore in progress.

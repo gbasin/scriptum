@@ -11,9 +11,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use scriptum_common::types::{
-    EditorType, OverlapEditor, OverlapSeverity, Section, SectionOverlap,
-};
+use scriptum_common::types::{EditorType, OverlapEditor, OverlapSeverity, Section, SectionOverlap};
 
 /// An editor's current cursor position in a document.
 #[derive(Debug, Clone)]
@@ -45,10 +43,7 @@ pub fn detect_overlaps(
 
     for editor in editors {
         if let Some(section) = find_section_for_line(sections, editor.line) {
-            editors_by_section
-                .entry(section.id.as_str())
-                .or_default()
-                .push((section, editor));
+            editors_by_section.entry(section.id.as_str()).or_default().push((section, editor));
         }
     }
 
@@ -76,11 +71,7 @@ pub fn detect_overlaps(
 
             let severity = classify_severity(&group, &paragraph_map);
 
-            SectionOverlap {
-                section,
-                editors: overlap_editors,
-                severity,
-            }
+            SectionOverlap { section, editors: overlap_editors, severity }
         })
         .collect();
 
@@ -94,10 +85,7 @@ pub fn detect_overlaps(
 /// multiple sections contain the line (e.g., a heading and its parent),
 /// the deepest (highest level number) is returned.
 fn find_section_for_line(sections: &[Section], line: u32) -> Option<&Section> {
-    sections
-        .iter()
-        .filter(|s| line >= s.start_line && line < s.end_line)
-        .max_by_key(|s| s.level)
+    sections.iter().filter(|s| line >= s.start_line && line < s.end_line).max_by_key(|s| s.level)
 }
 
 /// Compute cursor offset within a section (characters from section start).
@@ -149,10 +137,8 @@ fn classify_severity(
     group: &[(&Section, &EditorPosition)],
     paragraph_map: &HashMap<u32, u32>,
 ) -> OverlapSeverity {
-    let paragraph_ids: Vec<Option<&u32>> = group
-        .iter()
-        .map(|(_, editor)| paragraph_map.get(&editor.line))
-        .collect();
+    let paragraph_ids: Vec<Option<&u32>> =
+        group.iter().map(|(_, editor)| paragraph_map.get(&editor.line)).collect();
 
     for i in 0..paragraph_ids.len() {
         for j in (i + 1)..paragraph_ids.len() {
@@ -176,13 +162,7 @@ mod tests {
     use super::*;
 
     fn editor(name: &str, editor_type: EditorType, line: u32, ch: u32) -> EditorPosition {
-        EditorPosition {
-            name: name.to_string(),
-            editor_type,
-            line,
-            ch,
-            last_edit_at: Utc::now(),
-        }
+        EditorPosition { name: name.to_string(), editor_type, line, ch, last_edit_at: Utc::now() }
     }
 
     // ── detect_overlaps ─────────────────────────────────────────────
@@ -199,10 +179,8 @@ mod tests {
 
     #[test]
     fn no_overlap_with_empty_sections() {
-        let editors = vec![
-            editor("alice", EditorType::Human, 1, 0),
-            editor("bob", EditorType::Human, 2, 0),
-        ];
+        let editors =
+            vec![editor("alice", EditorType::Human, 1, 0), editor("bob", EditorType::Human, 2, 0)];
         let overlaps = detect_overlaps(&[], &editors, "no headings");
         assert!(overlaps.is_empty());
     }
@@ -226,10 +204,8 @@ mod tests {
         let md = "# Root\n\nFirst paragraph.\n\nSecond paragraph.\n";
         let sections = parse_sections(md);
 
-        let editors = vec![
-            editor("alice", EditorType::Human, 3, 0),
-            editor("bob", EditorType::Agent, 5, 0),
-        ];
+        let editors =
+            vec![editor("alice", EditorType::Human, 3, 0), editor("bob", EditorType::Agent, 5, 0)];
 
         let overlaps = detect_overlaps(&sections, &editors, md);
         assert_eq!(overlaps.len(), 1);
@@ -244,10 +220,8 @@ mod tests {
         let md = "# Root\n\nLine one of paragraph.\nLine two of paragraph.\nLine three.\n";
         let sections = parse_sections(md);
 
-        let editors = vec![
-            editor("alice", EditorType::Human, 3, 5),
-            editor("bob", EditorType::Human, 4, 10),
-        ];
+        let editors =
+            vec![editor("alice", EditorType::Human, 3, 5), editor("bob", EditorType::Human, 4, 10)];
 
         let overlaps = detect_overlaps(&sections, &editors, md);
         assert_eq!(overlaps.len(), 1);
@@ -314,10 +288,8 @@ mod tests {
         let sections = parse_sections(md);
 
         // Line 5 is in Child body (which is nested under Root).
-        let editors = vec![
-            editor("alice", EditorType::Human, 5, 0),
-            editor("bob", EditorType::Human, 5, 5),
-        ];
+        let editors =
+            vec![editor("alice", EditorType::Human, 5, 0), editor("bob", EditorType::Human, 5, 5)];
 
         let overlaps = detect_overlaps(&sections, &editors, md);
         assert_eq!(overlaps.len(), 1);
@@ -354,10 +326,8 @@ mod tests {
         let sections = parse_sections(md);
 
         // Child starts at line 3. Editor on line 5 = 2 lines into section.
-        let editors = vec![
-            editor("alice", EditorType::Human, 5, 10),
-            editor("bob", EditorType::Human, 6, 0),
-        ];
+        let editors =
+            vec![editor("alice", EditorType::Human, 5, 10), editor("bob", EditorType::Human, 6, 0)];
 
         let overlaps = detect_overlaps(&sections, &editors, md);
         assert_eq!(overlaps.len(), 1);

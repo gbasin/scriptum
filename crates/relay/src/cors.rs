@@ -88,9 +88,7 @@ mod tests {
     }
 
     fn test_app(env_value: Option<String>) -> Router {
-        Router::new()
-            .route("/test", get(ok_handler))
-            .layer(cors_layer_from_env(env_value))
+        Router::new().route("/test", get(ok_handler)).layer(cors_layer_from_env(env_value))
     }
 
     #[tokio::test]
@@ -183,10 +181,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            response.headers().get("access-control-allow-origin").unwrap(),
-            "*"
-        );
+        assert_eq!(response.headers().get("access-control-allow-origin").unwrap(), "*");
         // Credentials must be false when origin is wildcard.
         assert!(response.headers().get("access-control-allow-credentials").is_none());
     }
@@ -230,10 +225,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            response.headers().get("access-control-max-age").unwrap(),
-            "3600"
-        );
+        assert_eq!(response.headers().get("access-control-max-age").unwrap(), "3600");
     }
 
     #[tokio::test]

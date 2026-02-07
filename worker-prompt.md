@@ -38,7 +38,6 @@ Read `AGENTS.md` for full project rules, beads workflow, git conventions, and se
 See `AGENTS.md` The short version:
 
 ```bash
-git add <your-files>        # Only YOUR files — never git add . or git add -A
-git commit -m "feat: ..."   # Conventional commit
-br sync --flush-only        # Export beads changes
+git commit -m "feat: ..." --file1 file2   # Conventional commit -- Never use git add. Always commit with explicit paths
+br sync --flush-only        			  # Export beads changes
 ```

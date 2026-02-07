@@ -64,10 +64,7 @@ impl Debouncer {
 
     /// Like `push` but with a specific timestamp (for testing).
     fn push_at(&mut self, event: RawFsEvent, now: Instant) {
-        self.pending.insert(
-            event.path,
-            PendingEvent { kind: event.kind, last_seen: now },
-        );
+        self.pending.insert(event.path, PendingEvent { kind: event.kind, last_seen: now });
     }
 
     /// Drain all events whose debounce window has elapsed.
@@ -100,10 +97,7 @@ impl Debouncer {
 
     /// Time until the next pending event becomes ready, or None if empty.
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.pending
-            .values()
-            .map(|p| p.last_seen + self.config.window)
-            .min()
+        self.pending.values().map(|p| p.last_seen + self.config.window).min()
     }
 }
 
@@ -183,14 +177,8 @@ mod tests {
 
         // Three events on the same path within the window.
         debouncer.push_at(event(FsEventKind::Create, "/a.md"), now);
-        debouncer.push_at(
-            event(FsEventKind::Modify, "/a.md"),
-            now + Duration::from_millis(20),
-        );
-        debouncer.push_at(
-            event(FsEventKind::Modify, "/a.md"),
-            now + Duration::from_millis(40),
-        );
+        debouncer.push_at(event(FsEventKind::Modify, "/a.md"), now + Duration::from_millis(20));
+        debouncer.push_at(event(FsEventKind::Modify, "/a.md"), now + Duration::from_millis(40));
 
         // Only 1 pending event (coalesced).
         assert_eq!(debouncer.pending_count(), 1);
@@ -213,10 +201,7 @@ mod tests {
         debouncer.push_at(event(FsEventKind::Modify, "/a.md"), now);
 
         // 80ms later, another event on the same path resets the timer.
-        debouncer.push_at(
-            event(FsEventKind::Modify, "/a.md"),
-            now + Duration::from_millis(80),
-        );
+        debouncer.push_at(event(FsEventKind::Modify, "/a.md"), now + Duration::from_millis(80));
 
         // At 100ms since original, NOT ready (only 20ms since last).
         let ready = debouncer.drain_ready_at(now + Duration::from_millis(100));
@@ -235,10 +220,7 @@ mod tests {
         let now = Instant::now();
 
         debouncer.push_at(event(FsEventKind::Modify, "/a.md"), now);
-        debouncer.push_at(
-            event(FsEventKind::Create, "/b.md"),
-            now + Duration::from_millis(50),
-        );
+        debouncer.push_at(event(FsEventKind::Create, "/b.md"), now + Duration::from_millis(50));
 
         assert_eq!(debouncer.pending_count(), 2);
 
@@ -263,10 +245,7 @@ mod tests {
         let now = Instant::now();
 
         debouncer.push_at(event(FsEventKind::Create, "/a.md"), now);
-        debouncer.push_at(
-            event(FsEventKind::Remove, "/a.md"),
-            now + Duration::from_millis(30),
-        );
+        debouncer.push_at(event(FsEventKind::Remove, "/a.md"), now + Duration::from_millis(30));
 
         let ready = debouncer.drain_ready_at(now + Duration::from_millis(130));
         assert_eq!(ready.len(), 1);
@@ -314,10 +293,7 @@ mod tests {
         let now = Instant::now();
 
         debouncer.push_at(event(FsEventKind::Modify, "/a.md"), now);
-        debouncer.push_at(
-            event(FsEventKind::Create, "/b.md"),
-            now + Duration::from_millis(50),
-        );
+        debouncer.push_at(event(FsEventKind::Create, "/b.md"), now + Duration::from_millis(50));
 
         let deadline = debouncer.next_deadline().unwrap();
         // Earliest event was at `now`, so deadline should be now + 100ms.

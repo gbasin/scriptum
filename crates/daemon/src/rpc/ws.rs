@@ -8,9 +8,7 @@ use axum::{
     routing::get,
     Router,
 };
-use scriptum_common::protocol::jsonrpc::{
-    RequestId, Response, RpcError, INVALID_REQUEST,
-};
+use scriptum_common::protocol::jsonrpc::{RequestId, Response, RpcError, INVALID_REQUEST};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 

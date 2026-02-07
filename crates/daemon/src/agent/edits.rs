@@ -55,7 +55,11 @@ impl EditStore {
     }
 
     /// List recent edits for a document, newest first.
-    pub fn list_by_doc(conn: &Connection, doc_id: &str, limit: usize) -> Result<Vec<AgentRecentEdit>> {
+    pub fn list_by_doc(
+        conn: &Connection,
+        doc_id: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentRecentEdit>> {
         let mut stmt = conn
             .prepare(
                 "SELECT id, doc_id, agent_id, start_offset_utf16, end_offset_utf16, ts \
@@ -68,12 +72,15 @@ impl EditStore {
             .query_map(params![doc_id, limit as i64], row_to_edit)
             .context("failed to query edits by doc")?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to collect doc edits")
+        rows.collect::<std::result::Result<Vec<_>, _>>().context("failed to collect doc edits")
     }
 
     /// List recent edits by an agent across all docs, newest first.
-    pub fn list_by_agent(conn: &Connection, agent_id: &str, limit: usize) -> Result<Vec<AgentRecentEdit>> {
+    pub fn list_by_agent(
+        conn: &Connection,
+        agent_id: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentRecentEdit>> {
         let mut stmt = conn
             .prepare(
                 "SELECT id, doc_id, agent_id, start_offset_utf16, end_offset_utf16, ts \
@@ -86,8 +93,7 @@ impl EditStore {
             .query_map(params![agent_id, limit as i64], row_to_edit)
             .context("failed to query edits by agent")?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to collect agent edits")
+        rows.collect::<std::result::Result<Vec<_>, _>>().context("failed to collect agent edits")
     }
 
     /// Count edits for a document.
@@ -103,20 +109,14 @@ impl EditStore {
 
     /// Delete all edits for a document.
     pub fn delete_by_doc(conn: &Connection, doc_id: &str) -> Result<usize> {
-        conn.execute(
-            "DELETE FROM agent_recent_edits WHERE doc_id = ?1",
-            params![doc_id],
-        )
-        .context("failed to delete edits by doc")
+        conn.execute("DELETE FROM agent_recent_edits WHERE doc_id = ?1", params![doc_id])
+            .context("failed to delete edits by doc")
     }
 
     /// Prune edits older than `cutoff`.
     pub fn prune_older_than(conn: &Connection, cutoff: DateTime<Utc>) -> Result<usize> {
-        conn.execute(
-            "DELETE FROM agent_recent_edits WHERE ts < ?1",
-            params![cutoff.to_rfc3339()],
-        )
-        .context("failed to prune old agent edits")
+        conn.execute("DELETE FROM agent_recent_edits WHERE ts < ?1", params![cutoff.to_rfc3339()])
+            .context("failed to prune old agent edits")
     }
 }
 
@@ -124,9 +124,9 @@ impl EditStore {
 
 fn row_to_edit(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRecentEdit> {
     let ts_raw: String = row.get(5)?;
-    let ts = ts_raw
-        .parse::<DateTime<Utc>>()
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e)))?;
+    let ts = ts_raw.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     Ok(AgentRecentEdit {
         id: row.get(0)?,
@@ -158,10 +158,8 @@ mod tests {
     }
 
     fn unique_path(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should work")
-            .as_nanos();
+        let nanos =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time should work").as_nanos();
         let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("scriptum-{prefix}-{nanos}-{seq}.db"))
     }
@@ -199,8 +197,8 @@ mod tests {
             .expect("record should succeed");
         assert!(id2 > id1);
 
-        let edits = EditStore::list_by_doc(db.connection(), "doc-1", 10)
-            .expect("list should succeed");
+        let edits =
+            EditStore::list_by_doc(db.connection(), "doc-1", 10).expect("list should succeed");
         assert_eq!(edits.len(), 2);
         // Newest first.
         assert_eq!(edits[0].agent_id, "bob");
@@ -225,8 +223,8 @@ mod tests {
             .unwrap();
         }
 
-        let edits = EditStore::list_by_doc(db.connection(), "doc-1", 3)
-            .expect("list should succeed");
+        let edits =
+            EditStore::list_by_doc(db.connection(), "doc-1", 3).expect("list should succeed");
         assert_eq!(edits.len(), 3);
 
         drop(db);
@@ -243,8 +241,8 @@ mod tests {
         EditStore::record(db.connection(), &make_edit("doc-2", "alice", 10, 20, t2)).unwrap();
         EditStore::record(db.connection(), &make_edit("doc-1", "bob", 0, 5, t1)).unwrap();
 
-        let edits = EditStore::list_by_agent(db.connection(), "alice", 10)
-            .expect("list should succeed");
+        let edits =
+            EditStore::list_by_agent(db.connection(), "alice", 10).expect("list should succeed");
         assert_eq!(edits.len(), 2);
         assert_eq!(edits[0].doc_id, "doc-2"); // newest first
         assert_eq!(edits[1].doc_id, "doc-1");
@@ -279,8 +277,8 @@ mod tests {
         EditStore::record(db.connection(), &make_edit("doc-1", "bob", 10, 15, now)).unwrap();
         EditStore::record(db.connection(), &make_edit("doc-2", "alice", 0, 5, now)).unwrap();
 
-        let removed = EditStore::delete_by_doc(db.connection(), "doc-1")
-            .expect("delete should succeed");
+        let removed =
+            EditStore::delete_by_doc(db.connection(), "doc-1").expect("delete should succeed");
         assert_eq!(removed, 2);
         assert_eq!(EditStore::count_by_doc(db.connection(), "doc-1").unwrap(), 0);
         assert_eq!(EditStore::count_by_doc(db.connection(), "doc-2").unwrap(), 1);
@@ -299,8 +297,8 @@ mod tests {
         EditStore::record(db.connection(), &make_edit("doc-1", "alice", 0, 5, old)).unwrap();
         EditStore::record(db.connection(), &make_edit("doc-1", "bob", 10, 15, recent)).unwrap();
 
-        let removed = EditStore::prune_older_than(db.connection(), cutoff)
-            .expect("prune should succeed");
+        let removed =
+            EditStore::prune_older_than(db.connection(), cutoff).expect("prune should succeed");
         assert_eq!(removed, 1);
 
         let remaining = EditStore::list_by_doc(db.connection(), "doc-1", 10).unwrap();

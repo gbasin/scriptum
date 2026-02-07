@@ -29,16 +29,11 @@ where
         let value = parts
             .headers
             .get(IF_MATCH)
-            .ok_or_else(|| {
-                RelayError::from_code(ErrorCode::PreconditionRequired).into_response()
-            })?
+            .ok_or_else(|| RelayError::from_code(ErrorCode::PreconditionRequired).into_response())?
             .to_str()
             .map_err(|_| {
-                RelayError::new(
-                    ErrorCode::ValidationFailed,
-                    "If-Match header is not valid utf-8",
-                )
-                .into_response()
+                RelayError::new(ErrorCode::ValidationFailed, "If-Match header is not valid utf-8")
+                    .into_response()
             })?
             .to_owned();
 
@@ -99,10 +94,7 @@ pub fn etag_matches(if_match: &str, current_etag: &str) -> bool {
 pub fn normalize_etag(value: &str) -> &str {
     let trimmed = value.trim();
     let without_weak = trimmed.strip_prefix("W/").unwrap_or(trimmed);
-    without_weak
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .unwrap_or(without_weak)
+    without_weak.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(without_weak)
 }
 
 /// Return the response status code for a missing or invalid If-Match.

@@ -52,26 +52,20 @@ where
 /// Classify a JSON rejection into a human-readable message and details object.
 fn classify_json_rejection(rejection: &JsonRejection) -> (String, serde_json::Value) {
     match rejection {
-        JsonRejection::JsonDataError(e) => (
-            format!("invalid JSON payload: {e}"),
-            serde_json::json!({ "kind": "data_error" }),
-        ),
-        JsonRejection::JsonSyntaxError(e) => (
-            format!("malformed JSON: {e}"),
-            serde_json::json!({ "kind": "syntax_error" }),
-        ),
+        JsonRejection::JsonDataError(e) => {
+            (format!("invalid JSON payload: {e}"), serde_json::json!({ "kind": "data_error" }))
+        }
+        JsonRejection::JsonSyntaxError(e) => {
+            (format!("malformed JSON: {e}"), serde_json::json!({ "kind": "syntax_error" }))
+        }
         JsonRejection::MissingJsonContentType(_) => (
             "expected Content-Type: application/json".to_string(),
             serde_json::json!({ "kind": "missing_content_type" }),
         ),
-        JsonRejection::BytesRejection(e) => (
-            format!("request body error: {e}"),
-            serde_json::json!({ "kind": "body_error" }),
-        ),
-        other => (
-            format!("request body error: {other}"),
-            serde_json::json!({ "kind": "unknown" }),
-        ),
+        JsonRejection::BytesRejection(e) => {
+            (format!("request body error: {e}"), serde_json::json!({ "kind": "body_error" }))
+        }
+        other => (format!("request body error: {other}"), serde_json::json!({ "kind": "unknown" })),
     }
 }
 
@@ -95,10 +89,39 @@ pub fn check_ws_frame_size(payload: &[u8]) -> Result<(), String> {
 
 /// Allowed HTML tags in rendered markdown content.
 const ALLOWED_TAGS: &[&str] = &[
-    "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr", "blockquote",
-    "pre", "code", "em", "strong", "del", "ul", "ol", "li", "a", "img",
-    "table", "thead", "tbody", "tr", "th", "td", "div", "span", "sup",
-    "sub", "details", "summary", "kbd",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "br",
+    "hr",
+    "blockquote",
+    "pre",
+    "code",
+    "em",
+    "strong",
+    "del",
+    "ul",
+    "ol",
+    "li",
+    "a",
+    "img",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "div",
+    "span",
+    "sup",
+    "sub",
+    "details",
+    "summary",
+    "kbd",
 ];
 
 /// Allowed attributes on HTML elements.
@@ -230,9 +253,8 @@ fn sanitize_attrs(attrs_str: &str, allowed: &[&str]) -> String {
         }
 
         // Extract attribute name.
-        let name_end = remaining
-            .find(|c: char| c == '=' || c.is_whitespace())
-            .unwrap_or(remaining.len());
+        let name_end =
+            remaining.find(|c: char| c == '=' || c.is_whitespace()).unwrap_or(remaining.len());
         let attr_name = remaining[..name_end].to_ascii_lowercase();
         remaining = remaining[name_end..].trim_start();
 
@@ -289,10 +311,7 @@ fn extract_attr_value(s: &str) -> (String, &str) {
 }
 
 fn escape_attr_value(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 fn is_safe_url(url: &str) -> bool {
@@ -565,7 +584,8 @@ mod tests {
 
     #[test]
     fn sanitize_escapes_attribute_values() {
-        let input = r#"<a href="https://example.com?a=1&amp;b=2" title="a &quot;link&quot;">text</a>"#;
+        let input =
+            r#"<a href="https://example.com?a=1&amp;b=2" title="a &quot;link&quot;">text</a>"#;
         let result = sanitize_html(input);
         // Should contain the link but re-escaped.
         assert!(result.contains("<a"));

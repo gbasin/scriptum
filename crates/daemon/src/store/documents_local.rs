@@ -139,10 +139,8 @@ mod tests {
     }
 
     fn unique_path(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should work")
-            .as_nanos();
+        let nanos =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time should work").as_nanos();
         let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("scriptum-{prefix}-{nanos}-{seq}.db"))
     }
@@ -239,8 +237,8 @@ mod tests {
         DocumentsLocalStore::insert(db.connection(), &rec("doc-c", "ws-2", "/repo/docs/c.md", 3))
             .unwrap();
 
-        let rows =
-            DocumentsLocalStore::list_by_workspace(db.connection(), "ws-1").expect("list should succeed");
+        let rows = DocumentsLocalStore::list_by_workspace(db.connection(), "ws-1")
+            .expect("list should succeed");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].doc_id, "doc-a");
         assert_eq!(rows[1].doc_id, "doc-b");
@@ -249,4 +247,3 @@ mod tests {
         cleanup(&path);
     }
 }
-
