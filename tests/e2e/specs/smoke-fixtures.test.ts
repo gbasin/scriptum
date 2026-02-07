@@ -7,7 +7,9 @@ describe("loadSmokeFixtures", () => {
     const syncStates = new Set(
       fixtures
         .map((fixture) => fixture.expectations.syncState)
-        .filter((state): state is NonNullable<typeof state> => state !== undefined),
+        .filter(
+          (state): state is NonNullable<typeof state> => state !== undefined,
+        ),
     );
 
     expect(fixtures.length).toBeGreaterThanOrEqual(5);
@@ -26,8 +28,12 @@ describe("loadSmokeFixtures", () => {
           !fixture.route.includes("/document/"),
       ),
     ).toBe(true);
-    expect(fixtures.some((fixture) => fixture.route === "/settings")).toBe(true);
-    expect(fixtures.some((fixture) => fixture.route === "/auth-callback")).toBe(true);
+    expect(fixtures.some((fixture) => fixture.route === "/settings")).toBe(
+      true,
+    );
+    expect(fixtures.some((fixture) => fixture.route === "/auth-callback")).toBe(
+      true,
+    );
 
     expect(syncStates.has("synced")).toBe(true);
     expect(syncStates.has("offline")).toBe(true);

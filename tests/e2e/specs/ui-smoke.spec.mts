@@ -42,7 +42,10 @@ declare global {
         }>;
         syncState: "synced" | "offline" | "reconnecting" | "error";
         pendingSyncUpdates: number;
-        reconnectProgress: { syncedUpdates: number; totalUpdates: number } | null;
+        reconnectProgress: {
+          syncedUpdates: number;
+          totalUpdates: number;
+        } | null;
         gitStatus: {
           dirty: boolean;
           ahead: number;
@@ -224,8 +227,9 @@ async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
   const probe = page.getByTestId("editor-host");
   await expect(probe.locator(".cm-editor")).toBeVisible();
 
-  const snapshot = await probe.locator(".cm-content .cm-line").evaluateAll(
-    (lineNodes) => {
+  const snapshot = await probe
+    .locator(".cm-content .cm-line")
+    .evaluateAll((lineNodes) => {
       const firstLine = lineNodes.at(0)?.textContent?.trim() ?? "";
       const secondLine = lineNodes.at(1)?.textContent?.trim() ?? "";
 
@@ -233,23 +237,32 @@ async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
         firstLine,
         secondLine,
         hasCodeBlock: Boolean(
-          document.querySelector('[data-testid="editor-host"] .cm-livePreview-codeBlock'),
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-codeBlock',
+          ),
         ),
         hasHeadingH2: Boolean(
-          document.querySelector('[data-testid="editor-host"] .cm-livePreview-heading-h2'),
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-heading-h2',
+          ),
         ),
         hasLink: Boolean(
-          document.querySelector('[data-testid="editor-host"] .cm-livePreview-link'),
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-link',
+          ),
         ),
         hasTable: Boolean(
-          document.querySelector('[data-testid="editor-host"] .cm-livePreview-table'),
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-table',
+          ),
         ),
         hasTaskCheckbox: Boolean(
-          document.querySelector('[data-testid="editor-host"] .cm-livePreview-task-checkbox'),
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-task-checkbox',
+          ),
         ),
       };
-    },
-  );
+    });
 
   expect(snapshot.firstLine).toContain("# Active raw heading");
   expect(snapshot.firstLine.startsWith("# ")).toBe(true);

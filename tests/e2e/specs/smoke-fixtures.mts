@@ -90,7 +90,8 @@ function validateFixtureSet(fixtures: SmokeFixture[]): void {
 
   const hasDocumentEditorFixture = fixtures.some(
     (fixture) =>
-      fixture.route.startsWith("/workspace/") && fixture.route.includes("/document/"),
+      fixture.route.startsWith("/workspace/") &&
+      fixture.route.includes("/document/"),
   );
   if (!hasDocumentEditorFixture) {
     throw new Error("fixture set must cover a document editor route");
@@ -98,7 +99,8 @@ function validateFixtureSet(fixtures: SmokeFixture[]): void {
 
   const hasSidebarFixture = fixtures.some(
     (fixture) =>
-      fixture.route.startsWith("/workspace/") && !fixture.route.includes("/document/"),
+      fixture.route.startsWith("/workspace/") &&
+      !fixture.route.includes("/document/"),
   );
   if (!hasSidebarFixture) {
     throw new Error("fixture set must cover a workspace sidebar route");

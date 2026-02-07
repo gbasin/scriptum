@@ -1,7 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import {
-  type SmokeFixture,
   SMOKE_FIXTURES,
+  type SmokeFixture,
 } from "../../src/test/smoke-fixtures";
 
 async function applyFixture(page: Page, fixture: SmokeFixture) {

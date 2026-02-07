@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 interface RemotePeerFixture {
   name: string;
@@ -20,7 +20,9 @@ declare global {
       reset(): void;
       setCursor(pos: { line: number; ch: number }): void;
       setDocContent(markdown: string): void;
-      setSyncState(state: "synced" | "offline" | "reconnecting" | "error"): void;
+      setSyncState(
+        state: "synced" | "offline" | "reconnecting" | "error",
+      ): void;
       spawnRemotePeer(peer: RemotePeerFixture): void;
     };
   }
@@ -81,7 +83,9 @@ test.describe("presence + overlap overlays @smoke", () => {
         scenario.peers.length,
       );
 
-      await expect(page.locator(".cm-remote-cursor-label").first()).toBeVisible();
+      await expect(
+        page.locator(".cm-remote-cursor-label").first(),
+      ).toBeVisible();
       const cursorLabels = (
         await page.locator(".cm-remote-cursor-label").allTextContents()
       ).map((value) => value.trim());
@@ -112,12 +116,9 @@ test.describe("presence + overlap overlays @smoke", () => {
         ).toContainText(peer.type === "agent" ? "AGENT" : "HUMAN");
       }
 
-      await expect(page).toHaveScreenshot(
-        `${scenario.name}-overlays.png`,
-        {
-          fullPage: true,
-        },
-      );
+      await expect(page).toHaveScreenshot(`${scenario.name}-overlays.png`, {
+        fullPage: true,
+      });
       await expect(page.locator("body")).toMatchAriaSnapshot();
     });
   }
@@ -136,7 +137,9 @@ async function applyScenario(
   page: Page,
   scenario: PresenceScenario,
 ): Promise<void> {
-  await expect(page.locator('[data-testid="editor-host"] .cm-editor')).toBeVisible();
+  await expect(
+    page.locator('[data-testid="editor-host"] .cm-editor'),
+  ).toBeVisible();
 
   await page.evaluate(({ peers }) => {
     const api = window.__SCRIPTUM_TEST__;

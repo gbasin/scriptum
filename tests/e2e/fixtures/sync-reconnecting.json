@@ -10,7 +10,12 @@
       "syncedUpdates": 3,
       "totalUpdates": 10
     },
-    "gitStatus": { "dirty": true, "ahead": 1, "behind": 1, "lastCommit": "bead123" },
+    "gitStatus": {
+      "dirty": true,
+      "ahead": 1,
+      "behind": 1,
+      "lastCommit": "bead123"
+    },
     "remotePeers": [
       {
         "name": "Alex",

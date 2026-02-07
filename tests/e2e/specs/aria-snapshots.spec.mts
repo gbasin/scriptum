@@ -79,9 +79,7 @@ async function setupEditor(
   },
 ): Promise<void> {
   await page.goto(EDITOR_ROUTE);
-  await expect(
-    page.getByText("Document: ws-aria/doc-aria"),
-  ).toBeVisible();
+  await expect(page.getByText("Document: ws-aria/doc-aria")).toBeVisible();
 
   await page.evaluate((fixture) => {
     const api = window.__SCRIPTUM_TEST__;
@@ -98,8 +96,7 @@ async function setupEditor(
       api.setPendingSyncUpdates(fixture.pendingSyncUpdates);
     if (fixture?.reconnectProgress !== undefined)
       api.setReconnectProgress(fixture.reconnectProgress);
-    if (fixture?.commentThreads)
-      api.setCommentThreads(fixture.commentThreads);
+    if (fixture?.commentThreads) api.setCommentThreads(fixture.commentThreads);
     for (const peer of fixture?.peers ?? []) {
       api.spawnRemotePeer(peer);
     }

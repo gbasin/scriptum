@@ -29,7 +29,8 @@ interface WebDriverExecuteResult<T> {
 const webdriverBaseUrl = (
   process.env.SCRIPTUM_DESKTOP_WEBDRIVER_URL ?? ""
 ).replace(/\/+$/, "");
-const rawCapabilities = process.env.SCRIPTUM_DESKTOP_WEBDRIVER_CAPABILITIES_JSON ?? "";
+const rawCapabilities =
+  process.env.SCRIPTUM_DESKTOP_WEBDRIVER_CAPABILITIES_JSON ?? "";
 const isMacOs = process.platform === "darwin";
 const hasDesktopWebDriverConfig =
   webdriverBaseUrl.length > 0 && rawCapabilities.length > 0;
@@ -141,7 +142,10 @@ async function executeAsyncScript<T>(
   return response.value as T;
 }
 
-async function deleteSession(baseUrl: string, sessionId: string): Promise<void> {
+async function deleteSession(
+  baseUrl: string,
+  sessionId: string,
+): Promise<void> {
   await requestWebDriver("DELETE", `${baseUrl}/session/${sessionId}`);
 }
 
@@ -159,7 +163,9 @@ async function invokeTauriCommand<T>(
   );
 
   if (!response.ok) {
-    throw new Error(`Tauri invoke for ${commandName} failed: ${response.error ?? "unknown"}`);
+    throw new Error(
+      `Tauri invoke for ${commandName} failed: ${response.error ?? "unknown"}`,
+    );
   }
 
   return response.result as T;
