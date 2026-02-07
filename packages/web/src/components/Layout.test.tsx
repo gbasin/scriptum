@@ -7,7 +7,12 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
-import { buildIncomingBacklinks, Layout } from "./Layout";
+import {
+  buildIncomingBacklinks,
+  formatRenameBacklinkToast,
+  Layout,
+  rewriteWikiReferencesForRename,
+} from "./Layout";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -384,5 +389,55 @@ describe("Layout backlinks panel", () => {
     act(() => {
       root.unmount();
     });
+  });
+
+  it("rewrites wiki references and reports rename update counts", () => {
+    const renamedDocument = makeDocument({
+      id: "doc-auth",
+      path: "docs/auth.md",
+      title: "Auth",
+    });
+    const workspaceDocuments = [
+      renamedDocument,
+      makeDocument({
+        id: "doc-1",
+        path: "notes/one.md",
+        bodyMd: "See [[auth]] and [[docs/auth.md]].",
+      }),
+      makeDocument({
+        id: "doc-2",
+        path: "notes/two.md",
+        bodyMd: "Ref [[Auth#Flow|Authentication flow]].",
+      }),
+      makeDocument({
+        id: "doc-3",
+        path: "notes/three.md",
+        bodyMd: "No rename needed here.",
+      }),
+    ];
+
+    const result = rewriteWikiReferencesForRename(
+      workspaceDocuments,
+      renamedDocument,
+      "docs/security.md",
+    );
+
+    expect(result.updatedLinks).toBe(3);
+    expect(result.updatedDocuments).toBe(2);
+
+    const rewrittenById = new Map(
+      result.rewrittenDocuments.map((document) => [document.id, document]),
+    );
+    expect(rewrittenById.get("doc-1")?.bodyMd).toContain("[[security]]");
+    expect(rewrittenById.get("doc-1")?.bodyMd).toContain("[[docs/security.md]]");
+    expect(rewrittenById.get("doc-2")?.bodyMd).toContain(
+      "[[security#Flow|Authentication flow]]",
+    );
+  });
+
+  it("formats the backlink rename toast text", () => {
+    expect(formatRenameBacklinkToast(7, 3)).toBe(
+      "Updated 7 links across 3 documents.",
+    );
   });
 });

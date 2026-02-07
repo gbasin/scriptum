@@ -32,6 +32,18 @@ interface ParsedWikiLink {
   target: string;
 }
 
+interface ParsedWikiLinkParts {
+  alias: string | null;
+  heading: string | null;
+  target: string;
+}
+
+export interface RenameBacklinkRewriteResult {
+  rewrittenDocuments: Document[];
+  updatedDocuments: number;
+  updatedLinks: number;
+}
+
 export interface IncomingBacklink {
   sourceDocumentId: string;
   sourcePath: string;
@@ -134,17 +146,33 @@ function baseNameWithoutExtension(path: string): string {
   return baseName(path).replace(/\.[^.]+$/, "");
 }
 
+function parseWikiLinkParts(rawInner: string): ParsedWikiLinkParts | null {
+  const trimmed = rawInner.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const [targetWithHeadingRaw, aliasRaw] = trimmed.split("|", 2);
+  const [targetRaw, headingRaw] = targetWithHeadingRaw.split("#", 2);
+  const target = targetRaw.trim();
+  if (!target) {
+    return null;
+  }
+
+  const heading = headingRaw?.trim() || null;
+  const alias = aliasRaw?.trim() || null;
+  return { alias, heading, target };
+}
+
 function extractWikiLinks(markdown: string): ParsedWikiLink[] {
   const links: ParsedWikiLink[] = [];
   const pattern = /\[\[([^[\]]+)\]\]/g;
   let match: RegExpExecArray | null = pattern.exec(markdown);
 
   while (match) {
-    const rawInner = match[1]?.trim() ?? "";
-    if (rawInner.length > 0) {
-      const [targetWithHeading] = rawInner.split("|");
-      const [target] = targetWithHeading.split("#");
-      const normalizedTarget = normalizeBacklinkTarget(target);
+    const parsed = parseWikiLinkParts(match[1] ?? "");
+    if (parsed) {
+      const normalizedTarget = normalizeBacklinkTarget(parsed.target);
       if (normalizedTarget.length > 0) {
         links.push({
           raw: match[0],
@@ -158,7 +186,7 @@ function extractWikiLinks(markdown: string): ParsedWikiLink[] {
   return links;
 }
 
-function targetAliases(document: Document): Set<string> {
+function targetAliases(document: Pick<Document, "path" | "title">): Set<string> {
   const aliases = new Set<string>();
   const pathNormalized = normalizeBacklinkTarget(document.path);
   const pathBaseName = normalizeBacklinkTarget(baseName(document.path));
@@ -181,6 +209,120 @@ function targetAliases(document: Document): Set<string> {
   }
 
   return aliases;
+}
+
+function replacementTargetForRename(
+  originalTarget: string,
+  oldDocument: Pick<Document, "path" | "title">,
+  nextPath: string,
+): string {
+  const normalizedOriginalTarget = normalizeBacklinkTarget(originalTarget);
+  const normalizedOldPath = normalizeBacklinkTarget(oldDocument.path);
+  const normalizedOldBaseName = normalizeBacklinkTarget(baseName(oldDocument.path));
+  const normalizedOldBaseNameWithoutExtension = normalizeBacklinkTarget(
+    baseNameWithoutExtension(oldDocument.path),
+  );
+  const normalizedOldTitle = normalizeBacklinkTarget(oldDocument.title);
+
+  if (normalizedOriginalTarget === normalizedOldPath) {
+    return nextPath;
+  }
+  if (normalizedOriginalTarget === normalizedOldBaseName) {
+    return baseName(nextPath);
+  }
+  if (
+    normalizedOriginalTarget === normalizedOldBaseNameWithoutExtension ||
+    normalizedOriginalTarget === normalizedOldTitle
+  ) {
+    return baseNameWithoutExtension(nextPath);
+  }
+
+  return nextPath;
+}
+
+export function rewriteWikiReferencesForRename(
+  workspaceDocuments: readonly Document[],
+  renamedDocument: Pick<Document, "id" | "path" | "title">,
+  nextPath: string,
+): RenameBacklinkRewriteResult {
+  const trimmedNextPath = nextPath.trim();
+  if (!trimmedNextPath) {
+    return {
+      rewrittenDocuments: [],
+      updatedDocuments: 0,
+      updatedLinks: 0,
+    };
+  }
+
+  const oldAliases = targetAliases(renamedDocument);
+  if (oldAliases.size === 0) {
+    return {
+      rewrittenDocuments: [],
+      updatedDocuments: 0,
+      updatedLinks: 0,
+    };
+  }
+
+  const rewrittenDocuments: Document[] = [];
+  let updatedLinks = 0;
+
+  for (const document of workspaceDocuments) {
+    if (document.id === renamedDocument.id || typeof document.bodyMd !== "string") {
+      continue;
+    }
+
+    let documentUpdatedLinks = 0;
+    const rewrittenBody = document.bodyMd.replace(
+      /\[\[([^[\]]+)\]\]/g,
+      (rawMatch, rawInner: string) => {
+        const parsed = parseWikiLinkParts(rawInner);
+        if (!parsed) {
+          return rawMatch;
+        }
+
+        const normalizedTarget = normalizeBacklinkTarget(parsed.target);
+        if (!oldAliases.has(normalizedTarget)) {
+          return rawMatch;
+        }
+
+        const replacementTarget = replacementTargetForRename(
+          parsed.target,
+          renamedDocument,
+          trimmedNextPath,
+        );
+        let replacementInner = replacementTarget;
+        if (parsed.heading) {
+          replacementInner = `${replacementInner}#${parsed.heading}`;
+        }
+        if (parsed.alias) {
+          replacementInner = `${replacementInner}|${parsed.alias}`;
+        }
+        documentUpdatedLinks += 1;
+        return `[[${replacementInner}]]`;
+      },
+    );
+
+    if (documentUpdatedLinks > 0) {
+      updatedLinks += documentUpdatedLinks;
+      rewrittenDocuments.push({
+        ...document,
+        bodyMd: rewrittenBody,
+      });
+    }
+  }
+
+  return {
+    rewrittenDocuments,
+    updatedDocuments: rewrittenDocuments.length,
+    updatedLinks,
+  };
+}
+
+export function formatRenameBacklinkToast(
+  updatedLinks: number,
+  updatedDocuments: number,
+): string {
+  return `Updated ${updatedLinks} links across ${updatedDocuments} documents.`;
 }
 
 export function buildIncomingBacklinks(
@@ -246,6 +388,9 @@ export function Layout() {
   const [pendingRenameDocumentId, setPendingRenameDocumentId] = useState<
     string | null
   >(null);
+  const [renameBacklinkToast, setRenameBacklinkToast] = useState<string | null>(
+    null,
+  );
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [outlinePanelOpen, setOutlinePanelOpen] = useState(true);
   const [outlineHeadings, setOutlineHeadings] = useState<OutlineHeading[]>([]);
@@ -407,6 +552,20 @@ export function Layout() {
     };
   }, [activeDocumentId, activeWorkspaceId]);
 
+  useEffect(() => {
+    if (!renameBacklinkToast) {
+      return;
+    }
+
+    const timeoutId = globalThis.setTimeout(() => {
+      setRenameBacklinkToast(null);
+    }, 3000);
+
+    return () => {
+      globalThis.clearTimeout(timeoutId);
+    };
+  }, [renameBacklinkToast]);
+
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
     const now = new Date().toISOString();
@@ -456,14 +615,39 @@ export function Layout() {
     if (!normalizedPath) {
       return;
     }
+
+    const currentDocument = documents.find((document) => document.id === documentId);
+    if (!currentDocument) {
+      return;
+    }
+
+    const { rewrittenDocuments, updatedDocuments, updatedLinks } =
+      rewriteWikiReferencesForRename(
+        workspaceDocuments,
+        currentDocument,
+        normalizedPath,
+      );
+
     const now = new Date().toISOString();
-    updateExistingDocument(documentId, (document) => ({
-      ...document,
-      etag: `${document.etag}:rename:${Date.now().toString(36)}`,
+    const mutationToken = Date.now().toString(36);
+
+    upsertDocument({
+      ...currentDocument,
+      etag: `${currentDocument.etag}:rename:${mutationToken}`,
       path: normalizedPath,
       title: titleFromPath(normalizedPath),
       updatedAt: now,
-    }));
+    });
+
+    for (const rewrittenDocument of rewrittenDocuments) {
+      upsertDocument({
+        ...rewrittenDocument,
+        etag: `${rewrittenDocument.etag}:backlink-rename:${mutationToken}`,
+        updatedAt: now,
+      });
+    }
+
+    setRenameBacklinkToast(formatRenameBacklinkToast(updatedLinks, updatedDocuments));
     setPendingRenameDocumentId(null);
   };
 
@@ -599,6 +783,15 @@ export function Layout() {
           onTagSelect={setActiveTag}
           tags={workspaceTags}
         />
+        {renameBacklinkToast ? (
+          <p
+            data-testid="rename-backlink-toast"
+            role="status"
+            style={{ color: "#065f46", fontSize: "0.8rem", margin: "0.75rem 0 0" }}
+          >
+            {renameBacklinkToast}
+          </p>
+        ) : null}
         {searchPanelOpen ? (
           <SearchPanel
             onClose={() => setSearchPanelOpen(false)}
