@@ -11,11 +11,7 @@
   transform: translateY(-0.25rem);
   transition:
     opacity var(--duration-normal) var(--ease-standard),
-    transform var(--duration-normal) var(--ease-standard),
-    max-height var(--duration-normal) var(--ease-standard),
-    margin var(--duration-normal) var(--ease-standard),
-    padding var(--duration-normal) var(--ease-standard),
-    border-color var(--duration-normal) var(--ease-standard);
+    transform var(--duration-normal) var(--ease-standard);
 }
 
 .visible {
