@@ -418,9 +418,7 @@ fn expected_origin_from_attribution(
         return Some((agent_id.clone(), AuthorType::Agent));
     }
 
-    attribution
-        .user_id
-        .map(|user_id| (user_id.to_string(), AuthorType::Human))
+    attribution.user_id.map(|user_id| (user_id.to_string(), AuthorType::Human))
 }
 
 impl SyncSessionStore {

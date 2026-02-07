@@ -55,9 +55,8 @@ pub fn apply_patch_ops_to_ytext(
         return;
     }
 
-    let origin_bytes = origin_tag
-        .to_bytes()
-        .expect("origin tag should encode for transaction origin bytes");
+    let origin_bytes =
+        origin_tag.to_bytes().expect("origin tag should encode for transaction origin bytes");
     let mut txn = doc.transact_mut_with(origin_bytes.as_slice());
     let mut offset: i64 = 0;
 
@@ -426,9 +425,7 @@ fn edits_to_patch_ops(edits: &[CharEdit]) -> Vec<TextPatchOp> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_text_diff_to_ytext, diff_to_patch_ops, TextPatchOp, FILE_WATCHER_AUTHOR_ID,
-    };
+    use super::{apply_text_diff_to_ytext, diff_to_patch_ops, TextPatchOp, FILE_WATCHER_AUTHOR_ID};
     use crate::crdt::origin::{AuthorType, OriginTag};
     use std::sync::{Arc, Mutex};
     use yrs::{Doc, GetString, Text, Transact};

@@ -55,8 +55,8 @@ export function WorkspaceRoute() {
     [workspaceId, workspaces],
   );
 
-  const resolvedWorkspaceId = workspace?.id ?? (workspaceId ?? "unknown");
-  const workspaceLabel = workspace?.name ?? (workspaceId ?? "unknown");
+  const resolvedWorkspaceId = workspace?.id ?? workspaceId ?? "unknown";
+  const workspaceLabel = workspace?.name ?? workspaceId ?? "unknown";
 
   const workspaceDocuments = useMemo(() => {
     return documents
@@ -165,7 +165,10 @@ export function WorkspaceRoute() {
             </ul>
           </section>
 
-          <section className={styles.panel} data-testid="workspace-recent-files">
+          <section
+            className={styles.panel}
+            data-testid="workspace-recent-files"
+          >
             <h2 className={styles.sectionTitle}>Recent files</h2>
             <ul className={styles.list}>
               {recentFiles.map((document) => (

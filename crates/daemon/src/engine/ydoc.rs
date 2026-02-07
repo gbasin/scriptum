@@ -6,8 +6,8 @@ use scriptum_common::crdt::origin::OriginTag;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{
-    Doc, GetString, MapRef, ReadTxn, StateVector, Subscription, Text, TextRef, TransactionMut,
-    Transact, Update, UpdateEvent,
+    Doc, GetString, MapRef, ReadTxn, StateVector, Subscription, Text, TextRef, Transact,
+    TransactionMut, Update, UpdateEvent,
 };
 
 /// A single observed Yjs update with CRDT-level origin attribution (if present and decodable).
@@ -92,7 +92,9 @@ impl YDoc {
         F: Fn(ObservedDocUpdate) + Send + Sync + 'static,
     {
         self.doc
-            .observe_update_v1(move |txn, event| on_update(ObservedDocUpdate::from_event(txn, event)))
+            .observe_update_v1(move |txn, event| {
+                on_update(ObservedDocUpdate::from_event(txn, event))
+            })
             .context("failed to register Yjs update observer")
     }
 

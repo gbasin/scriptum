@@ -1,11 +1,10 @@
 .block {
-  background:
-    linear-gradient(
-      100deg,
-      var(--color-bg-surface-2) 0%,
-      var(--color-bg-elevated) 45%,
-      var(--color-bg-surface-2) 100%
-    );
+  background: linear-gradient(
+    100deg,
+    var(--color-bg-surface-2) 0%,
+    var(--color-bg-elevated) 45%,
+    var(--color-bg-surface-2) 100%
+  );
   background-size: 200% 100%;
   border-radius: var(--radius-2);
   display: block;

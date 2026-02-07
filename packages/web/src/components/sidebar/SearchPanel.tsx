@@ -191,9 +191,7 @@ export function SearchPanel({
           Close
         </button>
       </div>
-      <p className={styles.shortcutHint}>
-        Shortcut: Cmd/Ctrl+Shift+F
-      </p>
+      <p className={styles.shortcutHint}>Shortcut: Cmd/Ctrl+Shift+F</p>
       <div className={styles.filtersGrid}>
         <input
           aria-label="Search query"
@@ -278,10 +276,7 @@ export function SearchPanel({
           No matches.
         </p>
       ) : (
-        <ul
-          className={styles.resultsList}
-          data-testid="search-panel-results"
-        >
+        <ul className={styles.resultsList} data-testid="search-panel-results">
           {filteredResults.map((result) => (
             <li className={styles.resultItem} key={result.id}>
               <button
@@ -290,9 +285,7 @@ export function SearchPanel({
                 onClick={() => onResultSelect?.(result)}
                 type="button"
               >
-                <div className={styles.resultPath}>
-                  {result.documentPath}
-                </div>
+                <div className={styles.resultPath}>{result.documentPath}</div>
                 <div className={styles.resultMeta}>
                   Line {result.lineNumber} · {result.author}
                 </div>

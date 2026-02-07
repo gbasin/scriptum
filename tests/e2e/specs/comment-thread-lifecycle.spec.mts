@@ -4,9 +4,7 @@ interface ScriptumTestApi {
   reset(): void;
   setCursor(pos: { line: number; ch: number }): void;
   setDocContent(markdown: string): void;
-  setSyncState(
-    state: "synced" | "offline" | "reconnecting" | "error",
-  ): void;
+  setSyncState(state: "synced" | "offline" | "reconnecting" | "error"): void;
 }
 
 declare global {
@@ -60,9 +58,13 @@ test.describe("comment thread lifecycle e2e @smoke", () => {
 
     await page.getByTestId("comment-thread-resolve").click();
     await expect(page.getByTestId("comment-thread-collapsed")).toBeVisible();
-    await expect(page.getByTestId("comment-thread-resolved-note")).toBeVisible();
     await expect(
-      page.locator('[data-testid="editor-host"] .cm-commentGutterMarker-resolved'),
+      page.getByTestId("comment-thread-resolved-note"),
+    ).toBeVisible();
+    await expect(
+      page.locator(
+        '[data-testid="editor-host"] .cm-commentGutterMarker-resolved',
+      ),
     ).toBeVisible();
     await expect(threadList).toContainText("Resolved");
 

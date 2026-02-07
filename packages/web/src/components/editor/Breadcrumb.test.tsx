@@ -56,9 +56,9 @@ describe("Breadcrumb", () => {
       workspaceLabel: "Workspace Alpha",
     });
 
-    expect(view.querySelector('[data-testid="breadcrumb-root"]')?.textContent).toBe(
-      "Workspace Alpha",
-    );
+    expect(
+      view.querySelector('[data-testid="breadcrumb-root"]')?.textContent,
+    ).toBe("Workspace Alpha");
     expect(
       view.querySelector('[data-testid="breadcrumb-docs"]')?.textContent,
     ).toContain("docs");
@@ -66,8 +66,7 @@ describe("Breadcrumb", () => {
       view.querySelector('[data-testid="breadcrumb-docs/guides"]')?.textContent,
     ).toContain("guides");
     expect(
-      view
-        .querySelector('[data-testid="breadcrumb-docs/guides/start.md"]')
+      view.querySelector('[data-testid="breadcrumb-docs/guides/start.md"]')
         ?.textContent,
     ).toContain("start.md");
   });
@@ -110,7 +109,8 @@ describe("Breadcrumb", () => {
   });
 
   it("truncates long labels while keeping full text in title", () => {
-    const longWorkspaceLabel = "Workspace Label That Is Definitely Longer Than Twenty Four";
+    const longWorkspaceLabel =
+      "Workspace Label That Is Definitely Longer Than Twenty Four";
     const longSegment = "very-long-segment-name-that-needs-truncation.md";
 
     const view = renderBreadcrumb({
@@ -125,9 +125,13 @@ describe("Breadcrumb", () => {
       `[data-testid="breadcrumb-segment-docs/${longSegment}"]`,
     ) as HTMLButtonElement | null;
 
-    expect(rootButton?.textContent).toBe(truncateBreadcrumbLabel(longWorkspaceLabel));
+    expect(rootButton?.textContent).toBe(
+      truncateBreadcrumbLabel(longWorkspaceLabel),
+    );
     expect(rootButton?.title).toBe(longWorkspaceLabel);
-    expect(segmentButton?.textContent).toBe(truncateBreadcrumbLabel(longSegment));
+    expect(segmentButton?.textContent).toBe(
+      truncateBreadcrumbLabel(longSegment),
+    );
     expect(segmentButton?.title).toBe(longSegment);
     expect(segmentButton?.textContent?.endsWith("…")).toBe(true);
   });

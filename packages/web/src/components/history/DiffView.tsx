@@ -289,9 +289,7 @@ export function DiffView({
     >
       {viewMode === "authorship" ? (
         <>
-          <h3 className={styles.heading}>
-            Author-colored highlights
-          </h3>
+          <h3 className={styles.heading}>Author-colored highlights</h3>
           <div
             className={styles.legend}
             data-testid="history-diffview-authorship-legend"
@@ -324,11 +322,12 @@ export function DiffView({
         </>
       ) : (
         <>
-          <h3 className={styles.heading}>
-            Diff from current
-          </h3>
+          <h3 className={styles.heading}>Diff from current</h3>
           {!hasDiff ? (
-            <p className={styles.emptyState} data-testid="history-diffview-diff-empty">
+            <p
+              className={styles.emptyState}
+              data-testid="history-diffview-diff-empty"
+            >
               Selected snapshot matches current version.
             </p>
           ) : null}

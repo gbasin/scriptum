@@ -102,7 +102,9 @@ export function expirationIsoFromOption(
   }
 
   const nextMs =
-    option === "24h" ? nowMs + 24 * 60 * 60 * 1000 : nowMs + 7 * 24 * 60 * 60 * 1000;
+    option === "24h"
+      ? nowMs + 24 * 60 * 60 * 1000
+      : nowMs + 7 * 24 * 60 * 60 * 1000;
   return new Date(nextMs).toISOString();
 }
 
@@ -146,7 +148,10 @@ export function storeShareLinkRecord(record: ShareLinkRecord): void {
     return;
   }
 
-  window.sessionStorage.setItem(storageKey(record.token), JSON.stringify(record));
+  window.sessionStorage.setItem(
+    storageKey(record.token),
+    JSON.stringify(record),
+  );
 }
 
 export function loadShareLinkRecord(token: string): ShareLinkRecord | null {

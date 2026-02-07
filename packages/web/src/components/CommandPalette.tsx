@@ -316,7 +316,13 @@ export function CommandPalette({
 
       closePalette();
     },
-    [closePalette, navigate, onCreateDocument, onCreateWorkspace, onOpenSearchPanel],
+    [
+      closePalette,
+      navigate,
+      onCreateDocument,
+      onCreateWorkspace,
+      onOpenSearchPanel,
+    ],
   );
 
   useEffect(() => {
@@ -417,7 +423,10 @@ export function CommandPalette({
                   className={styles.panel}
                   onMouseDown={(event) => event.stopPropagation()}
                 >
-                  <label className={styles.panelLabel} htmlFor="command-palette-input">
+                  <label
+                    className={styles.panelLabel}
+                    htmlFor="command-palette-input"
+                  >
                     Command Palette
                   </label>
                   <input
@@ -434,17 +443,21 @@ export function CommandPalette({
                     data-testid="command-palette-results"
                   >
                     {filteredItems.length === 0 ? (
-                      <li className={styles.empty} data-testid="command-palette-empty">
+                      <li
+                        className={styles.empty}
+                        data-testid="command-palette-empty"
+                      >
                         No matches found.
                       </li>
                     ) : null}
                     {filteredItems.map((item, index) => (
-                      <li key={item.id} >
+                      <li key={item.id}>
                         <Menu.Item
                           aria-selected={index === highlightedIndex}
                           className={clsx(
                             styles.itemButton,
-                            index === highlightedIndex && styles.itemButtonActive,
+                            index === highlightedIndex &&
+                              styles.itemButtonActive,
                           )}
                           data-testid={`command-palette-item-${item.id}`}
                           onClick={() => runItem(item)}

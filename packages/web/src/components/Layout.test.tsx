@@ -385,7 +385,8 @@ describe("Layout responsive panels", () => {
       container.querySelector('[data-testid="sidebar-toggle"]')?.textContent,
     ).toContain("Show Sidebar");
     expect(
-      container.querySelector('[data-testid="outline-panel-toggle"]')?.textContent,
+      container.querySelector('[data-testid="outline-panel-toggle"]')
+        ?.textContent,
     ).toContain("Show Outline");
 
     act(() => {
@@ -421,7 +422,9 @@ describe("Layout responsive panels", () => {
       showSidebarButton?.click();
     });
 
-    expect(container.querySelector('[data-testid="app-sidebar"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="app-sidebar"]'),
+    ).not.toBeNull();
     expect(useUiStore.getState().sidebarOpen).toBe(true);
 
     act(() => {

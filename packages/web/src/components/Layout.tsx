@@ -2,13 +2,13 @@ import { AlertDialog } from "@base-ui-components/react/alert-dialog";
 import type { Document, Workspace } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
+import { useToast } from "../hooks/useToast";
 import {
   buildIncomingBacklinks,
   type IncomingBacklink,
-  rewriteWikiReferencesForRename,
   type RenameBacklinkRewriteResult,
+  rewriteWikiReferencesForRename,
 } from "../lib/wiki-links";
-import { useToast } from "../hooks/useToast";
 import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore } from "../store/presence";
 import { useUiStore } from "../store/ui";
@@ -17,7 +17,6 @@ import { CommandPalette } from "./CommandPalette";
 import styles from "./Layout.module.css";
 import { Backlinks } from "./right-panel/Backlinks";
 import { Outline } from "./right-panel/Outline";
-import { ToastViewport } from "./ToastViewport";
 import { AgentsSection } from "./sidebar/AgentsSection";
 import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
 import {
@@ -31,6 +30,7 @@ import {
   TagsList,
 } from "./sidebar/TagsList";
 import { WorkspaceDropdown } from "./sidebar/WorkspaceDropdown";
+import { ToastViewport } from "./ToastViewport";
 export { buildIncomingBacklinks, rewriteWikiReferencesForRename };
 export type { IncomingBacklink, RenameBacklinkRewriteResult };
 
@@ -555,9 +555,7 @@ export function Layout() {
           ) : (
             <section aria-label="Document tree section">
               <div className={styles.documentTreeHeader}>
-                <h2 className={styles.documentTreeHeading}>
-                  Documents
-                </h2>
+                <h2 className={styles.documentTreeHeading}>Documents</h2>
                 <button
                   className={styles.secondaryButton}
                   data-testid="new-document-button"
@@ -690,7 +688,10 @@ export function Layout() {
           ) : null}
 
           {rightPanelTab === "comments" ? (
-            <p className={styles.commentsPlaceholder} data-testid="comments-panel-empty">
+            <p
+              className={styles.commentsPlaceholder}
+              data-testid="comments-panel-empty"
+            >
               Comments panel is coming soon.
             </p>
           ) : null}

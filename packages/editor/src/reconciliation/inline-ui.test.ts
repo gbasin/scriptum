@@ -124,8 +124,7 @@ describe("reconciliationInlineExtension", () => {
 
     clickChoice(view, "rec-keep-both", "keep-both");
 
-    const expectedReplacement =
-      `Version A body${RECONCILIATION_KEEP_BOTH_SEPARATOR}Version B body`;
+    const expectedReplacement = `Version A body${RECONCILIATION_KEEP_BOTH_SEPARATOR}Version B body`;
     expect(view.state.doc.toString()).toBe(
       `${before}${expectedReplacement}${after}`,
     );

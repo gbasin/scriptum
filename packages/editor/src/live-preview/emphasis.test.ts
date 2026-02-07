@@ -1,7 +1,7 @@
 import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
-import { livePreview } from "./extension.js";
 import { inlineEmphasisDecorations } from "./emphasis.js";
+import { livePreview } from "./extension.js";
 
 describe("emphasis live preview", () => {
   it("renders italic emphasis on unfocused lines", () => {
@@ -59,9 +59,7 @@ describe("emphasis live preview", () => {
   });
 
   it("keeps active line raw for emphasis markdown markers", () => {
-    const source = ["plain", "**bold** and _italic_ and ~~strike~~"].join(
-      "\n",
-    );
+    const source = ["plain", "**bold** and _italic_ and ~~strike~~"].join("\n");
     const state = EditorState.create({
       doc: source,
       selection: { anchor: source.indexOf("**bold**") },

@@ -93,38 +93,24 @@ impl OriginTag {
 
         let author_start = 2;
         let author_end = author_start + author_len;
-        let author_id =
-            String::from_utf8(bytes[author_start..author_end].to_vec()).map_err(|_| {
-                OriginTagCodecError::InvalidUtf8AuthorId
-            })?;
+        let author_id = String::from_utf8(bytes[author_start..author_end].to_vec())
+            .map_err(|_| OriginTagCodecError::InvalidUtf8AuthorId)?;
 
         let timestamp_millis = i64::from_le_bytes(
-            bytes[author_end..author_end + 8]
-                .try_into()
-                .expect("timestamp slice has fixed length"),
+            bytes[author_end..author_end + 8].try_into().expect("timestamp slice has fixed length"),
         );
         let timestamp = Utc
             .timestamp_millis_opt(timestamp_millis)
             .single()
             .ok_or(OriginTagCodecError::InvalidTimestampMillis(timestamp_millis))?;
 
-        Ok(Self {
-            author_id,
-            author_type,
-            timestamp,
-        })
+        Ok(Self { author_id, author_type, timestamp })
     }
 }
 
 impl fmt::Display for OriginTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}:{}@{}",
-            self.author_type,
-            self.author_id,
-            self.timestamp.to_rfc3339()
-        )
+        write!(f, "{}:{}@{}", self.author_type, self.author_id, self.timestamp.to_rfc3339())
     }
 }
 
@@ -149,9 +135,7 @@ mod tests {
     use super::*;
 
     fn sample_timestamp() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 2, 7, 14, 8, 0)
-            .single()
-            .expect("test timestamp should be valid")
+        Utc.with_ymd_and_hms(2026, 2, 7, 14, 8, 0).single().expect("test timestamp should be valid")
     }
 
     #[test]
@@ -163,8 +147,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&tag).expect("serialize origin tag");
-        let decoded_json: OriginTag =
-            serde_json::from_str(&json).expect("deserialize origin tag");
+        let decoded_json: OriginTag = serde_json::from_str(&json).expect("deserialize origin tag");
         assert_eq!(decoded_json, tag);
 
         let bytes = tag.to_bytes().expect("encode origin tag");
@@ -208,9 +191,6 @@ mod tests {
             timestamp: sample_timestamp(),
         };
 
-        assert_eq!(
-            tag.to_string(),
-            format!("human:alice@{}", tag.timestamp.to_rfc3339())
-        );
+        assert_eq!(tag.to_string(), format!("human:alice@{}", tag.timestamp.to_rfc3339()));
     }
 }

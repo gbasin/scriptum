@@ -31,7 +31,8 @@
 
 .viewToggleAuthorship {
   background: var(--color-bg-surface-2);
-  border: 1px solid color-mix(in oklab, var(--color-accent-hex) 45%, var(--color-border-muted));
+  border: 1px solid
+    color-mix(in oklab, var(--color-accent-hex) 45%, var(--color-border-muted));
   color: var(--color-text-secondary);
 }
 

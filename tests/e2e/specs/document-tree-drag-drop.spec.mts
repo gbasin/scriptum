@@ -16,12 +16,9 @@ test.describe("document tree drag-drop e2e @smoke", () => {
     await createDocumentViaShortcut(page, "projects/notes.md");
     await ensureFolderExpanded(page, "projects");
 
-    await expect.poll(() => readRootNodeLabels(page)).toEqual([
-      "projects",
-      "alpha.md",
-      "beta.md",
-      "gamma.md",
-    ]);
+    await expect
+      .poll(() => readRootNodeLabels(page))
+      .toEqual(["projects", "alpha.md", "beta.md", "gamma.md"]);
 
     await expect(page.getByTestId("document-tree")).toHaveScreenshot(
       "document-tree-drag-before.png",
@@ -31,12 +28,9 @@ test.describe("document tree drag-drop e2e @smoke", () => {
       .locator('[data-testid="tree-node-gamma.md"] button')
       .dragTo(page.locator('[data-testid="tree-node-alpha.md"] button'));
 
-    await expect.poll(() => readRootNodeLabels(page)).toEqual([
-      "projects",
-      "gamma.md",
-      "alpha.md",
-      "beta.md",
-    ]);
+    await expect
+      .poll(() => readRootNodeLabels(page))
+      .toEqual(["projects", "gamma.md", "alpha.md", "beta.md"]);
 
     await page
       .locator('[data-testid="tree-node-beta.md"] button')
@@ -48,11 +42,9 @@ test.describe("document tree drag-drop e2e @smoke", () => {
       0,
     );
 
-    await expect.poll(() => readRootNodeLabels(page)).toEqual([
-      "projects",
-      "gamma.md",
-      "alpha.md",
-    ]);
+    await expect
+      .poll(() => readRootNodeLabels(page))
+      .toEqual(["projects", "gamma.md", "alpha.md"]);
 
     await expect(page.getByTestId("document-tree")).toHaveScreenshot(
       "document-tree-drag-after.png",

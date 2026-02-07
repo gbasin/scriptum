@@ -39,24 +39,25 @@ import {
 } from "../components/editor/TimelineSlider";
 import { DiffView } from "../components/history/DiffView";
 import { OfflineBanner } from "../components/OfflineBanner";
-import { ShareDialog } from "../components/share/ShareDialog";
 import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
+import { ShareDialog } from "../components/share/ShareDialog";
+import { useToast } from "../hooks/useToast";
+import type { CreateCommentInput } from "../lib/api-client";
 import { useDocumentsStore } from "../store/documents";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
-import type { CreateCommentInput } from "../lib/api-client";
 import {
   buildShareLinkUrl,
   createShareLinkRecord,
   expirationIsoFromOption,
   parseShareLinkMaxUses,
-  sharePermissionLabel,
   type ShareLinkExpirationOption,
   type ShareLinkPermission,
   type ShareLinkTargetType,
+  sharePermissionLabel,
   storeShareLinkRecord,
 } from "./share-links";
 
@@ -698,7 +699,9 @@ function toThreadWithMessages(
   documentId: string | undefined,
 ): ThreadWithMessages {
   return {
-    messages: thread.messages.map((message) => toCommentMessage(message, thread.id)),
+    messages: thread.messages.map((message) =>
+      toCommentMessage(message, thread.id),
+    ),
     thread: {
       createdAt: thread.messages[0]?.createdAt ?? UNKNOWN_COMMENT_TIMESTAMP,
       createdBy: thread.messages[0]?.authorUserId ?? LOCAL_COMMENT_AUTHOR_ID,
@@ -718,7 +721,9 @@ function toThreadWithMessages(
   };
 }
 
-function toInlineCommentThread(threadWithMessages: ThreadWithMessages): InlineCommentThread {
+function toInlineCommentThread(
+  threadWithMessages: ThreadWithMessages,
+): InlineCommentThread {
   return {
     endOffsetUtf16: threadWithMessages.thread.endOffsetUtf16,
     id: threadWithMessages.thread.id,
@@ -856,9 +861,7 @@ function resolveGlobalWebRtcProviderFactory():
   };
 }
 
-function resolveEditorFontFamily(
-  value: unknown,
-): WorkspaceEditorFontFamily {
+function resolveEditorFontFamily(value: unknown): WorkspaceEditorFontFamily {
   return value === "sans" || value === "serif" || value === "mono"
     ? value
     : DEFAULT_EDITOR_FONT_FAMILY;
@@ -879,9 +882,7 @@ function resolveEditorLineNumbers(value: unknown): boolean {
   return typeof value === "boolean" ? value : DEFAULT_EDITOR_LINE_NUMBERS;
 }
 
-function editorFontFamilyStack(
-  fontFamily: WorkspaceEditorFontFamily,
-): string {
+function editorFontFamilyStack(fontFamily: WorkspaceEditorFontFamily): string {
   if (fontFamily === "sans") {
     return "var(--font-sans)";
   }
@@ -903,6 +904,7 @@ function editorTypographyTheme(fontFamily: WorkspaceEditorFontFamily) {
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const closeDocument = useDocumentsStore((state) => state.closeDocument);
   const documents = useDocumentsStore((state) => state.documents);
   const openDocuments = useDocumentsStore((state) => state.openDocuments);
@@ -1090,7 +1092,8 @@ export function DocumentRoute() {
   const reconnectProgress = fixtureModeEnabled
     ? fixtureState.reconnectProgress
     : null;
-  const shareLinksEnabled = fixtureModeEnabled && fixtureState.shareLinksEnabled;
+  const shareLinksEnabled =
+    fixtureModeEnabled && fixtureState.shareLinksEnabled;
   const showEditorLoadingSkeleton =
     !fixtureModeEnabled && syncState === "reconnecting";
 
@@ -1526,7 +1529,8 @@ export function DocumentRoute() {
     persistCommentThreads((currentThreads) => [...currentThreads, nextThread]);
     const created = toThreadWithMessages(nextThread, documentId);
     return {
-      message: created.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
+      message:
+        created.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
       thread: created.thread,
     };
   };
@@ -1645,7 +1649,13 @@ export function DocumentRoute() {
   };
 
   const generateShareLink = () => {
-    if (!workspaceId || typeof window === "undefined") {
+    if (!workspaceId) {
+      toast.error("Cannot generate a share link without an active workspace.");
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      toast.error("Cannot generate a share link outside the browser.");
       return;
     }
 
@@ -1666,7 +1676,12 @@ export function DocumentRoute() {
     });
 
     storeShareLinkRecord(record);
-    setGeneratedShareUrl(buildShareLinkUrl(record.token, window.location.origin));
+    setGeneratedShareUrl(
+      buildShareLinkUrl(record.token, window.location.origin),
+    );
+    toast.success(
+      `Generated ${resolvedTargetType === "document" ? "document" : "workspace"} share link.`,
+    );
   };
 
   const selectTab = (nextDocumentId: string) => {

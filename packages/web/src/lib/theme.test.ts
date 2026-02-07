@@ -4,9 +4,9 @@ import type { WorkspaceDensity, WorkspaceTheme } from "@scriptum/shared";
 import { describe, expect, it } from "vitest";
 import {
   applyAppearanceSettings,
+  applyResolvedTheme,
   configureDaemonGitSyncPolling,
   GIT_SYNC_POLLING_EVENT,
-  applyResolvedTheme,
   resolveThemePreference,
   startAppearanceSync,
   startGitSyncPollingSync,
@@ -133,7 +133,10 @@ function createThemeStore(
     getState: () => state,
     subscribe: (listener) => {
       listeners.add(
-        listener as (nextState: typeof state, previousState: typeof state) => void,
+        listener as (
+          nextState: typeof state,
+          previousState: typeof state,
+        ) => void,
       );
       return () => {
         listeners.delete(
@@ -158,8 +161,7 @@ function createThemeStore(
           },
           gitSync: {
             autoCommitIntervalSeconds:
-              previous.activeWorkspace.config.gitSync
-                .autoCommitIntervalSeconds,
+              previous.activeWorkspace.config.gitSync.autoCommitIntervalSeconds,
           },
         },
       },
@@ -184,8 +186,7 @@ function createThemeStore(
           },
           gitSync: {
             autoCommitIntervalSeconds:
-              previous.activeWorkspace.config.gitSync
-                .autoCommitIntervalSeconds,
+              previous.activeWorkspace.config.gitSync.autoCommitIntervalSeconds,
           },
         },
       },
@@ -294,7 +295,9 @@ describe("configureDaemonGitSyncPolling", () => {
 
     (
       target as unknown as {
-        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+        __SCRIPTUM_DAEMON__?: {
+          setGitSyncPollIntervalSeconds?: (n: number) => void;
+        };
       }
     ).__SCRIPTUM_DAEMON__ = {
       setGitSyncPollIntervalSeconds: (seconds) => {
@@ -309,7 +312,9 @@ describe("configureDaemonGitSyncPolling", () => {
     target.removeEventListener(GIT_SYNC_POLLING_EVENT, handler);
     delete (
       target as unknown as {
-        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+        __SCRIPTUM_DAEMON__?: {
+          setGitSyncPollIntervalSeconds?: (n: number) => void;
+        };
       }
     ).__SCRIPTUM_DAEMON__;
   });
@@ -321,7 +326,9 @@ describe("startGitSyncPollingSync", () => {
     const target = window as Window & typeof globalThis;
     (
       target as unknown as {
-        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+        __SCRIPTUM_DAEMON__?: {
+          setGitSyncPollIntervalSeconds?: (n: number) => void;
+        };
       }
     ).__SCRIPTUM_DAEMON__ = {
       setGitSyncPollIntervalSeconds: (seconds) => {
@@ -346,7 +353,9 @@ describe("startGitSyncPollingSync", () => {
     stop();
     delete (
       target as unknown as {
-        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+        __SCRIPTUM_DAEMON__?: {
+          setGitSyncPollIntervalSeconds?: (n: number) => void;
+        };
       }
     ).__SCRIPTUM_DAEMON__;
   });

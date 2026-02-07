@@ -189,7 +189,10 @@ export function ThreadList({
       </div>
 
       {localThread.status === "resolved" ? (
-        <p className={styles.resolvedNote} data-testid="thread-list-resolved-note">
+        <p
+          className={styles.resolvedNote}
+          data-testid="thread-list-resolved-note"
+        >
           This thread is resolved.
         </p>
       ) : null}
@@ -218,7 +221,10 @@ export function ThreadList({
 
       {canReply ? (
         <>
-          <label className={styles.replyLabel} htmlFor="thread-list-reply-input">
+          <label
+            className={styles.replyLabel}
+            htmlFor="thread-list-reply-input"
+          >
             Reply
           </label>
           <textarea

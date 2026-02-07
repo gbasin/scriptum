@@ -1814,11 +1814,8 @@ async fn yjs_update_captures_session_attribution_in_update_log() {
         author_type: AuthorType::Agent,
         timestamp: Utc::now(),
     };
-    let payload_b64 = BASE64_STANDARD.encode(
-        mismatched_origin
-            .to_bytes()
-            .expect("test origin tag should encode"),
-    );
+    let payload_b64 = BASE64_STANDARD
+        .encode(mismatched_origin.to_bytes().expect("test origin tag should encode"));
 
     handle_yjs_update_message(
         &session_store,

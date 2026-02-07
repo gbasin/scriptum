@@ -162,10 +162,18 @@ export function Outline({ editorContainer, loading = false }: OutlineProps) {
     return (
       <div data-testid="outline-loading">
         <div aria-hidden="true" className={styles.loadingList}>
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading78)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading62)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading72)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading52)} />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading78)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading62)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading72)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading52)}
+          />
         </div>
       </div>
     );

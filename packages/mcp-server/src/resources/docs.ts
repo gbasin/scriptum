@@ -1,6 +1,6 @@
 import {
-  ResourceTemplate,
   type McpServer,
+  ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { DaemonClient } from "../daemon-client";

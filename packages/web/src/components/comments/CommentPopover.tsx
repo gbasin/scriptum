@@ -82,9 +82,8 @@ export function CommentPopover({
   const [pendingBody, setPendingBody] = useState("");
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [threadOverride, setThreadOverride] = useState<ThreadWithMessages | null>(
-    null,
-  );
+  const [threadOverride, setThreadOverride] =
+    useState<ThreadWithMessages | null>(null);
 
   if (!selection) {
     return null;
@@ -95,7 +94,8 @@ export function CommentPopover({
       ? threadOverride
       : null;
   const threadState =
-    localThread && (!activeThread || localThread.thread.id === activeThread.thread.id)
+    localThread &&
+    (!activeThread || localThread.thread.id === activeThread.thread.id)
       ? localThread
       : activeThread;
   const isResolved = threadState?.thread.status === "resolved";
@@ -167,69 +167,72 @@ export function CommentPopover({
             className={styles.popover}
             data-testid="comment-popover"
           >
-          <p
-            className={styles.selectionPreview}
-            data-testid="comment-selection-preview"
-          >
-            {selection.selectedText}
-          </p>
-
-          {threadState ? (
-            <ThreadList
-              messages={threadState.messages}
-              onMessageCreated={(message) => {
-                setThreadOverride((current) => {
-                  const base = current ?? threadState;
-                  if (!base) {
-                    return current;
-                  }
-
-                  const next = {
-                    ...base,
-                    messages: [...base.messages, message],
-                  };
-                  onThreadChange?.(next);
-                  return next;
-                });
-              }}
-              onThreadUpdated={(thread) => {
-                setThreadOverride((current) => {
-                  const base = current ?? threadState;
-                  const next = { messages: base?.messages ?? [], thread };
-                  onThreadChange?.(next);
-                  return next;
-                });
-              }}
-              reopenThread={reopenThread}
-              replyToThread={replyToThread}
-              resolveThread={resolveThread}
-              thread={threadState.thread}
-              workspaceId={workspaceId}
-            />
-          ) : (
-            <>
-              <label className={styles.commentLabel} htmlFor="inline-comment-input">
-                Comment
-              </label>
-              <textarea
-                className={controls.textArea}
-                data-testid="comment-input"
-                id="inline-comment-input"
-                onChange={(event) => setPendingBody(event.target.value)}
-                rows={3}
-                value={pendingBody}
-              />
-            </>
-          )}
-
-          {errorMessage ? (
             <p
-              className={styles.errorMessage}
-              data-testid="comment-popover-error"
+              className={styles.selectionPreview}
+              data-testid="comment-selection-preview"
             >
-              {errorMessage}
+              {selection.selectedText}
             </p>
-          ) : null}
+
+            {threadState ? (
+              <ThreadList
+                messages={threadState.messages}
+                onMessageCreated={(message) => {
+                  setThreadOverride((current) => {
+                    const base = current ?? threadState;
+                    if (!base) {
+                      return current;
+                    }
+
+                    const next = {
+                      ...base,
+                      messages: [...base.messages, message],
+                    };
+                    onThreadChange?.(next);
+                    return next;
+                  });
+                }}
+                onThreadUpdated={(thread) => {
+                  setThreadOverride((current) => {
+                    const base = current ?? threadState;
+                    const next = { messages: base?.messages ?? [], thread };
+                    onThreadChange?.(next);
+                    return next;
+                  });
+                }}
+                reopenThread={reopenThread}
+                replyToThread={replyToThread}
+                resolveThread={resolveThread}
+                thread={threadState.thread}
+                workspaceId={workspaceId}
+              />
+            ) : (
+              <>
+                <label
+                  className={styles.commentLabel}
+                  htmlFor="inline-comment-input"
+                >
+                  Comment
+                </label>
+                <textarea
+                  className={controls.textArea}
+                  data-testid="comment-input"
+                  id="inline-comment-input"
+                  onChange={(event) => setPendingBody(event.target.value)}
+                  rows={3}
+                  value={pendingBody}
+                />
+              </>
+            )}
+
+            {errorMessage ? (
+              <p
+                className={styles.errorMessage}
+                data-testid="comment-popover-error"
+              >
+                {errorMessage}
+              </p>
+            ) : null}
 
             <div className={styles.actions}>
               <Popover.Close

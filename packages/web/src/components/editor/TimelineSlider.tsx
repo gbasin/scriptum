@@ -34,7 +34,11 @@ export function TimelineSlider({
     viewMode === "diff" ? "diff" : "authorship";
 
   return (
-    <section aria-label="History timeline" className={styles.root} data-testid="history-timeline">
+    <section
+      aria-label="History timeline"
+      className={styles.root}
+      data-testid="history-timeline"
+    >
       <label className={styles.label} htmlFor="history-timeline-slider">
         History timeline
       </label>
@@ -48,7 +52,8 @@ export function TimelineSlider({
           className={clsx(
             styles.viewToggleButton,
             styles.viewToggleAuthorship,
-            normalizedViewMode === "authorship" && styles.viewToggleAuthorshipActive,
+            normalizedViewMode === "authorship" &&
+              styles.viewToggleAuthorshipActive,
           )}
           data-testid="history-view-toggle-authorship"
           onClick={() => onViewModeChange("authorship")}

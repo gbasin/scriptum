@@ -1,4 +1,4 @@
-import { type StateField, EditorState } from "@codemirror/state";
+import { EditorState, type StateField } from "@codemirror/state";
 import type { DecorationSet } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import {
@@ -56,7 +56,9 @@ describe("livePreview", () => {
     expect(hasDecorationOnLine(state, inlineEmphasisDecorations, 3)).toBe(true);
     expect(hasDecorationOnLine(state, inlineLinkDecorations, 3)).toBe(true);
     expect(hasDecorationOnLine(state, tablePreviewDecorations, 4)).toBe(true);
-    expect(hasDecorationOnLine(state, taskBlockquoteHrDecorations, 7)).toBe(true);
+    expect(hasDecorationOnLine(state, taskBlockquoteHrDecorations, 7)).toBe(
+      true,
+    );
     expect(hasDecorationOnLine(state, codeBlockDecorations, 10)).toBe(true);
     expect(hasDecorationOnLine(state, mathPreviewDecorations, 13)).toBe(true);
   });

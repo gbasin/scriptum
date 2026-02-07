@@ -205,7 +205,8 @@ function normalizeWorkspaceConfig(
         defaults.editor.fontFamily,
       tabSize:
         asIntegerInRange(editor?.tabSize, 1, 8) ?? defaults.editor.tabSize,
-      lineNumbers: asBoolean(editor?.lineNumbers) ?? defaults.editor.lineNumbers,
+      lineNumbers:
+        asBoolean(editor?.lineNumbers) ?? defaults.editor.lineNumbers,
     },
   };
 }

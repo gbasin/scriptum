@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useToastStore, type ToastVariant } from "../store/toast";
+import { type ToastVariant, useToastStore } from "../store/toast";
 
 export interface UseToastApi {
   show: (

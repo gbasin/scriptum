@@ -1,8 +1,8 @@
 import type { WorkspaceConfig } from "@scriptum/shared";
 import clsx from "clsx";
 import { useMemo, useState } from "react";
-import controls from "../styles/Controls.module.css";
 import { defaultWorkspaceConfig, useWorkspaceStore } from "../store/workspace";
+import controls from "../styles/Controls.module.css";
 import styles from "./settings.module.css";
 
 type SettingsTab =
@@ -135,7 +135,10 @@ export function SettingsRoute() {
         role="tabpanel"
       >
         {activeTab === "general" ? (
-          <fieldset className={styles.formSection} data-testid="settings-form-general">
+          <fieldset
+            className={styles.formSection}
+            data-testid="settings-form-general"
+          >
             <legend className={styles.legend}>General</legend>
             <label className={controls.field}>
               Workspace name
@@ -261,7 +264,10 @@ export function SettingsRoute() {
         ) : null}
 
         {activeTab === "agents" ? (
-          <fieldset className={styles.formSection} data-testid="settings-form-agents">
+          <fieldset
+            className={styles.formSection}
+            data-testid="settings-form-agents"
+          >
             <legend className={styles.legend}>Agents</legend>
             <label className={controls.checkboxRow}>
               <input
@@ -508,7 +514,10 @@ export function SettingsRoute() {
                         8,
                         Math.max(
                           1,
-                          asPositiveInt(event.target.value, current.editor.tabSize),
+                          asPositiveInt(
+                            event.target.value,
+                            current.editor.tabSize,
+                          ),
                         ),
                       ),
                     },

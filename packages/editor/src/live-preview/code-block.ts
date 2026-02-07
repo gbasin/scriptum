@@ -1,8 +1,5 @@
 import { markdownLanguage } from "@codemirror/lang-markdown";
-import {
-  type EditorState,
-  StateField,
-} from "@codemirror/state";
+import { type EditorState, StateField } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,

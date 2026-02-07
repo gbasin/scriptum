@@ -2,40 +2,21 @@ import { markdown } from "@codemirror/lang-markdown";
 import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { footnotePreview } from "../extensions/footnotes";
-import {
-  codeBlockDecorations,
-  codeBlockTheme,
-} from "./code-block";
-import {
-  inlineEmphasisDecorations,
-  inlineEmphasisTheme,
-} from "./emphasis";
+import { codeBlockDecorations, codeBlockTheme } from "./code-block";
+import { inlineEmphasisDecorations, inlineEmphasisTheme } from "./emphasis";
 import {
   headingLevelFromLine,
   headingPreviewDecorations,
   headingPreviewTheme,
 } from "./heading";
-import {
-  inlineLinkDecorations,
-  inlineLinkTheme,
-} from "./link";
-import {
-  mathPreviewDecorations,
-  mathPreviewTheme,
-} from "./math";
+import { inlineLinkDecorations, inlineLinkTheme } from "./link";
+import { mathPreviewDecorations, mathPreviewTheme } from "./math";
+import { activeLines, markdownTreeField } from "./shared";
+import { tablePreviewDecorations, tablePreviewTheme } from "./table";
 import {
   taskBlockquoteHrDecorations,
   taskBlockquoteHrTheme,
 } from "./task-list";
-import {
-  tablePreviewDecorations,
-  tablePreviewTheme,
-} from "./table";
-import {
-  activeLines,
-  markdownTreeField,
-} from "./shared";
-
 
 const mermaidPreviewTheme = EditorView.baseTheme({
   ".cm-livePreview-mermaidBlock": {
@@ -54,35 +35,21 @@ const mermaidPreviewTheme = EditorView.baseTheme({
   },
 });
 
-export {
-  codeBlockDecorations,
-} from "./code-block";
-export {
-  inlineEmphasisDecorations,
-} from "./emphasis";
-export {
-  inlineLinkDecorations,
-} from "./link";
-export {
-  mathPreviewDecorations,
-} from "./math";
-export {
-  tablePreviewDecorations,
-} from "./table";
-export {
-  headingPreviewDecorations,
-} from "./heading";
-export {
-  taskBlockquoteHrDecorations,
-} from "./task-list";
+export { codeBlockDecorations } from "./code-block";
+export { inlineEmphasisDecorations } from "./emphasis";
+export { headingPreviewDecorations } from "./heading";
+export { inlineLinkDecorations } from "./link";
+export { mathPreviewDecorations } from "./math";
 export {
   activeLines,
   analyzeMarkdownTree,
   getMarkdownNodes,
   isLineActive,
-  markdownTreeField,
   type MarkdownTreeAnalysis,
+  markdownTreeField,
 } from "./shared";
+export { tablePreviewDecorations } from "./table";
+export { taskBlockquoteHrDecorations } from "./task-list";
 
 export function livePreview(): Extension {
   return [

@@ -70,7 +70,10 @@ export function IndexRoute() {
 
   const recentDocuments = useMemo<RecentDocumentEntry[]>(() => {
     return documents
-      .filter((document) => document.archivedAt === null && document.deletedAt === null)
+      .filter(
+        (document) =>
+          document.archivedAt === null && document.deletedAt === null,
+      )
       .sort(
         (left, right) =>
           parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt),
@@ -177,7 +180,8 @@ export function IndexRoute() {
               <li key={workspace.id}>
                 <button
                   className={cn(styles.listButton, {
-                    [styles.listButtonActive]: workspace.id === activeWorkspaceId,
+                    [styles.listButtonActive]:
+                      workspace.id === activeWorkspaceId,
                   })}
                   data-testid={`index-workspace-item-${workspace.id}`}
                   onClick={() => openWorkspace(workspace.id)}

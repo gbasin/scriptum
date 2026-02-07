@@ -50,7 +50,9 @@ function normalizeVariant(value: unknown): ToastVariant {
     : DEFAULT_VARIANT;
 }
 
-export function createToastStore(initial: Partial<ToastSnapshot> = {}): ToastStore {
+export function createToastStore(
+  initial: Partial<ToastSnapshot> = {},
+): ToastStore {
   const initialState: ToastSnapshot = { ...INITIAL_SNAPSHOT, ...initial };
 
   return create<ToastStoreState>()((set) => ({

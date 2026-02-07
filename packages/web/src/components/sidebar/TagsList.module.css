@@ -41,7 +41,11 @@
 
 .tagChipActive {
   background: color-mix(in oklab, var(--color-accent-hex) 20%, transparent);
-  border-color: color-mix(in oklab, var(--color-accent-hex) 42%, var(--color-border-muted));
+  border-color: color-mix(
+    in oklab,
+    var(--color-accent-hex) 42%,
+    var(--color-border-muted)
+  );
   color: var(--color-text-primary);
 }
 

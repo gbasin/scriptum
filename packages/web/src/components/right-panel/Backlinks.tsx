@@ -194,9 +194,15 @@ export function Backlinks({
       {activeLoading ? (
         <div data-testid="backlinks-loading">
           <div aria-hidden="true" className={styles.loadingList}>
-            <SkeletonBlock className={clsx(styles.loadingLine, styles.loading74)} />
-            <SkeletonBlock className={clsx(styles.loadingLine, styles.loading59)} />
-            <SkeletonBlock className={clsx(styles.loadingLine, styles.loading68)} />
+            <SkeletonBlock
+              className={clsx(styles.loadingLine, styles.loading74)}
+            />
+            <SkeletonBlock
+              className={clsx(styles.loadingLine, styles.loading59)}
+            />
+            <SkeletonBlock
+              className={clsx(styles.loadingLine, styles.loading68)}
+            />
           </div>
         </div>
       ) : null}

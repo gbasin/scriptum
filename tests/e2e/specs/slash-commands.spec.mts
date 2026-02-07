@@ -8,9 +8,7 @@ interface ScriptumTestApi {
   reset(): void;
   setCursor(pos: { line: number; ch: number }): void;
   setDocContent(markdown: string): void;
-  setSyncState(
-    state: "synced" | "offline" | "reconnecting" | "error",
-  ): void;
+  setSyncState(state: "synced" | "offline" | "reconnecting" | "error"): void;
 }
 
 declare global {
@@ -40,7 +38,9 @@ test.describe("slash commands e2e @smoke", () => {
   }) => {
     await setupSlashFixture(page);
 
-    const editorContent = page.locator('[data-testid="editor-host"] .cm-content');
+    const editorContent = page.locator(
+      '[data-testid="editor-host"] .cm-content',
+    );
     await editorContent.click();
     await page.keyboard.type("/");
 

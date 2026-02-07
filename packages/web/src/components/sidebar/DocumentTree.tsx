@@ -11,8 +11,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { SkeletonBlock } from "../Skeleton";
 import controls from "../../styles/Controls.module.css";
+import { SkeletonBlock } from "../Skeleton";
 import styles from "./DocumentTree.module.css";
 
 // -- Types --------------------------------------------------------------------
@@ -176,10 +176,7 @@ function findNodeByPath(nodes: TreeNode[], path: string): TreeNode | null {
   return null;
 }
 
-function findSiblingPaths(
-  nodes: TreeNode[],
-  parent: string,
-): string[] | null {
+function findSiblingPaths(nodes: TreeNode[], parent: string): string[] | null {
   if (parent.length === 0) {
     return nodes.map((node) => node.fullPath);
   }
@@ -376,7 +373,11 @@ function TreeNodeItem({
       type="button"
     >
       <span aria-hidden="true" className={styles.treeIcon}>
-        {isFolder ? (isExpanded ? "\u{1F4C2}" : "\u{1F4C1}") : fileIcon(node.name)}
+        {isFolder
+          ? isExpanded
+            ? "\u{1F4C2}"
+            : "\u{1F4C1}"
+          : fileIcon(node.name)}
       </span>
       {node.name}
     </button>
@@ -408,7 +409,8 @@ function TreeNodeItem({
                       data-testid={`context-action-${action}`}
                       key={action}
                       onClick={() => {
-                        if (node.document) onContextAction(action, node.document);
+                        if (node.document)
+                          onContextAction(action, node.document);
                       }}
                     >
                       {label}
@@ -475,7 +477,7 @@ export function DocumentTree({
     return new Set(
       tree
         .filter((node) => node.children.length > 0)
-      .map((node) => node.fullPath),
+        .map((node) => node.fullPath),
     );
   });
   const [draggingDocumentPath, setDraggingDocumentPath] = useState<
@@ -650,11 +652,21 @@ export function DocumentTree({
     return (
       <div data-testid="document-tree-loading">
         <div aria-hidden="true" className={styles.loadingList}>
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading62)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading78)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading54)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading71)} />
-          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading49)} />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading62)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading78)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading54)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading71)}
+          />
+          <SkeletonBlock
+            className={clsx(styles.loadingLine, styles.loading49)}
+          />
         </div>
       </div>
     );

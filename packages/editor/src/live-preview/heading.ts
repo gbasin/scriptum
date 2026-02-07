@@ -1,4 +1,8 @@
-import { type EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
+import {
+  type EditorState,
+  RangeSetBuilder,
+  StateField,
+} from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 import { lineIsInActiveSelection } from "./shared";
 

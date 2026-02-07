@@ -4,9 +4,7 @@ import { loadSmokeFixtures, type SmokeFixture } from "./smoke-fixtures.mts";
 interface ScriptumTestApi {
   setDocContent(markdown: string): void;
   setCursor(pos: { line: number; ch: number }): void;
-  setSyncState(
-    state: "synced" | "offline" | "reconnecting" | "error",
-  ): void;
+  setSyncState(state: "synced" | "offline" | "reconnecting" | "error"): void;
 }
 
 declare global {
@@ -32,7 +30,9 @@ test.describe("mermaid live preview @smoke", () => {
     await applyFixtureMarkdown(page, richFixture);
 
     const editorHost = page.getByTestId("editor-host");
-    await expect(editorHost.locator(".cm-livePreview-mermaidBlock")).toBeVisible({
+    await expect(
+      editorHost.locator(".cm-livePreview-mermaidBlock"),
+    ).toBeVisible({
       timeout: 20_000,
     });
     const mermaidSvg = editorHost.locator(".cm-livePreview-mermaidBlock svg");
@@ -48,12 +48,16 @@ test.describe("mermaid live preview @smoke", () => {
       expect.arrayContaining(["Draft", "Review", "Publish"]),
     );
 
-    const editorText = (await editorHost.locator(".cm-content").textContent()) ?? "";
+    const editorText =
+      (await editorHost.locator(".cm-content").textContent()) ?? "";
     expect(editorText).not.toContain("```mermaid");
 
-    await expect(page).toHaveScreenshot("editor-live-preview-rich-mermaid.png", {
-      fullPage: true,
-    });
+    await expect(page).toHaveScreenshot(
+      "editor-live-preview-rich-mermaid.png",
+      {
+        fullPage: true,
+      },
+    );
   });
 });
 
@@ -65,12 +69,17 @@ function loadRichFixture(): SmokeFixture {
     throw new Error(`missing smoke fixture: ${RICH_FIXTURE_NAME}`);
   }
   if (!fixture.state?.docContent) {
-    throw new Error(`fixture ${RICH_FIXTURE_NAME} must provide state.docContent`);
+    throw new Error(
+      `fixture ${RICH_FIXTURE_NAME} must provide state.docContent`,
+    );
   }
   return fixture;
 }
 
-async function applyFixtureMarkdown(page: Page, fixture: SmokeFixture): Promise<void> {
+async function applyFixtureMarkdown(
+  page: Page,
+  fixture: SmokeFixture,
+): Promise<void> {
   const docContent = fixture.state?.docContent;
   if (!docContent) {
     throw new Error(`fixture ${fixture.name} has no state.docContent`);
@@ -104,7 +113,11 @@ async function installDeterministicMermaidRenderer(page: Page): Promise<void> {
       return Array.from(new Set(labels));
     };
 
-    (window as unknown as { mermaid?: { render: (id: string, source: string) => { svg: string } } }).mermaid = {
+    (
+      window as unknown as {
+        mermaid?: { render: (id: string, source: string) => { svg: string } };
+      }
+    ).mermaid = {
       render: (_id: string, source: string) => {
         const labels = parseLabels(source);
         const height = Math.max(80, 36 + labels.length * 24);

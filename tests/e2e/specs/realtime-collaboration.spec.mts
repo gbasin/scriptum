@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 import { expect, type Page, test } from "@playwright/test";
@@ -67,7 +67,9 @@ test.describe("realtime collaboration integration @smoke", () => {
 
       await editorB.click();
       await pageB.keyboard.type(SECOND_EDIT_TEXT);
-      await expect(editorA).toContainText(SECOND_EDIT_TEXT, { timeout: 20_000 });
+      await expect(editorA).toContainText(SECOND_EDIT_TEXT, {
+        timeout: 20_000,
+      });
 
       await expect
         .poll(async () => pageA.locator(".cm-remote-cursor").count(), {
@@ -93,65 +95,62 @@ async function bootstrapAuthenticatedRoute(
 ): Promise<void> {
   await page.goto(COLLAB_ROUTE);
 
-  await page.evaluate(
-    async ({ userId, userName }) => {
-      const [{ useAuthStore }, { useWorkspaceStore }, { useDocumentsStore }] =
-        await Promise.all([
-          import("/src/store/auth.ts"),
-          import("/src/store/workspace.ts"),
-          import("/src/store/documents.ts"),
-        ]);
+  await page.evaluate(async ({ userId, userName }) => {
+    const [{ useAuthStore }, { useWorkspaceStore }, { useDocumentsStore }] =
+      await Promise.all([
+        import("/src/store/auth.ts"),
+        import("/src/store/workspace.ts"),
+        import("/src/store/documents.ts"),
+      ]);
 
-      const nowIso = new Date(Date.now()).toISOString();
-      useAuthStore.setState({
-        status: "authenticated",
-        user: {
-          id: userId,
-          email: `${userId}@example.test`,
-          display_name: userName,
-        },
-        accessToken: `${userId}-access-token`,
-        accessExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        refreshToken: `${userId}-refresh-token`,
-        refreshExpiresAt: new Date(
-          Date.now() + 24 * 60 * 60 * 1000,
-        ).toISOString(),
-        error: null,
-      });
+    const nowIso = new Date(Date.now()).toISOString();
+    useAuthStore.setState({
+      status: "authenticated",
+      user: {
+        id: userId,
+        email: `${userId}@example.test`,
+        display_name: userName,
+      },
+      accessToken: `${userId}-access-token`,
+      accessExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      refreshToken: `${userId}-refresh-token`,
+      refreshExpiresAt: new Date(
+        Date.now() + 24 * 60 * 60 * 1000,
+      ).toISOString(),
+      error: null,
+    });
 
-      useWorkspaceStore.getState().upsertWorkspace({
-        id: "ws-realtime",
-        slug: "ws-realtime",
-        name: "Realtime Workspace",
-        role: "owner",
+    useWorkspaceStore.getState().upsertWorkspace({
+      id: "ws-realtime",
+      slug: "ws-realtime",
+      name: "Realtime Workspace",
+      role: "owner",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      etag: "ws-realtime-etag",
+    });
+    useWorkspaceStore.getState().setActiveWorkspaceId("ws-realtime");
+
+    useDocumentsStore.getState().setDocuments([
+      {
+        id: "doc-realtime",
+        workspaceId: "ws-realtime",
+        path: "notes/realtime.md",
+        title: "realtime.md",
+        bodyMd: "",
+        tags: [],
+        headSeq: 0,
+        etag: "doc-realtime-etag",
+        archivedAt: null,
+        deletedAt: null,
         createdAt: nowIso,
         updatedAt: nowIso,
-        etag: "ws-realtime-etag",
-      });
-      useWorkspaceStore.getState().setActiveWorkspaceId("ws-realtime");
-
-      useDocumentsStore.getState().setDocuments([
-        {
-          id: "doc-realtime",
-          workspaceId: "ws-realtime",
-          path: "notes/realtime.md",
-          title: "realtime.md",
-          bodyMd: "",
-          tags: [],
-          headSeq: 0,
-          etag: "doc-realtime-etag",
-          archivedAt: null,
-          deletedAt: null,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        },
-      ]);
-      useDocumentsStore
-        .getState()
-        .setActiveDocumentForWorkspace("ws-realtime", "doc-realtime");
-    },
-    identity,
-  );
+      },
+    ]);
+    useDocumentsStore
+      .getState()
+      .setActiveDocumentForWorkspace("ws-realtime", "doc-realtime");
+  }, identity);
 
   await expect(page.getByTestId("document-title")).toBeVisible();
 }

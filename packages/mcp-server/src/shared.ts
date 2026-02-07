@@ -83,7 +83,10 @@ export async function resolveWorkspaceForDocId(
   return undefined;
 }
 
-export function parseResourceVariable(variables: Variables, key: string): string {
+export function parseResourceVariable(
+  variables: Variables,
+  key: string,
+): string {
   const value = variables[key];
   const raw =
     typeof value === "string"

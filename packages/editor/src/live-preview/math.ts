@@ -1,5 +1,14 @@
-import { type EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import {
+  type EditorState,
+  RangeSetBuilder,
+  StateField,
+} from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  WidgetType,
+} from "@codemirror/view";
 import {
   getGlobalRecord,
   isEscapedAt,

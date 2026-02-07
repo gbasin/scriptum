@@ -61,7 +61,10 @@ function renderRoute(path = "/workspace/ws-alpha") {
             path="/workspace/:workspaceId/document/:documentId"
             element={<div data-testid="workspace-document-destination" />}
           />
-          <Route path="/settings" element={<div data-testid="settings-page" />} />
+          <Route
+            path="/settings"
+            element={<div data-testid="settings-page" />}
+          />
         </Routes>
       </MemoryRouter>,
     );
@@ -113,10 +116,22 @@ describe("WorkspaceRoute", () => {
   });
 
   it("renders document and recent-file sections for populated workspaces", () => {
-    useDocumentsStore.getState().setDocuments([
-      makeDocument("doc-new", "ws-alpha", "Newest", "2026-01-03T00:00:00.000Z"),
-      makeDocument("doc-old", "ws-alpha", "Oldest", "2026-01-01T00:00:00.000Z"),
-    ]);
+    useDocumentsStore
+      .getState()
+      .setDocuments([
+        makeDocument(
+          "doc-new",
+          "ws-alpha",
+          "Newest",
+          "2026-01-03T00:00:00.000Z",
+        ),
+        makeDocument(
+          "doc-old",
+          "ws-alpha",
+          "Oldest",
+          "2026-01-01T00:00:00.000Z",
+        ),
+      ]);
 
     const { container, root } = renderRoute();
 

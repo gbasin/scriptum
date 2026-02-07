@@ -40,7 +40,11 @@ export function truncateBreadcrumbLabel(
   return `${label.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
-export function Breadcrumb({ path, workspaceLabel, onNavigate }: BreadcrumbProps) {
+export function Breadcrumb({
+  path,
+  workspaceLabel,
+  onNavigate,
+}: BreadcrumbProps) {
   const segments = buildBreadcrumbSegments(path);
   const rootLabel = truncateBreadcrumbLabel(workspaceLabel);
 
@@ -49,9 +53,15 @@ export function Breadcrumb({ path, workspaceLabel, onNavigate }: BreadcrumbProps
   };
 
   return (
-    <nav aria-label="Document breadcrumb" className={styles.root} data-testid="breadcrumb">
+    <nav
+      aria-label="Document breadcrumb"
+      className={styles.root}
+      data-testid="breadcrumb"
+    >
       <button
-        className={onNavigate ? styles.segmentButton : styles.segmentButtonDisabled}
+        className={
+          onNavigate ? styles.segmentButton : styles.segmentButtonDisabled
+        }
         data-testid="breadcrumb-root"
         onClick={() => triggerNavigate(null)}
         title={workspaceLabel}
@@ -71,7 +81,9 @@ export function Breadcrumb({ path, workspaceLabel, onNavigate }: BreadcrumbProps
               {" / "}
             </span>
             <button
-              className={onNavigate ? styles.segmentButton : styles.segmentButtonDisabled}
+              className={
+                onNavigate ? styles.segmentButton : styles.segmentButtonDisabled
+              }
               data-testid={`breadcrumb-segment-${segment.path}`}
               onClick={() => triggerNavigate(segment.path)}
               title={segment.label}

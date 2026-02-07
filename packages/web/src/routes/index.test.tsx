@@ -20,11 +20,7 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }
 
-function makeWorkspace(
-  id: string,
-  name: string,
-  role = "owner",
-): Workspace {
+function makeWorkspace(id: string, name: string, role = "owner"): Workspace {
   return {
     id,
     slug: id,
@@ -57,9 +53,7 @@ function makeDocument(
   };
 }
 
-function authResult(
-  overrides: Partial<UseAuthResult> = {},
-): UseAuthResult {
+function authResult(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
   return {
     status: "unauthenticated",
     user: null,
@@ -106,7 +100,9 @@ describe("IndexRoute", () => {
     vi.mocked(useAuth).mockReturnValue(authResult({ login }));
     const { container, root } = renderRoute();
 
-    expect(container.querySelector('[data-testid="index-landing"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="index-landing"]'),
+    ).not.toBeNull();
     const button = container.querySelector(
       '[data-testid="index-login-button"]',
     ) as HTMLButtonElement | null;
@@ -142,10 +138,22 @@ describe("IndexRoute", () => {
         makeWorkspace("ws-beta", "Beta Workspace", "editor"),
       ]);
     useWorkspaceStore.getState().setActiveWorkspaceId("ws-alpha");
-    useDocumentsStore.getState().setDocuments([
-      makeDocument("doc-newest", "ws-beta", "Newest Note", "2026-01-03T00:00:00.000Z"),
-      makeDocument("doc-oldest", "ws-alpha", "Oldest Note", "2026-01-01T00:00:00.000Z"),
-    ]);
+    useDocumentsStore
+      .getState()
+      .setDocuments([
+        makeDocument(
+          "doc-newest",
+          "ws-beta",
+          "Newest Note",
+          "2026-01-03T00:00:00.000Z",
+        ),
+        makeDocument(
+          "doc-oldest",
+          "ws-alpha",
+          "Oldest Note",
+          "2026-01-01T00:00:00.000Z",
+        ),
+      ]);
 
     const { container, root } = renderRoute();
 
@@ -198,10 +206,22 @@ describe("IndexRoute", () => {
         makeWorkspace("ws-beta", "Beta Workspace", "editor"),
       ]);
     useWorkspaceStore.getState().setActiveWorkspaceId("ws-alpha");
-    useDocumentsStore.getState().setDocuments([
-      makeDocument("doc-newest", "ws-beta", "Newest Note", "2026-01-03T00:00:00.000Z"),
-      makeDocument("doc-mid", "ws-alpha", "Mid Note", "2026-01-02T00:00:00.000Z"),
-    ]);
+    useDocumentsStore
+      .getState()
+      .setDocuments([
+        makeDocument(
+          "doc-newest",
+          "ws-beta",
+          "Newest Note",
+          "2026-01-03T00:00:00.000Z",
+        ),
+        makeDocument(
+          "doc-mid",
+          "ws-alpha",
+          "Mid Note",
+          "2026-01-02T00:00:00.000Z",
+        ),
+      ]);
 
     const { container, root } = renderRoute();
     const newestButton = container.querySelector(
@@ -222,7 +242,9 @@ describe("IndexRoute", () => {
     expect(
       useDocumentsStore.getState().activeDocumentIdByWorkspace["ws-beta"],
     ).toBe("doc-newest");
-    expect(useDocumentsStore.getState().openDocumentIds).toContain("doc-newest");
+    expect(useDocumentsStore.getState().openDocumentIds).toContain(
+      "doc-newest",
+    );
 
     act(() => {
       root.unmount();

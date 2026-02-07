@@ -81,7 +81,10 @@ export function ShareRedeemRoute() {
       </p>
 
       {!redeemable ? (
-        <p className={styles.unavailable} data-testid="share-redeem-unavailable">
+        <p
+          className={styles.unavailable}
+          data-testid="share-redeem-unavailable"
+        >
           Share link is no longer redeemable.
         </p>
       ) : (

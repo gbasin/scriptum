@@ -121,7 +121,11 @@ export function ShareDialog({
             Link grants {summaryPermissionLabel} access to{" "}
             {shareTargetType === "workspace" ? "workspace" : "document"}.
           </p>
-          <input data-testid="share-link-url" readOnly value={generatedShareUrl} />
+          <input
+            data-testid="share-link-url"
+            readOnly
+            value={generatedShareUrl}
+          />
         </div>
       ) : null}
     </section>

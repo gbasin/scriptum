@@ -37,7 +37,11 @@
 
 .tabActive {
   background: var(--color-bg-surface-1);
-  border-color: color-mix(in oklab, var(--color-accent-hex) 38%, var(--color-border-muted));
+  border-color: color-mix(
+    in oklab,
+    var(--color-accent-hex) 38%,
+    var(--color-border-muted)
+  );
   border-bottom-color: var(--color-bg-surface-1);
 }
 

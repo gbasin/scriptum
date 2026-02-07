@@ -6,8 +6,8 @@ import {
   attributionExtension,
   attributionState,
   buildAttributionBadgeText,
-  formatRelativeTimestamp,
   type EditorType,
+  formatRelativeTimestamp,
   type SectionAttribution,
   type SectionContributor,
   setAttributions,
@@ -74,26 +74,24 @@ describe("attributionExtension", () => {
     const state = EditorState.create({
       doc: DOC,
       extensions: [attributionExtension()],
-    })
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 1,
-              lastEditedBy: "Alice",
-              lastEditorType: "human",
-              color: "#e06c75",
-            }),
-            createAttribution({
-              headingLine: 3,
-              lastEditedBy: "cursor-agent",
-              lastEditorType: "agent",
-              color: "#61afef",
-            }),
-          ]),
-        ],
-      })
-      .state;
+    }).update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 1,
+            lastEditedBy: "Alice",
+            lastEditorType: "human",
+            color: "#e06c75",
+          }),
+          createAttribution({
+            headingLine: 3,
+            lastEditedBy: "cursor-agent",
+            lastEditorType: "agent",
+            color: "#61afef",
+          }),
+        ]),
+      ],
+    }).state;
 
     expect(collectBadges(state)).toEqual([
       { name: "Alice", editorType: "human", lineNumber: 1 },
@@ -105,32 +103,30 @@ describe("attributionExtension", () => {
     const state = EditorState.create({
       doc: DOC,
       extensions: [attributionExtension()],
-    })
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 1,
-              lastEditedBy: "Valid",
-              lastEditorType: "human",
-              color: "#98c379",
-            }),
-            createAttribution({
-              headingLine: 99,
-              lastEditedBy: "TooHigh",
-              lastEditorType: "agent",
-              color: "#c678dd",
-            }),
-            createAttribution({
-              headingLine: 0,
-              lastEditedBy: "Zero",
-              lastEditorType: "human",
-              color: "#d19a66",
-            }),
-          ]),
-        ],
-      })
-      .state;
+    }).update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 1,
+            lastEditedBy: "Valid",
+            lastEditorType: "human",
+            color: "#98c379",
+          }),
+          createAttribution({
+            headingLine: 99,
+            lastEditedBy: "TooHigh",
+            lastEditorType: "agent",
+            color: "#c678dd",
+          }),
+          createAttribution({
+            headingLine: 0,
+            lastEditedBy: "Zero",
+            lastEditorType: "human",
+            color: "#d19a66",
+          }),
+        ]),
+      ],
+    }).state;
 
     expect(collectBadges(state)).toEqual([
       { name: "Valid", editorType: "human", lineNumber: 1 },
@@ -143,36 +139,32 @@ describe("attributionExtension", () => {
       extensions: [attributionExtension()],
     });
 
-    state = state
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 1,
-              lastEditedBy: "First",
-              lastEditorType: "human",
-              color: "#e06c75",
-            }),
-          ]),
-        ],
-      })
-      .state;
+    state = state.update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 1,
+            lastEditedBy: "First",
+            lastEditorType: "human",
+            color: "#e06c75",
+          }),
+        ]),
+      ],
+    }).state;
     expect(collectBadges(state)).toHaveLength(1);
 
-    state = state
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 3,
-              lastEditedBy: "Second",
-              lastEditorType: "agent",
-              color: "#61afef",
-            }),
-          ]),
-        ],
-      })
-      .state;
+    state = state.update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 3,
+            lastEditedBy: "Second",
+            lastEditorType: "agent",
+            color: "#61afef",
+          }),
+        ]),
+      ],
+    }).state;
 
     const badges = collectBadges(state);
     expect(badges).toHaveLength(1);
@@ -186,20 +178,18 @@ describe("attributionExtension", () => {
       extensions: [attributionExtension()],
     });
 
-    state = state
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 1,
-              lastEditedBy: "Agent",
-              lastEditorType: "agent",
-              color: "#e06c75",
-            }),
-          ]),
-        ],
-      })
-      .state;
+    state = state.update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 1,
+            lastEditedBy: "Agent",
+            lastEditorType: "agent",
+            color: "#e06c75",
+          }),
+        ]),
+      ],
+    }).state;
     expect(collectBadges(state)).toHaveLength(1);
 
     state = state.update({
@@ -213,32 +203,30 @@ describe("attributionExtension", () => {
     const state = EditorState.create({
       doc,
       extensions: [attributionExtension()],
-    })
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 1,
-              lastEditedBy: "A",
-              lastEditorType: "human",
-              color: "#e06c75",
-            }),
-            createAttribution({
-              headingLine: 3,
-              lastEditedBy: "B",
-              lastEditorType: "agent",
-              color: "#61afef",
-            }),
-            createAttribution({
-              headingLine: 5,
-              lastEditedBy: "C",
-              lastEditorType: "human",
-              color: "#98c379",
-            }),
-          ]),
-        ],
-      })
-      .state;
+    }).update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 1,
+            lastEditedBy: "A",
+            lastEditorType: "human",
+            color: "#e06c75",
+          }),
+          createAttribution({
+            headingLine: 3,
+            lastEditedBy: "B",
+            lastEditorType: "agent",
+            color: "#61afef",
+          }),
+          createAttribution({
+            headingLine: 5,
+            lastEditedBy: "C",
+            lastEditorType: "human",
+            color: "#98c379",
+          }),
+        ]),
+      ],
+    }).state;
 
     expect(collectBadges(state)).toHaveLength(3);
   });
@@ -252,21 +240,19 @@ describe("attributionExtension", () => {
     const state = EditorState.create({
       doc: DOC,
       extensions: [attributionExtension()],
-    })
-      .update({
-        effects: [
-          setAttributions.of([
-            createAttribution({
-              headingLine: 1,
-              lastEditedBy: "Alice",
-              lastEditorType: "human",
-              color: "#e06c75",
-              contributors,
-            }),
-          ]),
-        ],
-      })
-      .state;
+    }).update({
+      effects: [
+        setAttributions.of([
+          createAttribution({
+            headingLine: 1,
+            lastEditedBy: "Alice",
+            lastEditorType: "human",
+            color: "#e06c75",
+            contributors,
+          }),
+        ]),
+      ],
+    }).state;
 
     const stored = state.field(attributionState).attributions;
     expect(stored).toHaveLength(1);
@@ -361,7 +347,12 @@ describe("AttributionBadgeWidget", () => {
   it("renders type icon and relative edit time text", () => {
     const nowMs = Date.parse("2026-02-07T12:00:00Z");
     expect(
-      buildAttributionBadgeText("Alice", "human", "2026-02-07T11:55:00Z", nowMs),
+      buildAttributionBadgeText(
+        "Alice",
+        "human",
+        "2026-02-07T11:55:00Z",
+        nowMs,
+      ),
     ).toBe("👤 Alice · 5m ago");
     expect(
       buildAttributionBadgeText(

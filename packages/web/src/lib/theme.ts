@@ -178,7 +178,10 @@ export function startThemeSync(
   let detachMediaListener: () => void = () => {};
 
   const applyTheme = (prefersDark: boolean) => {
-    applyResolvedTheme(root, resolveThemePreference(themePreference, prefersDark));
+    applyResolvedTheme(
+      root,
+      resolveThemePreference(themePreference, prefersDark),
+    );
   };
 
   const refreshMediaListener = () => {

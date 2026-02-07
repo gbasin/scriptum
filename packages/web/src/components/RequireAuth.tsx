@@ -3,8 +3,8 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { isFixtureModeEnabled } from "../test/setup";
-import { SkeletonBlock } from "./Skeleton";
 import styles from "./RequireAuth.module.css";
+import { SkeletonBlock } from "./Skeleton";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const status = useAuthStore((s) => s.status);

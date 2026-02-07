@@ -29,13 +29,7 @@ describe("math live preview", () => {
   });
 
   it("distinguishes inline and block math widgets in the same document", () => {
-    const source = [
-      "active",
-      "$$",
-      "x^2",
-      "$$",
-      "Inline $x^2$",
-    ].join("\n");
+    const source = ["active", "$$", "x^2", "$$", "Inline $x^2$"].join("\n");
     const state = EditorState.create({
       doc: source,
       selection: { anchor: 0 },

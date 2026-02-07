@@ -176,7 +176,9 @@ describe("CommandPalette", () => {
         }),
       );
     });
-    expect(document.querySelector('[data-testid="command-palette"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="command-palette"]'),
+    ).not.toBeNull();
 
     act(() => {
       window.dispatchEvent(
@@ -221,7 +223,9 @@ describe("CommandPalette", () => {
     });
 
     expect(onCreateWorkspace).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('[data-testid="command-palette"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="command-palette"]'),
+    ).toBeNull();
 
     act(() => {
       root.unmount();
@@ -316,7 +320,9 @@ describe("CommandPalette", () => {
     });
 
     expect(onOpenChange).toHaveBeenCalledWith(true);
-    expect(document.querySelector('[data-testid="command-palette"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="command-palette"]'),
+    ).toBeNull();
 
     act(() => {
       root.unmount();

@@ -3,9 +3,7 @@ import { expect, test } from "@playwright/test";
 interface ScriptumTestApi {
   reset(): void;
   setDocContent(markdown: string): void;
-  setSyncState(
-    state: "synced" | "offline" | "reconnecting" | "error",
-  ): void;
+  setSyncState(state: "synced" | "offline" | "reconnecting" | "error"): void;
   setShareLinksEnabled(enabled: boolean): void;
 }
 
@@ -46,7 +44,10 @@ test.describe("share links e2e @smoke", () => {
     await expect(dialog).toBeVisible();
 
     const targetOptions = (
-      await page.getByTestId("share-link-target").locator("option").allTextContents()
+      await page
+        .getByTestId("share-link-target")
+        .locator("option")
+        .allTextContents()
     ).map((value) => value.trim());
     expect(targetOptions).toEqual(["Workspace", "Document"]);
 
@@ -64,7 +65,9 @@ test.describe("share links e2e @smoke", () => {
     await page.getByTestId("share-link-max-uses").fill("3");
     await page.getByTestId("share-link-generate").click();
 
-    await expect(page.getByTestId("share-link-summary")).toContainText("editor");
+    await expect(page.getByTestId("share-link-summary")).toContainText(
+      "editor",
+    );
     await expect(page.getByTestId("share-link-summary")).toContainText(
       "document",
     );

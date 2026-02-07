@@ -21,7 +21,11 @@ export function TabBar({
   tabs,
 }: TabBarProps) {
   return (
-    <nav aria-label="Open document tabs" className={styles.root} data-testid="tab-bar">
+    <nav
+      aria-label="Open document tabs"
+      className={styles.root}
+      data-testid="tab-bar"
+    >
       {tabs.length === 0 ? (
         <div className={styles.emptyState} data-testid="tab-bar-empty">
           No open documents

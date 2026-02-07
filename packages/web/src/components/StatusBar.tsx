@@ -47,10 +47,7 @@ export function StatusBar({
     : 0;
 
   return (
-    <footer
-      className={styles.root}
-      data-testid="status-bar"
-    >
+    <footer className={styles.root} data-testid="status-bar">
       <span className={styles.syncCluster}>
         <span
           aria-hidden="true"
