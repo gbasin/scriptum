@@ -7,6 +7,7 @@ mod commands;
 mod daemon;
 mod menu;
 mod tray;
+mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,11 +15,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             auth::init_deep_link_bridge(app);
             if let Err(error) = tray::init(&app.handle()) {
                 eprintln!("failed to initialize system tray: {error}");
             }
+            updater::init(&app.handle());
             tauri::async_runtime::spawn(async {
                 if let Err(error) = daemon::run_embedded_daemon().await {
                     eprintln!("embedded daemon exited unexpectedly: {error:#}");
@@ -37,7 +40,11 @@ pub fn run() {
             commands::auth_load_tokens,
             commands::auth_clear_tokens,
             commands::tray_set_sync_status,
-            commands::tray_get_sync_status
+            commands::tray_get_sync_status,
+            commands::updater_policy,
+            commands::updater_check,
+            commands::updater_install,
+            commands::updater_last_check
         ])
         .run(tauri::generate_context!())
         .expect("failed to run scriptum desktop app");

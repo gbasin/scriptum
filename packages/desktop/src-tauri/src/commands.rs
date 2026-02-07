@@ -3,6 +3,7 @@
 use crate::{
     auth::{self, AuthTokens, OAuthCallbackPayload, DESKTOP_OAUTH_REDIRECT_URI},
     tray::{self, TraySyncSnapshot, TraySyncStatus},
+    updater::{self, UpdaterCheckResult, UpdaterInstallResult, UpdaterPolicySnapshot},
 };
 
 #[tauri::command]
@@ -53,6 +54,26 @@ pub fn tray_set_sync_status(
 #[tauri::command]
 pub fn tray_get_sync_status(app: tauri::AppHandle) -> TraySyncSnapshot {
     tray::current_sync_status(&app)
+}
+
+#[tauri::command]
+pub fn updater_policy(app: tauri::AppHandle) -> UpdaterPolicySnapshot {
+    updater::policy_snapshot(&app)
+}
+
+#[tauri::command]
+pub async fn updater_check(app: tauri::AppHandle) -> UpdaterCheckResult {
+    updater::check_for_updates(app, true).await
+}
+
+#[tauri::command]
+pub async fn updater_install(app: tauri::AppHandle) -> UpdaterInstallResult {
+    updater::install_update(app).await
+}
+
+#[tauri::command]
+pub fn updater_last_check(app: tauri::AppHandle) -> Option<UpdaterCheckResult> {
+    updater::last_check(&app)
 }
 
 #[cfg(test)]
