@@ -12,6 +12,7 @@ body,
 
 html {
   font-family: var(--font-sans);
+  font-size: var(--font-size-base, 15px);
   line-height: 1.5;
   text-size-adjust: 100%;
 }

@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
-import type { WorkspaceTheme } from "@scriptum/shared";
+import type { WorkspaceDensity, WorkspaceTheme } from "@scriptum/shared";
 import { describe, expect, it } from "vitest";
 import {
+  applyAppearanceSettings,
   applyResolvedTheme,
   resolveThemePreference,
+  startAppearanceSync,
   startThemeSync,
   type ThemeStore,
 } from "./theme";
@@ -46,8 +48,11 @@ interface FakeMediaQueryList extends MediaQueryList {
 
 function createFakeMediaQueryList(initialMatches: boolean): FakeMediaQueryList {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  let matches = initialMatches;
   const mediaQuery = {
-    matches: initialMatches,
+    get matches() {
+      return matches;
+    },
     media: "(prefers-color-scheme: dark)",
     onchange: null,
     addEventListener: (
@@ -69,9 +74,12 @@ function createFakeMediaQueryList(initialMatches: boolean): FakeMediaQueryList {
       listeners.delete(listener);
     },
     dispatchEvent: () => true,
-    emit: (matches: boolean) => {
-      mediaQuery.matches = matches;
-      const event = { matches, media: mediaQuery.media } as MediaQueryListEvent;
+    emit: (nextMatches: boolean) => {
+      matches = nextMatches;
+      const event = {
+        matches: nextMatches,
+        media: mediaQuery.media,
+      } as MediaQueryListEvent;
       for (const listener of listeners) {
         listener(event);
       }
@@ -81,12 +89,18 @@ function createFakeMediaQueryList(initialMatches: boolean): FakeMediaQueryList {
   return mediaQuery;
 }
 
-function createThemeStore(initialTheme: WorkspaceTheme | undefined) {
+function createThemeStore(
+  initialTheme: WorkspaceTheme | undefined,
+  initialDensity: WorkspaceDensity | undefined = "comfortable",
+  initialFontSize = 15,
+) {
   let state: {
     activeWorkspace: {
       config: {
         appearance: {
           theme?: WorkspaceTheme;
+          density?: WorkspaceDensity;
+          fontSize?: number;
         };
       };
     };
@@ -95,6 +109,8 @@ function createThemeStore(initialTheme: WorkspaceTheme | undefined) {
       config: {
         appearance: {
           theme: initialTheme,
+          density: initialDensity,
+          fontSize: initialFontSize,
         },
       },
     },
@@ -127,6 +143,8 @@ function createThemeStore(initialTheme: WorkspaceTheme | undefined) {
         config: {
           appearance: {
             theme,
+            density: previous.activeWorkspace.config.appearance.density,
+            fontSize: previous.activeWorkspace.config.appearance.fontSize,
           },
         },
       },
@@ -136,7 +154,28 @@ function createThemeStore(initialTheme: WorkspaceTheme | undefined) {
     }
   };
 
-  return { setTheme, store };
+  const setAppearance = (
+    density: WorkspaceDensity | undefined,
+    fontSize: number | undefined,
+  ) => {
+    const previous = state;
+    state = {
+      activeWorkspace: {
+        config: {
+          appearance: {
+            theme: previous.activeWorkspace.config.appearance.theme,
+            density,
+            fontSize,
+          },
+        },
+      },
+    };
+    for (const listener of listeners) {
+      listener(state, previous);
+    }
+  };
+
+  return { setAppearance, setTheme, store };
 }
 
 describe("startThemeSync", () => {
@@ -162,6 +201,40 @@ describe("startThemeSync", () => {
 
     setTheme("dark");
     expect(root.getAttribute("data-theme")).toBe("dark");
+
+    stop();
+  });
+});
+
+describe("applyAppearanceSettings", () => {
+  it("applies density and base font-size css variable", () => {
+    const root = document.createElement("html");
+    applyAppearanceSettings(root, { density: "spacious", fontSizePx: 18 });
+    expect(root.getAttribute("data-density")).toBe("spacious");
+    expect(root.style.getPropertyValue("--font-size-base")).toBe("18px");
+  });
+});
+
+describe("startAppearanceSync", () => {
+  it("applies and updates appearance settings from store", () => {
+    const root = document.createElement("html");
+    const { setAppearance, store } = createThemeStore(
+      "system",
+      "comfortable",
+      15,
+    );
+    const stop = startAppearanceSync(store, { root });
+
+    expect(root.getAttribute("data-density")).toBe("comfortable");
+    expect(root.style.getPropertyValue("--font-size-base")).toBe("15px");
+
+    setAppearance("compact", 13);
+    expect(root.getAttribute("data-density")).toBe("compact");
+    expect(root.style.getPropertyValue("--font-size-base")).toBe("13px");
+
+    setAppearance(undefined, undefined);
+    expect(root.getAttribute("data-density")).toBe("comfortable");
+    expect(root.style.getPropertyValue("--font-size-base")).toBe("15px");
 
     stop();
   });
