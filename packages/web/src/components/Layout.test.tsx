@@ -20,6 +20,16 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }
 
+const DEFAULT_VIEWPORT_WIDTH_PX = 1024;
+
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: width,
+    writable: true,
+  });
+}
+
 function makeWorkspace(): Workspace {
   return {
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -50,6 +60,7 @@ function makeDocument(
 }
 
 beforeEach(() => {
+  setViewportWidth(DEFAULT_VIEWPORT_WIDTH_PX);
   useWorkspaceStore.getState().reset();
   useDocumentsStore.getState().reset();
   useUiStore.getState().reset();
@@ -82,6 +93,7 @@ beforeEach(() => {
 afterEach(() => {
   document.body.innerHTML = "";
   globalThis.IS_REACT_ACT_ENVIRONMENT = undefined;
+  setViewportWidth(DEFAULT_VIEWPORT_WIDTH_PX);
 });
 
 describe("Layout search panel integration", () => {
@@ -338,6 +350,79 @@ describe("Layout outline panel", () => {
       ),
     ).find((button) => button.textContent?.includes("Overview"));
     expect(overviewButton?.getAttribute("data-active")).toBe("true");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+});
+
+describe("Layout responsive panels", () => {
+  it("auto-collapses sidebar and outline panel in compact viewport", () => {
+    setViewportWidth(900);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="app-sidebar"]')).toBeNull();
+    expect(container.querySelector('[data-testid="outline-panel"]')).toBeNull();
+    expect(useUiStore.getState().sidebarOpen).toBe(false);
+    expect(useUiStore.getState().rightPanelOpen).toBe(false);
+    expect(
+      container.querySelector('[data-testid="sidebar-toggle"]')?.textContent,
+    ).toContain("Show Sidebar");
+    expect(
+      container.querySelector('[data-testid="outline-panel-toggle"]')?.textContent,
+    ).toContain("Show Outline");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("allows reopening the sidebar on compact viewport", () => {
+    setViewportWidth(900);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const showSidebarButton = container.querySelector(
+      '[data-testid="sidebar-toggle"]',
+    ) as HTMLButtonElement | null;
+    expect(showSidebarButton?.textContent).toContain("Show Sidebar");
+
+    act(() => {
+      showSidebarButton?.click();
+    });
+
+    expect(container.querySelector('[data-testid="app-sidebar"]')).not.toBeNull();
+    expect(useUiStore.getState().sidebarOpen).toBe(true);
 
     act(() => {
       root.unmount();

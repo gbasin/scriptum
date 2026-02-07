@@ -55,6 +55,8 @@ export function formatRenameBacklinkToast(
   return `Updated ${updatedLinks} links across ${updatedDocuments} documents.`;
 }
 
+const COMPACT_LAYOUT_BREAKPOINT_PX = 1024;
+
 export function Layout() {
   const navigate = useNavigate();
   const activeWorkspaceId = useWorkspaceStore(
@@ -99,6 +101,8 @@ export function Layout() {
     null,
   );
   const editorAreaRef = useRef<HTMLElement | null>(null);
+  const [isCompactLayout, setIsCompactLayout] = useState(false);
+  const wasCompactLayoutRef = useRef<boolean | null>(null);
 
   const workspaceDocuments = useMemo(
     () =>
@@ -230,6 +234,47 @@ export function Layout() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [createUntitledDocument, setSidebarPanel]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const syncViewportMode = () => {
+      setIsCompactLayout(window.innerWidth < COMPACT_LAYOUT_BREAKPOINT_PX);
+    };
+
+    syncViewportMode();
+    window.addEventListener("resize", syncViewportMode);
+    return () => window.removeEventListener("resize", syncViewportMode);
+  }, []);
+
+  useEffect(() => {
+    const wasCompactLayout = wasCompactLayoutRef.current;
+    const enteredCompactLayout =
+      wasCompactLayout === null
+        ? isCompactLayout
+        : !wasCompactLayout && isCompactLayout;
+    wasCompactLayoutRef.current = isCompactLayout;
+
+    if (!enteredCompactLayout) {
+      return;
+    }
+
+    if (sidebarOpen) {
+      toggleSidebar();
+    }
+
+    if (rightPanelOpen) {
+      toggleRightPanel();
+    }
+  }, [
+    isCompactLayout,
+    rightPanelOpen,
+    sidebarOpen,
+    toggleRightPanel,
+    toggleSidebar,
+  ]);
 
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
