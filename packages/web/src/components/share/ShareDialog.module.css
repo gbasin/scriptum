@@ -1,0 +1,19 @@
+.dialog {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  margin-top: var(--space-2);
+  max-width: 26rem;
+  padding: var(--space-3);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.generatedPanel {
+  margin-top: var(--space-2);
+}

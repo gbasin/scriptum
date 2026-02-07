@@ -1,6 +1,6 @@
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState, Transaction } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
+import { EditorView, lineNumbers } from "@codemirror/view";
 import {
   type CommentDecorationRange,
   commentGutterExtension,
@@ -18,7 +18,10 @@ import {
   slashCommandsExtension,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
-import type { Document as ScriptumDocument } from "@scriptum/shared";
+import type {
+  Document as ScriptumDocument,
+  WorkspaceEditorFontFamily,
+} from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
@@ -29,6 +32,7 @@ import {
   TimelineSlider,
 } from "../components/editor/TimelineSlider";
 import { OfflineBanner } from "../components/OfflineBanner";
+import { ShareDialog } from "../components/share/ShareDialog";
 import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
@@ -64,6 +68,17 @@ const FIXTURE_REMOTE_CLIENT_ID_BASE = 10_000;
 const MAX_TIMELINE_SNAPSHOTS = 240;
 const DROP_UPLOAD_SUCCESS_HIDE_DELAY_MS = 2_000;
 const DROP_UPLOAD_FAILURE_HIDE_DELAY_MS = 4_000;
+const DEFAULT_EDITOR_FONT_FAMILY: WorkspaceEditorFontFamily = "mono";
+const DEFAULT_EDITOR_TAB_SIZE = 2;
+const DEFAULT_EDITOR_LINE_NUMBERS = true;
+const MIN_EDITOR_TAB_SIZE = 1;
+const MAX_EDITOR_TAB_SIZE = 8;
+
+interface EditorRuntimeConfig {
+  fontFamily: WorkspaceEditorFontFamily;
+  tabSize: number;
+  lineNumbers: boolean;
+}
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
   fixtureName: "default",
@@ -741,6 +756,50 @@ function resolveGlobalWebRtcProviderFactory():
   };
 }
 
+function resolveEditorFontFamily(
+  value: unknown,
+): WorkspaceEditorFontFamily {
+  return value === "sans" || value === "serif" || value === "mono"
+    ? value
+    : DEFAULT_EDITOR_FONT_FAMILY;
+}
+
+function resolveEditorTabSize(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
+    return DEFAULT_EDITOR_TAB_SIZE;
+  }
+  return Math.max(MIN_EDITOR_TAB_SIZE, Math.min(MAX_EDITOR_TAB_SIZE, value));
+}
+
+function resolveEditorLineNumbers(value: unknown): boolean {
+  return typeof value === "boolean" ? value : DEFAULT_EDITOR_LINE_NUMBERS;
+}
+
+function editorFontFamilyStack(
+  fontFamily: WorkspaceEditorFontFamily,
+): string {
+  if (fontFamily === "sans") {
+    return "var(--font-sans)";
+  }
+  if (fontFamily === "serif") {
+    return 'ui-serif, "Iowan Old Style", "Times New Roman", serif';
+  }
+  return "var(--font-mono)";
+}
+
+function editorTypographyTheme(fontFamily: WorkspaceEditorFontFamily) {
+  const fontStack = editorFontFamilyStack(fontFamily);
+  return EditorView.theme({
+    "&": { fontFamily: fontStack },
+    ".cm-content": { fontFamily: fontStack },
+    ".cm-gutters": { fontFamily: fontStack },
+  });
+}
+
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
@@ -792,6 +851,9 @@ export function DocumentRoute() {
   );
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
+  const editorFontCompartmentRef = useRef(new Compartment());
+  const editorTabSizeCompartmentRef = useRef(new Compartment());
+  const editorLineNumbersCompartmentRef = useRef(new Compartment());
   const isApplyingTimelineSnapshotRef = useRef(false);
   const collaborationProviderRef = useRef<ReturnType<
     typeof createCollaborationProvider
@@ -837,6 +899,18 @@ export function DocumentRoute() {
       workspaces.find((workspace) => workspace.id === workspaceId)?.name ??
       workspaceId
     );
+  }, [workspaceId, workspaces]);
+  const editorRuntimeConfig = useMemo<EditorRuntimeConfig>(() => {
+    const editorConfig = workspaceId
+      ? workspaces.find((workspace) => workspace.id === workspaceId)?.config
+          ?.editor
+      : undefined;
+
+    return {
+      fontFamily: resolveEditorFontFamily(editorConfig?.fontFamily),
+      tabSize: resolveEditorTabSize(editorConfig?.tabSize),
+      lineNumbers: resolveEditorLineNumbers(editorConfig?.lineNumbers),
+    };
   }, [workspaceId, workspaces]);
   const presencePeers = useMemo<PeerPresence[]>(
     () =>
@@ -1042,6 +1116,15 @@ export function DocumentRoute() {
             },
             uploadFile: uploadDroppedFileAsDataUrl,
           }),
+          editorFontCompartmentRef.current.of(
+            editorTypographyTheme(editorRuntimeConfig.fontFamily),
+          ),
+          editorTabSizeCompartmentRef.current.of(
+            EditorState.tabSize.of(editorRuntimeConfig.tabSize),
+          ),
+          editorLineNumbersCompartmentRef.current.of(
+            editorRuntimeConfig.lineNumbers ? lineNumbers() : [],
+          ),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
@@ -1155,6 +1238,31 @@ export function DocumentRoute() {
       ],
     });
   }, [commentRanges]);
+
+  useEffect(() => {
+    const view = editorViewRef.current;
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      effects: [
+        editorFontCompartmentRef.current.reconfigure(
+          editorTypographyTheme(editorRuntimeConfig.fontFamily),
+        ),
+        editorTabSizeCompartmentRef.current.reconfigure(
+          EditorState.tabSize.of(editorRuntimeConfig.tabSize),
+        ),
+        editorLineNumbersCompartmentRef.current.reconfigure(
+          editorRuntimeConfig.lineNumbers ? lineNumbers() : [],
+        ),
+      ],
+    });
+  }, [
+    editorRuntimeConfig.fontFamily,
+    editorRuntimeConfig.lineNumbers,
+    editorRuntimeConfig.tabSize,
+  ]);
 
   useEffect(() => {
     if (!fixtureModeEnabled) {
@@ -1507,119 +1615,21 @@ export function DocumentRoute() {
           </button>
 
           {isShareDialogOpen ? (
-            <section
-              aria-label="Share link dialog"
-              data-testid="share-link-dialog"
-              style={{
-                background: "#ffffff",
-                border: "1px solid #d1d5db",
-                borderRadius: "0.5rem",
-                marginTop: "0.5rem",
-                maxWidth: "26rem",
-                padding: "0.75rem",
-              }}
-            >
-              <label htmlFor="share-link-target">Target</label>
-              <select
-                data-testid="share-link-target"
-                id="share-link-target"
-                onChange={(event) =>
-                  setShareTargetType(
-                    event.target.value === "workspace" ? "workspace" : "document",
-                  )
-                }
-                value={shareTargetType}
-              >
-                <option value="workspace">Workspace</option>
-                <option disabled={!documentId} value="document">
-                  Document
-                </option>
-              </select>
-
-              <label htmlFor="share-link-permission">Permission</label>
-              <select
-                data-testid="share-link-permission"
-                id="share-link-permission"
-                onChange={(event) =>
-                  setSharePermission(
-                    event.target.value === "edit" ? "edit" : "view",
-                  )
-                }
-                value={sharePermission}
-              >
-                <option value="view">Viewer</option>
-                <option value="edit">Editor</option>
-              </select>
-
-              <label htmlFor="share-link-expiration">Expiration</label>
-              <select
-                data-testid="share-link-expiration"
-                id="share-link-expiration"
-                onChange={(event) =>
-                  setShareExpirationOption(
-                    event.target.value === "24h"
-                      ? "24h"
-                      : event.target.value === "7d"
-                        ? "7d"
-                        : "none",
-                  )
-                }
-                value={shareExpirationOption}
-              >
-                <option value="none">Never</option>
-                <option value="24h">24 hours</option>
-                <option value="7d">7 days</option>
-              </select>
-
-              <label htmlFor="share-link-max-uses">Max uses</label>
-              <input
-                data-testid="share-link-max-uses"
-                id="share-link-max-uses"
-                min={1}
-                onChange={(event) => setShareMaxUsesInput(event.target.value)}
-                type="number"
-                value={shareMaxUsesInput}
-              />
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.5rem",
-                  justifyContent: "flex-end",
-                  marginTop: "0.5rem",
-                }}
-              >
-                <button
-                  data-testid="share-link-close"
-                  onClick={closeShareDialog}
-                  type="button"
-                >
-                  Close
-                </button>
-                <button
-                  data-testid="share-link-generate"
-                  onClick={generateShareLink}
-                  type="button"
-                >
-                  Generate link
-                </button>
-              </div>
-
-              {generatedShareUrl ? (
-                <div style={{ marginTop: "0.5rem" }}>
-                  <p data-testid="share-link-summary">
-                    Link grants {sharePermissionLabel(sharePermission)} access
-                    to{" "}
-                    {shareTargetType === "workspace" ? "workspace" : "document"}.
-                  </p>
-                  <input
-                    data-testid="share-link-url"
-                    readOnly
-                    value={generatedShareUrl}
-                  />
-                </div>
-              ) : null}
-            </section>
+            <ShareDialog
+              documentId={documentId}
+              generatedShareUrl={generatedShareUrl}
+              onClose={closeShareDialog}
+              onExpirationOptionChange={setShareExpirationOption}
+              onGenerate={generateShareLink}
+              onMaxUsesInputChange={setShareMaxUsesInput}
+              onPermissionChange={setSharePermission}
+              onTargetTypeChange={setShareTargetType}
+              shareExpirationOption={shareExpirationOption}
+              shareMaxUsesInput={shareMaxUsesInput}
+              sharePermission={sharePermission}
+              shareTargetType={shareTargetType}
+              summaryPermissionLabel={sharePermissionLabel(sharePermission)}
+            />
           ) : null}
         </section>
       ) : null}
