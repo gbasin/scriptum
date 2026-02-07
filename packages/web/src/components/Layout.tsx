@@ -332,6 +332,8 @@ export function Layout() {
   );
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [outlinePanelOpen, setOutlinePanelOpen] = useState(true);
+  const [pendingDeleteDocument, setPendingDeleteDocument] =
+    useState<Document | null>(null);
   const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(
     null,
   );
@@ -467,6 +469,25 @@ export function Layout() {
     };
   }, [renameBacklinkToast]);
 
+  useEffect(() => {
+    if (!pendingDeleteDocument || typeof window === "undefined") {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      setPendingDeleteDocument(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pendingDeleteDocument]);
+
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
     const now = new Date().toISOString();
@@ -595,7 +616,7 @@ export function Layout() {
     }
 
     if (action === "delete") {
-      removeDocument(document.id);
+      setPendingDeleteDocument(document);
       return;
     }
 
@@ -643,6 +664,43 @@ export function Layout() {
 
   const handleBacklinkSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
+  };
+
+  const handleCancelDeleteDocument = () => {
+    setPendingDeleteDocument(null);
+  };
+
+  const handleConfirmDeleteDocument = () => {
+    const documentToDelete = pendingDeleteDocument;
+    if (!documentToDelete) {
+      return;
+    }
+
+    const deletingActiveDocument = activeDocumentId === documentToDelete.id;
+    removeDocument(documentToDelete.id);
+    setPendingDeleteDocument(null);
+
+    if (
+      !deletingActiveDocument ||
+      !activeWorkspaceId ||
+      documentToDelete.workspaceId !== activeWorkspaceId
+    ) {
+      return;
+    }
+
+    const nextDocumentId =
+      workspaceDocuments.find((document) => document.id !== documentToDelete.id)
+        ?.id ?? null;
+
+    setActiveDocumentForWorkspace(activeWorkspaceId, nextDocumentId);
+    if (nextDocumentId) {
+      navigate(
+        `/workspace/${encodeURIComponent(activeWorkspaceId)}/document/${encodeURIComponent(nextDocumentId)}`,
+      );
+      return;
+    }
+
+    navigate(`/workspace/${encodeURIComponent(activeWorkspaceId)}`);
   };
 
   return (
@@ -834,6 +892,69 @@ export function Layout() {
           Show Outline
         </button>
       )}
+      {pendingDeleteDocument ? (
+        <div
+          data-testid="delete-document-overlay"
+          style={{
+            alignItems: "center",
+            background: "rgba(15, 23, 42, 0.4)",
+            display: "flex",
+            inset: 0,
+            justifyContent: "center",
+            position: "fixed",
+            zIndex: 1200,
+          }}
+        >
+          <section
+            aria-label="Delete document confirmation"
+            aria-modal="true"
+            data-testid="delete-document-dialog"
+            role="alertdialog"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #d1d5db",
+              borderRadius: "0.5rem",
+              boxShadow: "0 12px 30px rgba(15, 23, 42, 0.2)",
+              maxWidth: "28rem",
+              padding: "1rem",
+              width: "calc(100% - 2rem)",
+            }}
+          >
+            <h2 style={{ margin: "0 0 0.5rem" }}>Delete document?</h2>
+            <p style={{ margin: "0 0 1rem" }}>
+              Permanently delete <strong>{pendingDeleteDocument.path}</strong>?
+              This cannot be undone.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                data-testid="delete-document-cancel"
+                onClick={handleCancelDeleteDocument}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                data-testid="delete-document-confirm"
+                onClick={handleConfirmDeleteDocument}
+                style={{
+                  background: "#b91c1c",
+                  border: "1px solid #991b1b",
+                  color: "#ffffff",
+                }}
+                type="button"
+              >
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

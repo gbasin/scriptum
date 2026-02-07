@@ -1,0 +1,8 @@
+- alertdialog "Delete document confirmation":
+  - heading "Delete document?" [level=2]
+  - paragraph:
+    - text: Permanently delete
+    - strong: untitled-2.md
+    - text: "? This cannot be undone."
+  - button "Cancel"
+  - button "Delete"
