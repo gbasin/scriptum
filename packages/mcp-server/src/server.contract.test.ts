@@ -66,7 +66,17 @@ describe("mcp tool contract", () => {
     const daemonClient: DaemonClient = {
       request: async (method, params) => {
         calls.push({ method, params: params ?? null });
-        return { ok: true };
+        if (method === "agent.status") {
+          return {
+            active_sessions: [],
+            change_token: "tok-1",
+            echoed_params: params ?? null,
+          };
+        }
+        return {
+          rpc_method: method,
+          echoed_params: params ?? null,
+        };
       },
     };
     const server = createServer({
@@ -83,19 +93,19 @@ describe("mcp tool contract", () => {
     try {
       await client.connect(clientTransport);
 
-      await client.callTool({
+      const statusResult = await client.callTool({
         name: "scriptum_status",
         arguments: { workspace_id: "ws" },
       });
-      await client.callTool({
+      const subscribeResult = await client.callTool({
         name: "scriptum_subscribe",
         arguments: { workspace_id: "ws", last_change_token: "tok-1" },
       });
-      await client.callTool({
+      const readResult = await client.callTool({
         name: "scriptum_read",
         arguments: { workspace_id: "ws", doc_id: "doc", include_content: true },
       });
-      await client.callTool({
+      const editResult = await client.callTool({
         name: "scriptum_edit",
         arguments: {
           workspace_id: "ws",
@@ -104,27 +114,27 @@ describe("mcp tool contract", () => {
           content_md: "hello",
         },
       });
-      await client.callTool({
+      const listResult = await client.callTool({
         name: "scriptum_list",
         arguments: { workspace_id: "ws" },
       });
-      await client.callTool({
+      const treeResult = await client.callTool({
         name: "scriptum_tree",
         arguments: { workspace_id: "ws", doc_id: "doc" },
       });
-      await client.callTool({
+      const conflictsResult = await client.callTool({
         name: "scriptum_conflicts",
         arguments: { workspace_id: "ws" },
       });
-      await client.callTool({
+      const historyResult = await client.callTool({
         name: "scriptum_history",
         arguments: { workspace_id: "ws", doc_id: "doc" },
       });
-      await client.callTool({
+      const agentsResult = await client.callTool({
         name: "scriptum_agents",
         arguments: { workspace_id: "ws" },
       });
-      await client.callTool({
+      const claimResult = await client.callTool({
         name: "scriptum_claim",
         arguments: {
           workspace_id: "ws",
@@ -134,7 +144,7 @@ describe("mcp tool contract", () => {
           mode: "shared",
         },
       });
-      await client.callTool({
+      const bundleResult = await client.callTool({
         name: "scriptum_bundle",
         arguments: {
           workspace_id: "ws",
@@ -157,9 +167,76 @@ describe("mcp tool contract", () => {
         MCP_TO_DAEMON_CONTRACT.scriptum_claim,
         MCP_TO_DAEMON_CONTRACT.scriptum_bundle,
       ]);
+
+      const statusPayload = readToolResultPayload(statusResult);
+      expect(statusPayload.structuredContent).toEqual({
+        active_sessions: [],
+        change_token: "tok-1",
+        echoed_params: {
+          workspace_id: "ws",
+          agent_name: "contract-checker",
+        },
+      });
+
+      const subscribePayload = readToolResultPayload(subscribeResult);
+      expect(subscribePayload.structuredContent).toEqual({
+        changed: false,
+        change_token: "tok-1",
+        status: {
+          active_sessions: [],
+          change_token: "tok-1",
+          echoed_params: {
+            workspace_id: "ws",
+            agent_name: "contract-checker",
+          },
+        },
+      });
+
+      for (const result of [
+        readResult,
+        editResult,
+        listResult,
+        treeResult,
+        conflictsResult,
+        historyResult,
+        agentsResult,
+        claimResult,
+        bundleResult,
+      ]) {
+        const payload = readToolResultPayload(result);
+        expect(payload.textPayload).toEqual(payload.structuredContent);
+        expect(payload.structuredContent).toMatchObject({
+          rpc_method: expect.any(String),
+          echoed_params: expect.anything(),
+        });
+      }
     } finally {
       await client.close();
       await server.close();
     }
   });
 });
+
+function readToolResultPayload(result: unknown): {
+  textPayload: unknown;
+  structuredContent: unknown;
+} {
+  if (!result || typeof result !== "object") {
+    throw new Error("Expected MCP tool result object");
+  }
+
+  const payload = result as {
+    content?: Array<{ type: string; text?: string }>;
+    structuredContent?: unknown;
+  };
+
+  const firstContent = payload.content?.at(0);
+  if (!firstContent || firstContent.type !== "text" || !firstContent.text) {
+    throw new Error("Expected first tool content item to be text");
+  }
+
+  return {
+    textPayload: JSON.parse(firstContent.text) as unknown,
+    structuredContent: payload.structuredContent,
+  };
+}
