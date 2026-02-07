@@ -30,6 +30,19 @@ export {
   updateShareLink,
   updateWorkspace,
 } from "./api/endpoints";
+export type {
+  AckMessage,
+  AwarenessPeer,
+  AwarenessUpdateMessage,
+  ErrorMessage,
+  HelloAckMessage,
+  HelloMessage,
+  SnapshotMessage,
+  SubscribeMessage,
+  WsMessage,
+  WsMessageType,
+  YjsUpdateMessage,
+} from "./protocol/ws";
 export type { Agent } from "./types/agent";
 export type { CommentMessage, CommentThread } from "./types/comment";
 export type { Document } from "./types/document";
