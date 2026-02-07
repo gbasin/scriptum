@@ -1,7 +1,7 @@
 import { Popover } from "@base-ui-components/react/popover";
 import type { CommentMessage, CommentThread } from "@scriptum/shared";
 import clsx from "clsx";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { type CreateCommentInput, createComment } from "../../lib/api-client";
 import controls from "../../styles/Controls.module.css";
 import styles from "./CommentPopover.module.css";
@@ -55,6 +55,17 @@ export function highlightRangesFromThreads(
   }));
 }
 
+function matchesSelection(
+  thread: ThreadWithMessages,
+  selection: InlineCommentSelection,
+): boolean {
+  return (
+    thread.thread.startOffsetUtf16 === selection.startOffsetUtf16 &&
+    thread.thread.endOffsetUtf16 === selection.endOffsetUtf16 &&
+    (thread.thread.sectionId ?? null) === selection.sectionId
+  );
+}
+
 export function CommentPopover({
   workspaceId,
   documentId,
@@ -71,18 +82,22 @@ export function CommentPopover({
   const [pendingBody, setPendingBody] = useState("");
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [threadState, setThreadState] = useState<ThreadWithMessages | null>(
-    activeThread,
+  const [threadOverride, setThreadOverride] = useState<ThreadWithMessages | null>(
+    null,
   );
-
-  useEffect(() => {
-    setThreadState(activeThread);
-  }, [activeThread]);
 
   if (!selection) {
     return null;
   }
 
+  const localThread =
+    threadOverride && matchesSelection(threadOverride, selection)
+      ? threadOverride
+      : null;
+  const threadState =
+    localThread && (!activeThread || localThread.thread.id === activeThread.thread.id)
+      ? localThread
+      : activeThread;
   const isResolved = threadState?.thread.status === "resolved";
 
   const submitComment = async () => {
@@ -108,7 +123,7 @@ export function CommentPopover({
         thread: result.thread,
         messages: [result.message],
       };
-      setThreadState(nextThread);
+      setThreadOverride(nextThread);
       onThreadChange?.(nextThread);
       setPendingBody("");
     } catch {
@@ -163,21 +178,24 @@ export function CommentPopover({
             <ThreadList
               messages={threadState.messages}
               onMessageCreated={(message) => {
-                setThreadState((current) => {
-                  if (!current) {
+                setThreadOverride((current) => {
+                  const base = current ?? threadState;
+                  if (!base) {
                     return current;
                   }
+
                   const next = {
-                    ...current,
-                    messages: [...current.messages, message],
+                    ...base,
+                    messages: [...base.messages, message],
                   };
                   onThreadChange?.(next);
                   return next;
                 });
               }}
               onThreadUpdated={(thread) => {
-                setThreadState((current) => {
-                  const next = { messages: current?.messages ?? [], thread };
+                setThreadOverride((current) => {
+                  const base = current ?? threadState;
+                  const next = { messages: base?.messages ?? [], thread };
                   onThreadChange?.(next);
                   return next;
                 });

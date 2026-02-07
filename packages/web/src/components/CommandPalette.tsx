@@ -280,15 +280,27 @@ export function CommandPalette({
     [items, query],
   );
 
-  useEffect(() => {
-    setActiveIndex(filteredItems.length > 0 ? 0 : -1);
-  }, [isOpen, filteredItems.length]);
+  const highlightedIndex = useMemo(() => {
+    if (!isOpen || filteredItems.length === 0) {
+      return -1;
+    }
+
+    if (activeIndex < 0) {
+      return 0;
+    }
+
+    if (activeIndex >= filteredItems.length) {
+      return filteredItems.length - 1;
+    }
+
+    return activeIndex;
+  }, [activeIndex, filteredItems.length, isOpen]);
 
   const closePalette = useCallback(() => {
     setIsOpen(false);
     setQuery("");
     setActiveIndex(-1);
-  }, []);
+  }, [setIsOpen]);
 
   const runItem = useCallback(
     (item: CommandPaletteItem) => {
@@ -330,23 +342,23 @@ export function CommandPalette({
 
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveIndex((previous) =>
-          nextPaletteIndex(previous, "down", filteredItems.length),
+        setActiveIndex(
+          nextPaletteIndex(highlightedIndex, "down", filteredItems.length),
         );
         return;
       }
 
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveIndex((previous) =>
-          nextPaletteIndex(previous, "up", filteredItems.length),
+        setActiveIndex(
+          nextPaletteIndex(highlightedIndex, "up", filteredItems.length),
         );
         return;
       }
 
-      if (event.key === "Enter" && activeIndex >= 0) {
+      if (event.key === "Enter" && highlightedIndex >= 0) {
         event.preventDefault();
-        const item = filteredItems[activeIndex];
+        const item = filteredItems[highlightedIndex];
         if (item) {
           runItem(item);
         }
@@ -355,7 +367,14 @@ export function CommandPalette({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeIndex, closePalette, filteredItems, isOpen, runItem, setIsOpen]);
+  }, [
+    closePalette,
+    filteredItems,
+    highlightedIndex,
+    isOpen,
+    runItem,
+    setIsOpen,
+  ]);
 
   return (
     <section
@@ -422,10 +441,10 @@ export function CommandPalette({
                     {filteredItems.map((item, index) => (
                       <li key={item.id} >
                         <Menu.Item
-                          aria-selected={index === activeIndex}
+                          aria-selected={index === highlightedIndex}
                           className={clsx(
                             styles.itemButton,
-                            index === activeIndex && styles.itemButtonActive,
+                            index === highlightedIndex && styles.itemButtonActive,
                           )}
                           data-testid={`command-palette-item-${item.id}`}
                           onClick={() => runItem(item)}
