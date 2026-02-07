@@ -8,6 +8,21 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 pub const MENU_ACTION_EVENT: &str = "scriptum://menu-action";
 pub const IMPORT_DIALOG_SELECTED_EVENT: &str = "scriptum://dialog/import-selected";
 pub const EXPORT_DIALOG_SELECTED_EVENT: &str = "scriptum://dialog/export-selected";
+pub const MENU_ID_NEW_DOCUMENT: &str = "menu.new-document";
+pub const MENU_ID_SAVE_DOCUMENT: &str = "menu.save-document";
+pub const MENU_ID_IMPORT_MARKDOWN: &str = "menu.import-markdown";
+pub const MENU_ID_EXPORT_MARKDOWN: &str = "menu.export-markdown";
+pub const MENU_ID_CLOSE_WINDOW: &str = "menu.close-window";
+pub const MENU_ID_QUIT_APP: &str = "menu.quit-app";
+pub const MENU_ID_TOGGLE_FULLSCREEN: &str = "menu.toggle-fullscreen";
+pub const MENU_ID_OPEN_HELP: &str = "menu.open-help";
+pub const MENU_ID_OPEN_ABOUT: &str = "menu.open-about";
+
+pub const MENU_SHORTCUT_NEW_DOCUMENT: &str = "CmdOrCtrl+N";
+pub const MENU_SHORTCUT_SAVE_DOCUMENT: &str = "CmdOrCtrl+S";
+pub const MENU_SHORTCUT_CLOSE_WINDOW: &str = "CmdOrCtrl+W";
+pub const MENU_SHORTCUT_QUIT_APP: &str = "CmdOrCtrl+Q";
+pub const MENU_SHORTCUT_TOGGLE_FULLSCREEN: &str = "F11";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
@@ -25,15 +40,15 @@ pub enum MenuAction {
 impl MenuAction {
     fn id(self) -> &'static str {
         match self {
-            Self::NewDocument => "menu.new-document",
-            Self::SaveDocument => "menu.save-document",
-            Self::ImportMarkdown => "menu.import-markdown",
-            Self::ExportMarkdown => "menu.export-markdown",
-            Self::CloseWindow => "menu.close-window",
-            Self::QuitApp => "menu.quit-app",
-            Self::ToggleFullscreen => "menu.toggle-fullscreen",
-            Self::OpenHelp => "menu.open-help",
-            Self::OpenAbout => "menu.open-about",
+            Self::NewDocument => MENU_ID_NEW_DOCUMENT,
+            Self::SaveDocument => MENU_ID_SAVE_DOCUMENT,
+            Self::ImportMarkdown => MENU_ID_IMPORT_MARKDOWN,
+            Self::ExportMarkdown => MENU_ID_EXPORT_MARKDOWN,
+            Self::CloseWindow => MENU_ID_CLOSE_WINDOW,
+            Self::QuitApp => MENU_ID_QUIT_APP,
+            Self::ToggleFullscreen => MENU_ID_TOGGLE_FULLSCREEN,
+            Self::OpenHelp => MENU_ID_OPEN_HELP,
+            Self::OpenAbout => MENU_ID_OPEN_ABOUT,
         }
     }
 
@@ -53,15 +68,15 @@ impl MenuAction {
 
     fn from_menu_id(menu_id: &str) -> Option<Self> {
         match menu_id {
-            "menu.new-document" => Some(Self::NewDocument),
-            "menu.save-document" => Some(Self::SaveDocument),
-            "menu.import-markdown" => Some(Self::ImportMarkdown),
-            "menu.export-markdown" => Some(Self::ExportMarkdown),
-            "menu.close-window" => Some(Self::CloseWindow),
-            "menu.quit-app" => Some(Self::QuitApp),
-            "menu.toggle-fullscreen" => Some(Self::ToggleFullscreen),
-            "menu.open-help" => Some(Self::OpenHelp),
-            "menu.open-about" => Some(Self::OpenAbout),
+            MENU_ID_NEW_DOCUMENT => Some(Self::NewDocument),
+            MENU_ID_SAVE_DOCUMENT => Some(Self::SaveDocument),
+            MENU_ID_IMPORT_MARKDOWN => Some(Self::ImportMarkdown),
+            MENU_ID_EXPORT_MARKDOWN => Some(Self::ExportMarkdown),
+            MENU_ID_CLOSE_WINDOW => Some(Self::CloseWindow),
+            MENU_ID_QUIT_APP => Some(Self::QuitApp),
+            MENU_ID_TOGGLE_FULLSCREEN => Some(Self::ToggleFullscreen),
+            MENU_ID_OPEN_HELP => Some(Self::OpenHelp),
+            MENU_ID_OPEN_ABOUT => Some(Self::OpenAbout),
             _ => None,
         }
     }
@@ -81,10 +96,10 @@ struct FileDialogSelectionPayload {
 
 pub fn build_menu<R: Runtime, M: Manager<R>>(manager: &M) -> tauri::Result<Menu<R>> {
     let new_document = MenuItemBuilder::with_id(MenuAction::NewDocument.id(), "New")
-        .accelerator("CmdOrCtrl+N")
+        .accelerator(MENU_SHORTCUT_NEW_DOCUMENT)
         .build(manager)?;
     let save_document = MenuItemBuilder::with_id(MenuAction::SaveDocument.id(), "Save")
-        .accelerator("CmdOrCtrl+S")
+        .accelerator(MENU_SHORTCUT_SAVE_DOCUMENT)
         .build(manager)?;
     let import_markdown =
         MenuItemBuilder::with_id(MenuAction::ImportMarkdown.id(), "Import Markdown...")
@@ -93,10 +108,10 @@ pub fn build_menu<R: Runtime, M: Manager<R>>(manager: &M) -> tauri::Result<Menu<
         MenuItemBuilder::with_id(MenuAction::ExportMarkdown.id(), "Export Markdown...")
             .build(manager)?;
     let close_window = MenuItemBuilder::with_id(MenuAction::CloseWindow.id(), "Close Window")
-        .accelerator("CmdOrCtrl+W")
+        .accelerator(MENU_SHORTCUT_CLOSE_WINDOW)
         .build(manager)?;
     let quit_app = MenuItemBuilder::with_id(MenuAction::QuitApp.id(), "Quit Scriptum")
-        .accelerator("CmdOrCtrl+Q")
+        .accelerator(MENU_SHORTCUT_QUIT_APP)
         .build(manager)?;
 
     let cut = PredefinedMenuItem::cut(manager, None)?;
@@ -105,7 +120,7 @@ pub fn build_menu<R: Runtime, M: Manager<R>>(manager: &M) -> tauri::Result<Menu<
     let select_all = PredefinedMenuItem::select_all(manager, None)?;
     let toggle_fullscreen =
         MenuItemBuilder::with_id(MenuAction::ToggleFullscreen.id(), "Toggle Full Screen")
-            .accelerator("F11")
+            .accelerator(MENU_SHORTCUT_TOGGLE_FULLSCREEN)
             .build(manager)?;
     let open_help =
         MenuItemBuilder::with_id(MenuAction::OpenHelp.id(), "Scriptum Help").build(manager)?;
@@ -222,9 +237,18 @@ mod tests {
         assert_eq!(MenuAction::from_menu_id("menu.save-document"), Some(MenuAction::SaveDocument));
         assert_eq!(MenuAction::from_menu_id("menu.close-window"), Some(MenuAction::CloseWindow));
         assert_eq!(
+            MenuAction::from_menu_id("menu.toggle-fullscreen"),
+            Some(MenuAction::ToggleFullscreen)
+        );
+        assert_eq!(
             MenuAction::from_menu_id("menu.export-markdown"),
             Some(MenuAction::ExportMarkdown)
         );
+        assert_eq!(
+            MenuAction::from_menu_id("menu.import-markdown"),
+            Some(MenuAction::ImportMarkdown)
+        );
+        assert_eq!(MenuAction::from_menu_id("menu.quit-app"), Some(MenuAction::QuitApp));
     }
 
     #[test]
@@ -238,5 +262,7 @@ mod tests {
         assert_eq!(MenuAction::NewDocument.id(), "menu.new-document");
         assert_eq!(MenuAction::SaveDocument.id(), "menu.save-document");
         assert_eq!(MenuAction::CloseWindow.id(), "menu.close-window");
+        assert_eq!(MenuAction::ToggleFullscreen.id(), "menu.toggle-fullscreen");
+        assert_eq!(MenuAction::QuitApp.id(), "menu.quit-app");
     }
 }
