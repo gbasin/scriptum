@@ -12,9 +12,7 @@ async fn pg_pool_connects_and_passes_health_check() {
         return;
     };
 
-    let mut config = PoolConfig::default();
-    config.min_connections = 1;
-    config.max_connections = 2;
+    let config = PoolConfig { min_connections: 1, max_connections: 2, ..PoolConfig::default() };
 
     let pool =
         create_pg_pool(&database_url, config).await.expect("pool should connect to test database");

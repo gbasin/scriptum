@@ -27,6 +27,7 @@ impl Default for PoolConfig {
 }
 
 impl PoolConfig {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn from_env() -> Self {
         let min_connections = env::var("SCRIPTUM_RELAY_DB_MIN_CONNECTIONS")
             .ok()
@@ -75,6 +76,16 @@ fn ensure_postgres_tls(options: &PgConnectOptions) -> Result<()> {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
+pub async fn check_pool_health(pool: &PgPool) -> Result<()> {
+    sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(pool)
+        .await
+        .context("relay PostgreSQL health check failed")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ensure_postgres_tls, PgConnectOptions};
@@ -93,13 +104,4 @@ mod tests {
         let error = ensure_postgres_tls(&options).expect_err("sslmode=prefer should be rejected");
         assert!(error.to_string().contains("must require TLS"));
     }
-}
-
-pub async fn check_pool_health(pool: &PgPool) -> Result<()> {
-    sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(pool)
-        .await
-        .context("relay PostgreSQL health check failed")?;
-
-    Ok(())
 }

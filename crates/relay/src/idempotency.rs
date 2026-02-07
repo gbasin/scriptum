@@ -90,6 +90,11 @@ impl IdempotencyStore {
     pub async fn len(&self) -> usize {
         self.entries.read().await.len()
     }
+
+    /// Whether there are no cached idempotency entries.
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
 }
 
 /// Axum middleware function for idempotency key enforcement.

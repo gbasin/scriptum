@@ -1,3 +1,14 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::trim_split_whitespace)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::unnecessary_get_then_check)]
+
 mod api;
 mod audit;
 mod auth;

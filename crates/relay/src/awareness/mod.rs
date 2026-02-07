@@ -91,7 +91,7 @@ impl AwarenessStore {
                 continue;
             }
             let peers: Vec<PeerState> =
-                sessions.values().flatten().filter_map(|v| PeerState::from_json(v)).collect();
+                sessions.values().flatten().filter_map(PeerState::from_json).collect();
             if !peers.is_empty() {
                 results.push(DocPresence { doc_id: *doc_id, peers });
             }

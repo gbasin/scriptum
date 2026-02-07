@@ -18,7 +18,7 @@ use argon2::{
     Argon2, PasswordVerifier,
 };
 use axum::{
-    extract::{Extension, FromRequestParts, Json, Path, Query, Request, State},
+    extract::{Extension, FromRequestParts, Json, Path, Request, State},
     http::{header::IF_MATCH, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
