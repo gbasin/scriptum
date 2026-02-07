@@ -32,6 +32,8 @@ export interface SectionContributor {
 export interface SectionAttribution {
   /** 1-based line number of the section heading. */
   readonly headingLine: number;
+  /** Stable editor identifier. */
+  readonly authorId: string;
   /** Name of the last editor. */
   readonly lastEditedBy: string;
   /** Type of the last editor. */
@@ -39,7 +41,7 @@ export interface SectionAttribution {
   /** CSS color for the last editor badge. */
   readonly color: string;
   /** ISO timestamp of the last edit. */
-  readonly lastEditedAt?: string;
+  readonly lastEditedAt: string;
   /** Per-editor contribution breakdown. */
   readonly contributors: readonly SectionContributor[];
 }
@@ -54,9 +56,10 @@ export const setAttributions =
 export class AttributionBadgeWidget extends WidgetType {
   constructor(
     readonly name: string,
+    readonly authorId: string,
     readonly editorType: EditorType,
     readonly color: string,
-    readonly lastEditedAt: string | undefined,
+    readonly lastEditedAt: string,
     readonly contributors: readonly SectionContributor[],
   ) {
     super();
@@ -65,6 +68,7 @@ export class AttributionBadgeWidget extends WidgetType {
   eq(other: AttributionBadgeWidget): boolean {
     return (
       this.name === other.name &&
+      this.authorId === other.authorId &&
       this.editorType === other.editorType &&
       this.color === other.color &&
       this.lastEditedAt === other.lastEditedAt &&
@@ -83,14 +87,20 @@ export class AttributionBadgeWidget extends WidgetType {
     badge.className = "cm-attribution-badge";
     if (this.editorType === "agent") {
       badge.classList.add("cm-attribution-agent");
+    } else {
+      badge.classList.add("cm-attribution-human");
     }
     badge.style.borderColor = this.color;
 
-    const icon = this.editorType === "agent" ? "\u2699 " : "";
-    badge.textContent = `${icon}${this.name}`;
+    const relativeEditedAt = formatRelativeTimestamp(this.lastEditedAt);
+    badge.textContent = buildAttributionBadgeText(
+      this.name,
+      this.editorType,
+      this.lastEditedAt,
+    );
     badge.setAttribute(
       "aria-label",
-      `Last edited by ${this.name} (${this.editorType})`,
+      `Last edited by ${this.name} (${this.editorType}) ${relativeEditedAt}`,
     );
 
     badge.title = this.buildTooltip();
@@ -105,9 +115,10 @@ export class AttributionBadgeWidget extends WidgetType {
   private buildTooltip(): string {
     const lines: string[] = [];
     lines.push(`Last edited by ${this.name} (${this.editorType})`);
-    if (this.lastEditedAt) {
-      lines.push(`at ${this.lastEditedAt}`);
-    }
+    lines.push(`Author ID: ${this.authorId}`);
+    lines.push(
+      `${formatRelativeTimestamp(this.lastEditedAt)} (${this.lastEditedAt})`,
+    );
 
     if (this.contributors.length > 0) {
       lines.push("");
@@ -130,6 +141,58 @@ export class AttributionBadgeWidget extends WidgetType {
 
     return lines.join("\n");
   }
+}
+
+export function formatRelativeTimestamp(
+  isoTimestamp: string,
+  nowMs = Date.now(),
+): string {
+  const parsedMs = Date.parse(isoTimestamp);
+  if (Number.isNaN(parsedMs)) {
+    return isoTimestamp;
+  }
+
+  const deltaMs = nowMs - parsedMs;
+  const isFuture = deltaMs < 0;
+  const absMs = Math.abs(deltaMs);
+
+  if (absMs < 60_000) {
+    return isFuture ? "in <1m" : "just now";
+  }
+
+  const minutes = Math.floor(absMs / 60_000);
+  if (minutes < 60) {
+    return isFuture ? `in ${minutes}m` : `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(absMs / 3_600_000);
+  if (hours < 24) {
+    return isFuture ? `in ${hours}h` : `${hours}h ago`;
+  }
+
+  const days = Math.floor(absMs / 86_400_000);
+  if (days < 30) {
+    return isFuture ? `in ${days}d` : `${days}d ago`;
+  }
+
+  const months = Math.floor(days / 30);
+  if (months < 12) {
+    return isFuture ? `in ${months}mo` : `${months}mo ago`;
+  }
+
+  const years = Math.floor(days / 365);
+  return isFuture ? `in ${years}y` : `${years}y ago`;
+}
+
+export function buildAttributionBadgeText(
+  name: string,
+  editorType: EditorType,
+  isoTimestamp: string,
+  nowMs = Date.now(),
+): string {
+  const icon = editorType === "agent" ? "\u2699" : "\u{1F464}";
+  const relativeEditedAt = formatRelativeTimestamp(isoTimestamp, nowMs);
+  return `${icon} ${name} · ${relativeEditedAt}`;
 }
 
 // ── State field ──────────────────────────────────────────────────────
@@ -200,6 +263,7 @@ function buildDecorations(
       decoration: Decoration.widget({
         widget: new AttributionBadgeWidget(
           attr.lastEditedBy,
+          attr.authorId,
           attr.lastEditorType,
           attr.color,
           attr.lastEditedAt,
@@ -241,5 +305,9 @@ const attributionTheme = EditorView.baseTheme({
     backgroundColor: "#eef0ff",
     color: "#3b4c9b",
     fontStyle: "italic",
+  },
+  ".cm-attribution-human": {
+    backgroundColor: "#f5f5f5",
+    color: "#555",
   },
 });

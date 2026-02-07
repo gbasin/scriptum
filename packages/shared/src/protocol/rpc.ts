@@ -63,6 +63,15 @@ export interface RpcSection {
   end_line: number;
 }
 
+export type RpcAuthorType = "human" | "agent";
+
+export interface RpcSectionAttribution {
+  section_id: string;
+  author_id: string;
+  author_type: RpcAuthorType;
+  timestamp: string;
+}
+
 export interface RpcCommentThread {
   id: string;
   workspace_id: string;
@@ -132,6 +141,7 @@ export interface DocReadResult {
   document: RpcDocument;
   content_md?: string;
   sections: RpcSection[];
+  attributions?: RpcSectionAttribution[];
 }
 
 export interface DocEditParams {
@@ -156,6 +166,7 @@ export interface DocSectionsParams {
 
 export interface DocSectionsResult {
   sections: RpcSection[];
+  attributions?: RpcSectionAttribution[];
 }
 
 export interface DocTreeParams {
