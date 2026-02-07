@@ -4,7 +4,7 @@ import type { Document, Workspace } from "@scriptum/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
 import { Layout } from "./Layout";
@@ -122,6 +122,152 @@ describe("Layout search panel integration", () => {
 
     expect(container.querySelector("[data-testid=\"search-panel\"]")).toBeNull();
     expect(container.querySelector("[data-testid=\"document-tree\"]")).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+});
+
+function OutlineFixture() {
+  return (
+    <article data-testid="outline-fixture">
+      <h1>Document Summary</h1>
+      <h2>Overview</h2>
+      <h2>Implementation</h2>
+    </article>
+  );
+}
+
+describe("Layout outline panel", () => {
+  it("renders heading outline, toggles panel visibility, and scrolls on click", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<OutlineFixture />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const outlinePanel = container.querySelector("[data-testid=\"outline-panel\"]");
+    expect(outlinePanel).not.toBeNull();
+    expect(outlinePanel?.textContent).toContain("Document Summary");
+    expect(outlinePanel?.textContent).toContain("Overview");
+    expect(outlinePanel?.textContent).toContain("Implementation");
+
+    const targetHeading = Array.from(container.querySelectorAll("h2")).find(
+      (heading) => heading.textContent === "Implementation",
+    ) as HTMLHeadingElement | undefined;
+    expect(targetHeading).toBeDefined();
+    const scrollIntoViewSpy = vi.fn();
+    if (targetHeading) {
+      targetHeading.scrollIntoView = scrollIntoViewSpy;
+    }
+
+    const implementationButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid^=\"outline-heading-\"]"),
+    ).find((button) => button.textContent?.includes("Implementation"));
+    expect(implementationButton).toBeDefined();
+    act(() => {
+      implementationButton?.click();
+    });
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1);
+
+    const toggleButton = container.querySelector(
+      "[data-testid=\"outline-panel-toggle\"]",
+    ) as HTMLButtonElement | null;
+    act(() => {
+      toggleButton?.click();
+    });
+
+    expect(container.querySelector("[data-testid=\"outline-panel\"]")).toBeNull();
+    const reopenButton = container.querySelector(
+      "[data-testid=\"outline-panel-toggle\"]",
+    ) as HTMLButtonElement | null;
+    expect(reopenButton?.textContent).toContain("Show Outline");
+
+    act(() => {
+      reopenButton?.click();
+    });
+    expect(container.querySelector("[data-testid=\"outline-panel\"]")).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("highlights the current section based on scroll position", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<OutlineFixture />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const fixture = container.querySelector(
+      "[data-testid=\"outline-fixture\"]",
+    ) as HTMLElement | null;
+    const headings = Array.from(
+      fixture?.querySelectorAll<HTMLHeadingElement>("h1, h2") ?? [],
+    );
+    expect(headings.length).toBeGreaterThanOrEqual(3);
+    const [summaryHeading, overviewHeading, implementationHeading] = headings;
+
+    summaryHeading.getBoundingClientRect = () =>
+      ({
+        bottom: -120,
+        height: 20,
+        left: 0,
+        right: 200,
+        top: -140,
+        width: 200,
+      }) as DOMRect;
+    overviewHeading.getBoundingClientRect = () =>
+      ({
+        bottom: 70,
+        height: 20,
+        left: 0,
+        right: 200,
+        top: 50,
+        width: 200,
+      }) as DOMRect;
+    implementationHeading.getBoundingClientRect = () =>
+      ({
+        bottom: 290,
+        height: 20,
+        left: 0,
+        right: 200,
+        top: 270,
+        width: 200,
+      }) as DOMRect;
+
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+    });
+
+    const overviewButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid^=\"outline-heading-\"]"),
+    ).find((button) => button.textContent?.includes("Overview"));
+    expect(overviewButton?.getAttribute("data-active")).toBe("true");
 
     act(() => {
       root.unmount();
