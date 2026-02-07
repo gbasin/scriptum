@@ -1,6 +1,7 @@
 import type { Document } from "@scriptum/shared";
 import {
   type ChangeEvent,
+  type DragEvent as ReactDragEvent,
   type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
@@ -109,6 +110,92 @@ function sortTreeNodes(nodes: TreeNode[]): void {
   }
 }
 
+function parentPath(path: string): string {
+  const lastSlash = path.lastIndexOf("/");
+  if (lastSlash < 0) {
+    return "";
+  }
+  return path.slice(0, lastSlash);
+}
+
+function baseName(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
+function applyPreferredOrder(
+  nodes: TreeNode[],
+  preferredOrderByParent: Record<string, string[]>,
+  parent = "",
+): TreeNode[] {
+  const preferredOrder = preferredOrderByParent[parent];
+  const preferredIndex = new Map<string, number>();
+  if (preferredOrder) {
+    preferredOrder.forEach((path, index) => preferredIndex.set(path, index));
+  }
+
+  const ordered = nodes
+    .map((node) => ({
+      ...node,
+      children: applyPreferredOrder(
+        node.children,
+        preferredOrderByParent,
+        node.fullPath,
+      ),
+    }))
+    .sort((left, right) => {
+      const leftIndex = preferredIndex.get(left.fullPath);
+      const rightIndex = preferredIndex.get(right.fullPath);
+      if (leftIndex !== undefined && rightIndex !== undefined) {
+        return leftIndex - rightIndex;
+      }
+      if (leftIndex !== undefined) {
+        return -1;
+      }
+      if (rightIndex !== undefined) {
+        return 1;
+      }
+      return 0;
+    });
+
+  return ordered;
+}
+
+function findNodeByPath(nodes: TreeNode[], path: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.fullPath === path) {
+      return node;
+    }
+    const inChildren = findNodeByPath(node.children, path);
+    if (inChildren) {
+      return inChildren;
+    }
+  }
+  return null;
+}
+
+function findSiblingPaths(
+  nodes: TreeNode[],
+  parent: string,
+): string[] | null {
+  if (parent.length === 0) {
+    return nodes.map((node) => node.fullPath);
+  }
+
+  for (const node of nodes) {
+    if (node.fullPath === parent) {
+      return node.children.map((child) => child.fullPath);
+    }
+
+    const fromChildren = findSiblingPaths(node.children, parent);
+    if (fromChildren) {
+      return fromChildren;
+    }
+  }
+
+  return null;
+}
+
 // -- Icon helpers --------------------------------------------------------------
 
 export function fileIcon(name: string): string {
@@ -191,12 +278,19 @@ function ContextMenu({
 function TreeNodeItem({
   activeDocumentId,
   depth,
+  draggingDocumentPath,
+  dropTargetPath,
   editingDocumentId,
   editingPath,
   expanded,
   node,
   onContextMenu,
+  onDragEndDocument,
+  onDragEnterTarget,
+  onDragStartDocument,
   onDocumentSelect,
+  onDropOnFile,
+  onDropOnFolder,
   onRenameCancel,
   onRenameChange,
   onRenameCommit,
@@ -204,12 +298,19 @@ function TreeNodeItem({
 }: {
   activeDocumentId: string | null;
   depth: number;
+  draggingDocumentPath: string | null;
+  dropTargetPath: string | null;
   editingDocumentId: string | null;
   editingPath: string;
   expanded: Set<string>;
   node: TreeNode;
   onContextMenu: (event: MouseEvent, doc: Document) => void;
+  onDragEndDocument: () => void;
+  onDragEnterTarget: (path: string) => void;
+  onDragStartDocument: (node: TreeNode) => void;
   onDocumentSelect?: (documentId: string) => void;
+  onDropOnFile: (node: TreeNode) => void;
+  onDropOnFolder: (node: TreeNode) => void;
   onRenameCancel: () => void;
   onRenameChange: (value: string) => void;
   onRenameCommit: (documentId: string) => void;
@@ -219,6 +320,7 @@ function TreeNodeItem({
   const isExpanded = expanded.has(node.fullPath);
   const isActive = node.document?.id === activeDocumentId;
   const isEditing = node.document?.id === editingDocumentId;
+  const isDropTarget = dropTargetPath === node.fullPath;
 
   const handleClick = () => {
     if (isFolder) {
@@ -252,6 +354,41 @@ function TreeNodeItem({
     if (event.key === "Escape") {
       event.preventDefault();
       onRenameCancel();
+    }
+  };
+
+  const handleDragStart = (event: ReactDragEvent<HTMLButtonElement>) => {
+    if (!node.document) {
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", node.fullPath);
+    onDragStartDocument(node);
+  };
+
+  const handleDragOver = (event: ReactDragEvent<HTMLButtonElement>) => {
+    if (!draggingDocumentPath || draggingDocumentPath === node.fullPath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    onDragEnterTarget(node.fullPath);
+  };
+
+  const handleDrop = (event: ReactDragEvent<HTMLButtonElement>) => {
+    if (!draggingDocumentPath || draggingDocumentPath === node.fullPath) {
+      return;
+    }
+
+    event.preventDefault();
+    if (isFolder) {
+      onDropOnFolder(node);
+      return;
+    }
+    if (node.document) {
+      onDropOnFile(node);
     }
   };
 
@@ -292,15 +429,25 @@ function TreeNodeItem({
       <li
         aria-expanded={isFolder ? isExpanded : undefined}
         data-active={isActive || undefined}
+        data-drop-target={isDropTarget || undefined}
         data-testid={`tree-node-${node.fullPath}`}
         role="treeitem"
       >
         <button
           aria-label={node.name}
+          draggable={Boolean(node.document)}
           onClick={handleClick}
           onContextMenu={handleContextMenu}
+          onDragEnd={onDragEndDocument}
+          onDragOver={handleDragOver}
+          onDragStart={handleDragStart}
+          onDrop={handleDrop}
           style={{
-            background: isActive ? "#e0f2fe" : "none",
+            background: isDropTarget
+              ? "#dbeafe"
+              : isActive
+                ? "#e0f2fe"
+                : "none",
             border: "none",
             cursor: "pointer",
             display: "block",
@@ -331,13 +478,20 @@ function TreeNodeItem({
               <TreeNodeItem
                 activeDocumentId={activeDocumentId}
                 depth={depth + 1}
+                draggingDocumentPath={draggingDocumentPath}
+                dropTargetPath={dropTargetPath}
                 editingDocumentId={editingDocumentId}
                 editingPath={editingPath}
                 expanded={expanded}
                 key={child.fullPath}
                 node={child}
                 onContextMenu={onContextMenu}
+                onDragEndDocument={onDragEndDocument}
+                onDragEnterTarget={onDragEnterTarget}
+                onDragStartDocument={onDragStartDocument}
                 onDocumentSelect={onDocumentSelect}
+                onDropOnFile={onDropOnFile}
+                onDropOnFolder={onDropOnFolder}
                 onRenameCancel={onRenameCancel}
                 onRenameChange={onRenameChange}
                 onRenameCommit={onRenameCommit}
@@ -362,6 +516,9 @@ export function DocumentTree({
   pendingRenameDocumentId = null,
 }: DocumentTreeProps) {
   const tree = useMemo(() => buildTree(documents), [documents]);
+  const [preferredOrderByParent, setPreferredOrderByParent] = useState<
+    Record<string, string[]>
+  >({});
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     return new Set(
       tree
@@ -370,11 +527,19 @@ export function DocumentTree({
     );
   });
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [draggingDocumentPath, setDraggingDocumentPath] = useState<
+    string | null
+  >(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [editingDocumentId, setEditingDocumentId] = useState<string | null>(
     null,
   );
   const [editingPath, setEditingPath] = useState("");
   const consumedPendingRenameIdRef = useRef<string | null>(null);
+  const orderedTree = useMemo(
+    () => applyPreferredOrder(tree, preferredOrderByParent),
+    [preferredOrderByParent, tree],
+  );
 
   useEffect(() => {
     if (!pendingRenameDocumentId) {
@@ -454,6 +619,91 @@ export function DocumentTree({
     [beginRenameDocument, onContextMenuAction],
   );
 
+  const clearDragState = useCallback(() => {
+    setDraggingDocumentPath(null);
+    setDropTargetPath(null);
+  }, []);
+
+  const handleDropOnFile = useCallback(
+    (targetNode: TreeNode) => {
+      if (!draggingDocumentPath) {
+        clearDragState();
+        return;
+      }
+
+      const sourceParent = parentPath(draggingDocumentPath);
+      const targetParent = parentPath(targetNode.fullPath);
+      if (sourceParent !== targetParent) {
+        clearDragState();
+        return;
+      }
+
+      const siblingPaths = findSiblingPaths(orderedTree, sourceParent);
+      if (!siblingPaths) {
+        clearDragState();
+        return;
+      }
+
+      const withoutSource = siblingPaths.filter(
+        (path) => path !== draggingDocumentPath,
+      );
+      const targetIndex = withoutSource.indexOf(targetNode.fullPath);
+      if (targetIndex < 0) {
+        clearDragState();
+        return;
+      }
+
+      withoutSource.splice(targetIndex, 0, draggingDocumentPath);
+      setPreferredOrderByParent((previous) => ({
+        ...previous,
+        [sourceParent]: withoutSource,
+      }));
+      clearDragState();
+    },
+    [clearDragState, draggingDocumentPath, orderedTree],
+  );
+
+  const handleDropOnFolder = useCallback(
+    (folderNode: TreeNode) => {
+      if (!draggingDocumentPath) {
+        clearDragState();
+        return;
+      }
+
+      const sourceNode = findNodeByPath(orderedTree, draggingDocumentPath);
+      if (!sourceNode?.document) {
+        clearDragState();
+        return;
+      }
+
+      const nextPath = `${folderNode.fullPath}/${baseName(sourceNode.document.path)}`;
+      if (nextPath !== sourceNode.document.path) {
+        onRenameDocument?.(sourceNode.document.id, nextPath);
+      }
+
+      setExpanded((previous) => {
+        const next = new Set(previous);
+        next.add(folderNode.fullPath);
+        return next;
+      });
+      setPreferredOrderByParent((previous) => {
+        const sourceParent = parentPath(draggingDocumentPath);
+        if (!previous[sourceParent]) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          [sourceParent]: previous[sourceParent].filter(
+            (path) => path !== draggingDocumentPath,
+          ),
+        };
+      });
+      clearDragState();
+    },
+    [clearDragState, draggingDocumentPath, onRenameDocument, orderedTree],
+  );
+
   if (documents.length === 0) {
     return (
       <div data-testid="document-tree-empty">
@@ -471,17 +721,26 @@ export function DocumentTree({
         role="tree"
         style={{ listStyle: "none", margin: 0, padding: 0 }}
       >
-        {tree.map((node) => (
+        {orderedTree.map((node) => (
           <TreeNodeItem
             activeDocumentId={activeDocumentId}
             depth={0}
+            draggingDocumentPath={draggingDocumentPath}
+            dropTargetPath={dropTargetPath}
             editingDocumentId={editingDocumentId}
             editingPath={editingPath}
             expanded={expanded}
             key={node.fullPath}
             node={node}
             onContextMenu={handleContextMenu}
+            onDragEndDocument={clearDragState}
+            onDragEnterTarget={setDropTargetPath}
+            onDragStartDocument={(dragNode) =>
+              setDraggingDocumentPath(dragNode.fullPath)
+            }
             onDocumentSelect={onDocumentSelect}
+            onDropOnFile={handleDropOnFile}
+            onDropOnFolder={handleDropOnFolder}
             onRenameCancel={cancelRenameDocument}
             onRenameChange={setEditingPath}
             onRenameCommit={commitRenameDocument}
