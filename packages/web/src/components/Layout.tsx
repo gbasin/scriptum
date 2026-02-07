@@ -4,9 +4,13 @@ import { Outlet } from "react-router-dom";
 import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore } from "../store/presence";
 import { useWorkspaceStore } from "../store/workspace";
-import { CommandPalette } from "./CommandPalette";
 import { AgentsSection } from "./sidebar/AgentsSection";
 import { DocumentTree } from "./sidebar/DocumentTree";
+import {
+  buildSearchPanelResults,
+  isSearchPanelShortcut,
+  SearchPanel,
+} from "./sidebar/SearchPanel";
 import {
   collectWorkspaceTags,
   filterDocumentsByTag,
@@ -28,9 +32,9 @@ export function Layout() {
   const setActiveDocumentForWorkspace = useDocumentsStore(
     (state) => state.setActiveDocumentForWorkspace,
   );
-  const openDocumentIds = useDocumentsStore((state) => state.openDocumentIds);
   const remotePeers = usePresenceStore((state) => state.remotePeers);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
 
   const workspaceDocuments = useMemo(
     () =>
@@ -47,6 +51,10 @@ export function Layout() {
     () => filterDocumentsByTag(workspaceDocuments, activeTag),
     [workspaceDocuments, activeTag],
   );
+  const searchPanelResults = useMemo(
+    () => buildSearchPanelResults(workspaceDocuments),
+    [workspaceDocuments],
+  );
   const activeDocumentId = activeWorkspaceId
     ? activeDocumentIdByWorkspace[activeWorkspaceId] ?? null
     : null;
@@ -60,6 +68,22 @@ export function Layout() {
       setActiveTag(null);
     }
   }, [activeTag, workspaceTags]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isSearchPanelShortcut(event)) {
+        return;
+      }
+      event.preventDefault();
+      setSearchPanelOpen(true);
+    };
+
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
@@ -86,6 +110,11 @@ export function Layout() {
     setActiveDocumentForWorkspace(activeWorkspaceId, documentId);
   };
 
+  const handleSearchResultSelect = (documentId: string) => {
+    handleDocumentSelect(documentId);
+    setSearchPanelOpen(false);
+  };
+
   return (
     <div
       data-testid="app-layout"
@@ -106,26 +135,27 @@ export function Layout() {
           onWorkspaceSelect={setActiveWorkspaceId}
           workspaces={workspaces}
         />
-        <CommandPalette
-          activeWorkspaceId={activeWorkspaceId}
-          documents={documents}
-          onCreateWorkspace={handleCreateWorkspace}
-          openDocumentIds={openDocumentIds}
-          workspaces={workspaces}
-        />
         <TagsList
           activeTag={activeTag}
           onTagSelect={setActiveTag}
           tags={workspaceTags}
         />
-        <section aria-label="Document tree section">
-          <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>Documents</h2>
-          <DocumentTree
-            activeDocumentId={activeDocumentId}
-            documents={filteredDocuments}
-            onDocumentSelect={handleDocumentSelect}
+        {searchPanelOpen ? (
+          <SearchPanel
+            onClose={() => setSearchPanelOpen(false)}
+            onResultSelect={(result) => handleSearchResultSelect(result.documentId)}
+            results={searchPanelResults}
           />
-        </section>
+        ) : (
+          <section aria-label="Document tree section">
+            <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>Documents</h2>
+            <DocumentTree
+              activeDocumentId={activeDocumentId}
+              documents={filteredDocuments}
+              onDocumentSelect={handleDocumentSelect}
+            />
+          </section>
+        )}
         <AgentsSection peers={remotePeers} />
       </aside>
       <main
