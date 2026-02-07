@@ -380,7 +380,7 @@ export async function logout(): Promise<void> {
 }
 
 export function clearStoredSession(): void {
-  return getDefaultAuthService().clearStoredSession();
+  getDefaultAuthService().clearStoredSession();
 }
 
 export function resetAuthServiceForTests(): void {
