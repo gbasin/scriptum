@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { SkeletonBlock } from "../Skeleton";
 
 // -- Types --------------------------------------------------------------------
 
@@ -42,6 +43,8 @@ export interface ContextMenuState {
 export interface DocumentTreeProps {
   /** Documents to display in the tree. */
   documents: Document[];
+  /** Whether the tree is waiting on initial data. */
+  loading?: boolean;
   /** ID of the currently active document. */
   activeDocumentId: string | null;
   /** Called when user clicks a document node. */
@@ -509,6 +512,7 @@ function TreeNodeItem({
 
 export function DocumentTree({
   documents,
+  loading = false,
   activeDocumentId,
   onDocumentSelect,
   onContextMenuAction,
@@ -703,6 +707,23 @@ export function DocumentTree({
     },
     [clearDragState, draggingDocumentPath, onRenameDocument, orderedTree],
   );
+
+  if (loading) {
+    return (
+      <div data-testid="document-tree-loading">
+        <div
+          aria-hidden="true"
+          style={{ display: "grid", gap: "0.375rem", marginTop: "0.25rem" }}
+        >
+          <SkeletonBlock style={{ height: "0.75rem", width: "62%" }} />
+          <SkeletonBlock style={{ height: "0.75rem", width: "78%" }} />
+          <SkeletonBlock style={{ height: "0.75rem", width: "54%" }} />
+          <SkeletonBlock style={{ height: "0.75rem", width: "71%" }} />
+          <SkeletonBlock style={{ height: "0.75rem", width: "49%" }} />
+        </div>
+      </div>
+    );
+  }
 
   if (documents.length === 0) {
     return (

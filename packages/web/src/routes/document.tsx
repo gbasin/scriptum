@@ -29,6 +29,7 @@ import {
   TimelineSlider,
 } from "../components/editor/TimelineSlider";
 import { OfflineBanner } from "../components/OfflineBanner";
+import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
@@ -915,6 +916,8 @@ export function DocumentRoute() {
     ? fixtureState.reconnectProgress
     : null;
   const shareLinksEnabled = fixtureModeEnabled && fixtureState.shareLinksEnabled;
+  const showEditorLoadingSkeleton =
+    !fixtureModeEnabled && syncState === "reconnecting";
 
   useEffect(() => {
     if (documentId) {
@@ -1623,6 +1626,23 @@ export function DocumentRoute() {
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>
+        {showEditorLoadingSkeleton ? (
+          <div data-testid="editor-loading-skeleton">
+            <div
+              aria-hidden="true"
+              style={{
+                display: "grid",
+                gap: "0.45rem",
+                marginBottom: "0.5rem",
+                maxWidth: "28rem",
+              }}
+            >
+              <SkeletonBlock style={{ height: "0.8rem", width: "36%" }} />
+              <SkeletonBlock style={{ height: "0.8rem", width: "64%" }} />
+              <SkeletonBlock style={{ height: "0.8rem", width: "52%" }} />
+            </div>
+          </div>
+        ) : null}
         {fixtureModeEnabled ? (
           <pre data-testid="editor-content">{fixtureState.docContent}</pre>
         ) : null}

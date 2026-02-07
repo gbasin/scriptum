@@ -139,6 +139,20 @@ describe("DocumentTree", () => {
     expect(html).toContain("No documents yet");
   });
 
+  it("renders loading skeleton when loading is true", () => {
+    const html = renderToString(
+      <DocumentTree
+        activeDocumentId={null}
+        documents={[]}
+        loading
+        onDocumentSelect={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="document-tree-loading"');
+    expect(html).not.toContain("No documents yet");
+  });
+
   it("renders folder icons for directories", () => {
     const html = renderToString(
       <DocumentTree

@@ -1,5 +1,6 @@
 import type { Document } from "@scriptum/shared";
 import { useMemo, useState } from "react";
+import { SkeletonBlock } from "../Skeleton";
 
 export interface SearchPanelResult {
   author: string;
@@ -32,6 +33,7 @@ export interface HighlightSegment {
 }
 
 export interface SearchPanelProps {
+  loading?: boolean;
   onClose?: () => void;
   onResultSelect?: (result: SearchPanelResult) => void;
   results: readonly SearchPanelResult[];
@@ -143,6 +145,7 @@ function uniqueSorted(values: readonly string[]): string[] {
 }
 
 export function SearchPanel({
+  loading = false,
   onClose,
   onResultSelect,
   results,
@@ -257,7 +260,22 @@ export function SearchPanel({
           />
         </div>
       </div>
-      {filteredResults.length === 0 ? (
+      {loading ? (
+        <ul
+          aria-hidden="true"
+          data-testid="search-panel-loading"
+          style={{ listStyle: "none", margin: "0.75rem 0 0", padding: 0 }}
+        >
+          {[0, 1, 2, 3].map((index) => (
+            <li
+              key={`skeleton-${index}`}
+              style={{ marginBottom: "0.45rem" }}
+            >
+              <SkeletonBlock style={{ height: "2.8rem", width: "100%" }} />
+            </li>
+          ))}
+        </ul>
+      ) : filteredResults.length === 0 ? (
         <p data-testid="search-panel-empty" style={{ marginTop: "0.75rem" }}>
           No matches.
         </p>

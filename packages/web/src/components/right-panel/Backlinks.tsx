@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getAccessToken } from "../../lib/auth";
+import { SkeletonBlock } from "../Skeleton";
 
 const RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
@@ -167,12 +168,13 @@ export function Backlinks({
       <h3 style={{ margin: "0 0 0.5rem" }}>Backlinks</h3>
 
       {loading ? (
-        <p
-          data-testid="backlinks-loading"
-          style={{ color: "#6b7280", margin: 0 }}
-        >
-          Loading backlinks...
-        </p>
+        <div data-testid="backlinks-loading">
+          <div aria-hidden="true" style={{ display: "grid", gap: "0.45rem" }}>
+            <SkeletonBlock style={{ height: "0.78rem", width: "74%" }} />
+            <SkeletonBlock style={{ height: "0.78rem", width: "59%" }} />
+            <SkeletonBlock style={{ height: "0.78rem", width: "68%" }} />
+          </div>
+        </div>
       ) : null}
 
       {!loading && error ? (

@@ -1,0 +1,24 @@
+.skeletonPage {
+  background: var(--color-bg-surface-1);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-3);
+  display: grid;
+  gap: var(--space-3);
+  max-width: 32rem;
+  padding: var(--space-4);
+}
+
+.titleSkeleton {
+  height: 1.25rem;
+  width: 9.5rem;
+}
+
+.lineSkeleton {
+  height: 0.9rem;
+  width: 100%;
+}
+
+.lineSkeletonShort {
+  height: 0.9rem;
+  width: 70%;
+}

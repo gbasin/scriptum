@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SkeletonBlock } from "../Skeleton";
 
 const OUTLINE_ACTIVE_OFFSET_PX = 120;
 
@@ -10,6 +11,7 @@ export interface OutlineHeading {
 
 export interface OutlineProps {
   editorContainer: HTMLElement | null;
+  loading?: boolean;
 }
 
 function normalizeHeadingSlug(value: string): string {
@@ -82,7 +84,7 @@ export function detectActiveOutlineHeadingId(
   return headingElements.find((heading) => heading.id)?.id ?? null;
 }
 
-export function Outline({ editorContainer }: OutlineProps) {
+export function Outline({ editorContainer, loading = false }: OutlineProps) {
   const [headings, setHeadings] = useState<OutlineHeading[]>([]);
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
 
@@ -145,6 +147,19 @@ export function Outline({ editorContainer }: OutlineProps) {
     target.scrollIntoView({ behavior: "smooth", block: "start" });
     setActiveHeadingId(headingId);
   };
+
+  if (loading) {
+    return (
+      <div data-testid="outline-loading">
+        <div aria-hidden="true" style={{ display: "grid", gap: "0.375rem" }}>
+          <SkeletonBlock style={{ height: "0.78rem", width: "78%" }} />
+          <SkeletonBlock style={{ height: "0.78rem", width: "62%" }} />
+          <SkeletonBlock style={{ height: "0.78rem", width: "72%" }} />
+          <SkeletonBlock style={{ height: "0.78rem", width: "52%" }} />
+        </div>
+      </div>
+    );
+  }
 
   if (headings.length === 0) {
     return (

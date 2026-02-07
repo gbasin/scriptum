@@ -201,4 +201,13 @@ describe("SearchPanel", () => {
       root.unmount();
     });
   });
+
+  it("renders loading skeletons when loading is true", () => {
+    const html = renderToString(
+      <SearchPanel loading results={SEARCH_RESULTS} />,
+    );
+
+    expect(html).toContain('data-testid="search-panel-loading"');
+    expect(html).not.toContain('data-testid="search-panel-empty"');
+  });
 });

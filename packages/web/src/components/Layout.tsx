@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
 import styles from "./Layout.module.css";
 import { Outline } from "./right-panel/Outline";
+import { SkeletonBlock } from "./Skeleton";
 import { AgentsSection } from "./sidebar/AgentsSection";
 import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
 import {
@@ -368,6 +369,9 @@ export function Layout() {
     () => buildIncomingBacklinks(workspaceDocuments, activeDocumentId),
     [workspaceDocuments, activeDocumentId],
   );
+  const showPanelSkeletons =
+    activeWorkspaceId !== null && workspaceDocuments.length === 0;
+  const showOutlineSkeleton = showPanelSkeletons || outlineContainer === null;
 
   const createDocumentInActiveWorkspace = (
     path: string,
@@ -740,6 +744,7 @@ export function Layout() {
         ) : null}
         {searchPanelOpen ? (
           <SearchPanel
+            loading={showPanelSkeletons}
             onClose={() => setSearchPanelOpen(false)}
             onResultSelect={(result) =>
               handleSearchResultSelect(result.documentId)
@@ -754,6 +759,7 @@ export function Layout() {
             <DocumentTree
               activeDocumentId={activeDocumentId}
               documents={filteredDocuments}
+              loading={showPanelSkeletons}
               onContextMenuAction={handleDocumentContextAction}
               onDocumentSelect={handleDocumentSelect}
               onRenameDocument={handleRenameDocument}
@@ -792,7 +798,10 @@ export function Layout() {
             </button>
           </div>
 
-          <Outline editorContainer={outlineContainer} />
+          <Outline
+            editorContainer={outlineContainer}
+            loading={showOutlineSkeleton}
+          />
 
           <section
             aria-label="Incoming backlinks"
@@ -800,7 +809,18 @@ export function Layout() {
             data-testid="backlinks-panel"
           >
             <h3 className={styles.backlinksTitle}>Backlinks</h3>
-            {incomingBacklinks.length === 0 ? (
+            {showPanelSkeletons ? (
+              <div data-testid="backlinks-loading">
+                <div
+                  aria-hidden="true"
+                  style={{ display: "grid", gap: "0.45rem", marginTop: "0.25rem" }}
+                >
+                  <SkeletonBlock style={{ height: "0.78rem", width: "72%" }} />
+                  <SkeletonBlock style={{ height: "0.78rem", width: "56%" }} />
+                  <SkeletonBlock style={{ height: "0.78rem", width: "67%" }} />
+                </div>
+              </div>
+            ) : incomingBacklinks.length === 0 ? (
               <p className={styles.backlinksEmpty} data-testid="backlinks-empty">
                 No incoming links to this document.
               </p>

@@ -3,6 +3,8 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { isFixtureModeEnabled } from "../test/setup";
+import { SkeletonBlock } from "./Skeleton";
+import styles from "./RequireAuth.module.css";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const status = useAuthStore((s) => s.status);
@@ -14,7 +16,17 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   }
 
   if (status === "unknown") {
-    return null; // Session restore in progress.
+    return (
+      <section
+        aria-label="Restoring session"
+        className={styles.skeletonPage}
+        data-testid="require-auth-skeleton"
+      >
+        <SkeletonBlock className={styles.titleSkeleton} />
+        <SkeletonBlock className={styles.lineSkeleton} />
+        <SkeletonBlock className={styles.lineSkeletonShort} />
+      </section>
+    );
   }
 
   if (status === "unauthenticated") {

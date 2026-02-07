@@ -174,4 +174,20 @@ describe("Outline", () => {
 
     harness.unmount();
   });
+
+  it("renders loading skeleton state", () => {
+    const harness = renderOutline({
+      editorContainer: null,
+      loading: true,
+    });
+
+    expect(
+      harness.container.querySelector('[data-testid="outline-loading"]'),
+    ).not.toBeNull();
+    expect(
+      harness.container.querySelector('[data-testid="outline-empty"]'),
+    ).toBeNull();
+
+    harness.unmount();
+  });
 });
