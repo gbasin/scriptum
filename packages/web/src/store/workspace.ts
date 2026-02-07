@@ -3,6 +3,7 @@ import type {
   WorkspaceConfig,
   WorkspaceDefaultRole,
   WorkspaceDensity,
+  WorkspaceEditorFontFamily,
   WorkspaceTheme,
 } from "@scriptum/shared";
 import type * as Y from "yjs";
@@ -60,7 +61,17 @@ function asWorkspaceTheme(value: unknown): WorkspaceTheme | null {
 }
 
 function asWorkspaceDensity(value: unknown): WorkspaceDensity | null {
-  return value === "comfortable" || value === "compact" ? value : null;
+  return value === "compact" || value === "comfortable" || value === "spacious"
+    ? value
+    : null;
+}
+
+function asWorkspaceEditorFontFamily(
+  value: unknown,
+): WorkspaceEditorFontFamily | null {
+  return value === "mono" || value === "sans" || value === "serif"
+    ? value
+    : null;
 }
 
 function asWorkspaceDefaultRole(value: unknown): WorkspaceDefaultRole | null {
@@ -69,6 +80,22 @@ function asWorkspaceDefaultRole(value: unknown): WorkspaceDefaultRole | null {
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asIntegerInRange(
+  value: unknown,
+  min: number,
+  max: number,
+): number | null {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
+    return null;
+  }
+
+  return value >= min && value <= max ? value : null;
 }
 
 function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
@@ -96,7 +123,12 @@ function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
     appearance: {
       theme: "system",
       density: "comfortable",
-      editorFontSizePx: 15,
+      fontSize: 15,
+    },
+    editor: {
+      fontFamily: "mono",
+      tabSize: 2,
+      lineNumbers: true,
     },
   };
 }
@@ -116,6 +148,7 @@ function normalizeWorkspaceConfig(
   const agents = asRecord(record.agents);
   const permissions = asRecord(record.permissions);
   const appearance = asRecord(record.appearance);
+  const editor = asRecord(record.editor);
 
   return {
     general: {
@@ -161,9 +194,18 @@ function normalizeWorkspaceConfig(
       theme: asWorkspaceTheme(appearance?.theme) ?? defaults.appearance.theme,
       density:
         asWorkspaceDensity(appearance?.density) ?? defaults.appearance.density,
-      editorFontSizePx:
+      fontSize:
+        asNumber(appearance?.fontSize) ??
         asNumber(appearance?.editorFontSizePx) ??
-        defaults.appearance.editorFontSizePx,
+        defaults.appearance.fontSize,
+    },
+    editor: {
+      fontFamily:
+        asWorkspaceEditorFontFamily(editor?.fontFamily) ??
+        defaults.editor.fontFamily,
+      tabSize:
+        asIntegerInRange(editor?.tabSize, 1, 8) ?? defaults.editor.tabSize,
+      lineNumbers: asBoolean(editor?.lineNumbers) ?? defaults.editor.lineNumbers,
     },
   };
 }

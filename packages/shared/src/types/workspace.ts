@@ -1,8 +1,10 @@
 export type WorkspaceTheme = "system" | "light" | "dark";
 
-export type WorkspaceDensity = "comfortable" | "compact";
+export type WorkspaceDensity = "compact" | "comfortable" | "spacious";
 
 export type WorkspaceDefaultRole = "viewer" | "editor";
+
+export type WorkspaceEditorFontFamily = "mono" | "sans" | "serif";
 
 export interface WorkspaceGeneralConfig {
   workspaceName: string;
@@ -31,7 +33,13 @@ export interface WorkspacePermissionsConfig {
 export interface WorkspaceAppearanceConfig {
   theme: WorkspaceTheme;
   density: WorkspaceDensity;
-  editorFontSizePx: number;
+  fontSize: number;
+}
+
+export interface WorkspaceEditorConfig {
+  fontFamily: WorkspaceEditorFontFamily;
+  tabSize: number;
+  lineNumbers: boolean;
 }
 
 export interface WorkspaceConfig {
@@ -40,6 +48,7 @@ export interface WorkspaceConfig {
   agents: WorkspaceAgentsConfig;
   permissions: WorkspacePermissionsConfig;
   appearance: WorkspaceAppearanceConfig;
+  editor: WorkspaceEditorConfig;
 }
 
 export interface Workspace {

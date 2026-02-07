@@ -119,11 +119,53 @@ describe("SettingsRoute", () => {
       gitSyncEnabled?.click();
     });
 
+    const appearanceTab = container.querySelector(
+      '[data-testid="settings-tab-appearance"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      appearanceTab?.click();
+    });
+
+    const density = container.querySelector(
+      '[data-testid="settings-appearance-density"]',
+    ) as HTMLSelectElement | null;
+    act(() => {
+      if (!density) {
+        return;
+      }
+      density.value = "spacious";
+      density.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const fontFamily = container.querySelector(
+      '[data-testid="settings-editor-font-family"]',
+    ) as HTMLSelectElement | null;
+    act(() => {
+      if (!fontFamily) {
+        return;
+      }
+      fontFamily.value = "sans";
+      fontFamily.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const lineNumbers = container.querySelector(
+      '[data-testid="settings-editor-line-numbers"]',
+    ) as HTMLInputElement | null;
+    expect(lineNumbers?.checked).toBe(true);
+    act(() => {
+      lineNumbers?.click();
+    });
+
     const persistedWorkspace = useWorkspaceStore.getState().activeWorkspace;
     expect(persistedWorkspace?.config?.gitSync.enabled).toBe(false);
     expect(persistedWorkspace?.config?.gitSync.autoCommitIntervalSeconds).toBe(
       30,
     );
+    expect(persistedWorkspace?.config?.appearance.density).toBe("spacious");
+    expect(persistedWorkspace?.config?.appearance.fontSize).toBe(15);
+    expect(persistedWorkspace?.config?.editor.fontFamily).toBe("sans");
+    expect(persistedWorkspace?.config?.editor.tabSize).toBe(2);
+    expect(persistedWorkspace?.config?.editor.lineNumbers).toBe(false);
 
     act(() => {
       root.unmount();

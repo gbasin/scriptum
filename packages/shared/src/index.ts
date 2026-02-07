@@ -140,6 +140,8 @@ export type {
   WorkspaceConfig,
   WorkspaceDefaultRole,
   WorkspaceDensity,
+  WorkspaceEditorConfig,
+  WorkspaceEditorFontFamily,
   WorkspaceGeneralConfig,
   WorkspaceGitSyncConfig,
   WorkspacePermissionsConfig,

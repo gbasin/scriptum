@@ -50,7 +50,12 @@ export function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
     appearance: {
       theme: "system",
       density: "comfortable",
-      editorFontSizePx: 15,
+      fontSize: 15,
+    },
+    editor: {
+      fontFamily: "mono",
+      tabSize: 2,
+      lineNumbers: true,
     },
   };
 }
@@ -461,18 +466,21 @@ export function SettingsRoute() {
                       density:
                         event.target.value === "compact"
                           ? "compact"
-                          : "comfortable",
+                          : event.target.value === "spacious"
+                            ? "spacious"
+                            : "comfortable",
                     },
                   }))
                 }
                 value={config.appearance.density}
               >
-                <option value="comfortable">Comfortable</option>
                 <option value="compact">Compact</option>
+                <option value="comfortable">Comfortable</option>
+                <option value="spacious">Spacious</option>
               </select>
             </label>
             <label className={controls.field}>
-              Editor font size (px)
+              Base font size (px)
               <input
                 className={controls.textInput}
                 data-testid="settings-appearance-font-size"
@@ -482,16 +490,86 @@ export function SettingsRoute() {
                     ...current,
                     appearance: {
                       ...current.appearance,
-                      editorFontSizePx: asPositiveInt(
+                      fontSize: asPositiveInt(
                         event.target.value,
-                        current.appearance.editorFontSizePx,
+                        current.appearance.fontSize,
                       ),
                     },
                   }))
                 }
                 type="number"
-                value={config.appearance.editorFontSizePx}
+                value={config.appearance.fontSize}
               />
+            </label>
+            <label className={controls.field}>
+              Editor font family
+              <select
+                className={controls.selectInput}
+                data-testid="settings-editor-font-family"
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    editor: {
+                      ...current.editor,
+                      fontFamily:
+                        event.target.value === "sans"
+                          ? "sans"
+                          : event.target.value === "serif"
+                            ? "serif"
+                            : "mono",
+                    },
+                  }))
+                }
+                value={config.editor.fontFamily}
+              >
+                <option value="mono">Monospace</option>
+                <option value="sans">Sans serif</option>
+                <option value="serif">Serif</option>
+              </select>
+            </label>
+            <label className={controls.field}>
+              Editor tab size
+              <input
+                className={controls.textInput}
+                data-testid="settings-editor-tab-size"
+                max={8}
+                min={1}
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    editor: {
+                      ...current.editor,
+                      tabSize: Math.min(
+                        8,
+                        Math.max(
+                          1,
+                          asPositiveInt(event.target.value, current.editor.tabSize),
+                        ),
+                      ),
+                    },
+                  }))
+                }
+                type="number"
+                value={config.editor.tabSize}
+              />
+            </label>
+            <label className={controls.checkboxRow}>
+              <input
+                className={controls.checkbox}
+                checked={config.editor.lineNumbers}
+                data-testid="settings-editor-line-numbers"
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    editor: {
+                      ...current.editor,
+                      lineNumbers: event.target.checked,
+                    },
+                  }))
+                }
+                type="checkbox"
+              />
+              Show line numbers
             </label>
           </fieldset>
         ) : null}
