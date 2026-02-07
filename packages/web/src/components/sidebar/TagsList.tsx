@@ -1,4 +1,6 @@
 import type { Document } from "@scriptum/shared";
+import clsx from "clsx";
+import styles from "./TagsList.module.css";
 
 export interface TagsListProps {
   activeTag: string | null;
@@ -57,40 +59,27 @@ export function toggleTagSelection(
 export function TagsList({ activeTag, onTagSelect, tags }: TagsListProps) {
   return (
     <section aria-label="Tags section" data-testid="sidebar-tags-section">
-      <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>Tags</h2>
+      <h2 className={styles.heading}>Tags</h2>
       {tags.length === 0 ? (
-        <p data-testid="sidebar-tags-empty">No tags available.</p>
+        <p className={styles.emptyState} data-testid="sidebar-tags-empty">
+          No tags available.
+        </p>
       ) : (
-        <ul
-          data-testid="sidebar-tags-list"
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "0.35rem",
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-          }}
-        >
+        <ul className={styles.tagsList} data-testid="sidebar-tags-list">
           {tags.map((tag) => {
             const isActive = activeTag === tag;
             return (
               <li key={tag}>
                 <button
                   aria-pressed={isActive}
+                  className={clsx(
+                    styles.tagChip,
+                    isActive && styles.tagChipActive,
+                  )}
                   data-testid={`sidebar-tag-chip-${tagChipTestId(tag)}`}
                   onClick={() =>
                     onTagSelect?.(toggleTagSelection(activeTag, tag))
                   }
-                  style={{
-                    background: isActive ? "#dbeafe" : "#f3f4f6",
-                    border: "1px solid #d1d5db",
-                    borderRadius: "999px",
-                    color: isActive ? "#1d4ed8" : "#111827",
-                    cursor: "pointer",
-                    fontSize: "0.75rem",
-                    padding: "0.125rem 0.5rem",
-                  }}
                   type="button"
                 >
                   #{tag}

@@ -121,9 +121,8 @@ describe("DocumentTree", () => {
       />,
     );
 
-    // The active node should have data-active attribute and highlighted background
+    // The active node should expose the active data attribute.
     expect(html).toContain('data-active="true"');
-    expect(html).toContain("#e0f2fe");
   });
 
   it("shows empty state when no documents", () => {

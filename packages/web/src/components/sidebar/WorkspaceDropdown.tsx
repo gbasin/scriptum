@@ -1,5 +1,8 @@
 import type { Workspace } from "@scriptum/shared";
+import clsx from "clsx";
 import type { ChangeEvent } from "react";
+import controls from "../../styles/Controls.module.css";
+import styles from "./WorkspaceDropdown.module.css";
 
 const LAST_ACCESSED_FORMATTER = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
@@ -51,34 +54,17 @@ export function WorkspaceDropdown({
 
   return (
     <section aria-label="Workspace switcher" data-testid="workspace-switcher">
-      <label
-        htmlFor={WORKSPACE_DROPDOWN_ID}
-        style={{
-          display: "block",
-          fontSize: "0.75rem",
-          fontWeight: 600,
-          letterSpacing: "0.04em",
-          marginBottom: "0.25rem",
-          textTransform: "uppercase",
-        }}
-      >
+      <label className={styles.label} htmlFor={WORKSPACE_DROPDOWN_ID}>
         Workspace
       </label>
 
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          gap: "0.5rem",
-          marginBottom: "0.75rem",
-        }}
-      >
+      <div className={styles.controlsRow}>
         <select
           aria-label="Workspace dropdown"
+          className={clsx(controls.selectInput, styles.dropdown)}
           data-testid="workspace-dropdown"
           id={WORKSPACE_DROPDOWN_ID}
           onChange={handleWorkspaceChange}
-          style={{ flex: 1 }}
           value={activeWorkspaceId ?? ""}
         >
           {workspaces.length === 0 ? (
@@ -94,9 +80,13 @@ export function WorkspaceDropdown({
 
         <button
           aria-label="Create new workspace"
+          className={clsx(
+            controls.buttonBase,
+            controls.buttonSecondary,
+            styles.createButton,
+          )}
           data-testid="create-workspace-button"
           onClick={onCreateWorkspace}
-          style={{ whiteSpace: "nowrap" }}
           type="button"
         >
           + New
@@ -105,20 +95,22 @@ export function WorkspaceDropdown({
 
       <ul
         aria-label="Workspace list"
+        className={styles.workspaceList}
         data-testid="workspace-last-accessed-list"
-        style={{ listStyle: "none", margin: 0, padding: 0 }}
       >
         {workspaces.map((workspace) => {
           const lastAccessedAt =
             lastAccessedByWorkspaceId[workspace.id] ?? workspace.updatedAt;
           return (
             <li
+              className={styles.workspaceListItem}
               key={workspace.id}
               data-testid={`workspace-${workspace.id}`}
-              style={{ marginBottom: "0.375rem" }}
             >
-              <div style={{ fontWeight: 500 }}>{workspace.name}</div>
-              <small>{formatLastAccessedLabel(lastAccessedAt)}</small>
+              <div className={styles.workspaceName}>{workspace.name}</div>
+              <small className={styles.workspaceTimestamp}>
+                {formatLastAccessedLabel(lastAccessedAt)}
+              </small>
             </li>
           );
         })}

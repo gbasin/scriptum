@@ -1,4 +1,5 @@
 import type { PeerPresence } from "../../store/presence";
+import styles from "./AgentsSection.module.css";
 
 const ACTIVE_WINDOW_MS = 60_000;
 
@@ -29,32 +30,32 @@ export function AgentsSection({
 
   return (
     <section aria-label="Agents section" data-testid="sidebar-agents-section">
-      <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>Agents</h2>
+      <h2 className={styles.heading}>Agents</h2>
       {agents.length === 0 ? (
-        <p data-testid="sidebar-agents-empty">No active agents.</p>
+        <p className={styles.emptyState} data-testid="sidebar-agents-empty">
+          No active agents.
+        </p>
       ) : (
-        <ul
-          data-testid="sidebar-agents-list"
-          style={{ listStyle: "none", margin: 0, padding: 0 }}
-        >
+        <ul className={styles.agentsList} data-testid="sidebar-agents-list">
           {agents.map((agent) => {
             const status = activityStatusFromLastSeen(agent.lastSeenAt, nowMs);
             return (
               <li
+                className={styles.agentCard}
                 data-testid={`sidebar-agent-${agent.name}`}
                 key={agent.name}
-                style={{
-                  border: "1px solid #d1d5db",
-                  borderRadius: "0.5rem",
-                  marginTop: "0.5rem",
-                  padding: "0.5rem",
-                }}
               >
-                <div style={{ fontWeight: 600 }}>{agent.name}</div>
-                <div data-testid={`sidebar-agent-status-${agent.name}`}>
+                <div className={styles.agentName}>{agent.name}</div>
+                <div
+                  className={styles.agentMeta}
+                  data-testid={`sidebar-agent-status-${agent.name}`}
+                >
                   Status: {status}
                 </div>
-                <div data-testid={`sidebar-agent-document-${agent.name}`}>
+                <div
+                  className={styles.agentMeta}
+                  data-testid={`sidebar-agent-document-${agent.name}`}
+                >
                   Editing: {agent.activeDocumentPath ?? "No document"}
                 </div>
               </li>

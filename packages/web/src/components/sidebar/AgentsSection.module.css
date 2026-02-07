@@ -1,0 +1,30 @@
+.heading {
+  margin: var(--space-4) 0 var(--space-1);
+}
+
+.emptyState {
+  color: var(--color-text-muted);
+}
+
+.agentsList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agentCard {
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+}
+
+.agentName {
+  font-weight: 600;
+}
+
+.agentMeta {
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}

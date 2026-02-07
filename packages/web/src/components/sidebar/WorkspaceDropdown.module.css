@@ -1,0 +1,41 @@
+.label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+}
+
+.controlsRow {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.dropdown {
+  flex: 1;
+}
+
+.createButton {
+  white-space: nowrap;
+}
+
+.workspaceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workspaceListItem {
+  margin-bottom: 0.375rem;
+}
+
+.workspaceName {
+  font-weight: 500;
+}
+
+.workspaceTimestamp {
+  color: var(--color-text-muted);
+}

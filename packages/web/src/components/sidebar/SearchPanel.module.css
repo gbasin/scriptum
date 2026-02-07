@@ -1,0 +1,93 @@
+.header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.heading {
+  margin: 0;
+}
+
+.shortcutHint {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  margin-top: 0;
+}
+
+.filtersGrid {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.filterRow {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.loadingList,
+.resultsList {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.resultItem {
+  margin-bottom: 0.45rem;
+}
+
+.loadingCard {
+  height: 2.8rem;
+  width: 100%;
+}
+
+.emptyState {
+  margin-top: 0.75rem;
+}
+
+.resultButton {
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: block;
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+  width: 100%;
+}
+
+.resultButton:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-strong);
+}
+
+.resultButton:focus-visible {
+  border-color: var(--color-accent-soft);
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 1px;
+}
+
+.resultPath {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.resultMeta {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.resultSnippet {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resultButton {
+    transition: none;
+  }
+}

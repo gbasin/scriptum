@@ -71,7 +71,7 @@ describe("DocumentTree workspace actions", () => {
       );
     });
 
-    const renameButton = container.querySelector(
+    const renameButton = document.querySelector(
       '[data-testid="context-action-rename"]',
     ) as HTMLButtonElement | null;
     expect(renameButton).not.toBeNull();
@@ -137,7 +137,7 @@ describe("DocumentTree workspace actions", () => {
       );
     });
 
-    const newFolderAction = container.querySelector(
+    const newFolderAction = document.querySelector(
       '[data-testid="context-action-new-folder"]',
     ) as HTMLButtonElement | null;
     expect(newFolderAction).not.toBeNull();
@@ -162,7 +162,7 @@ describe("DocumentTree workspace actions", () => {
       );
     });
 
-    const copyLinkAction = container.querySelector(
+    const copyLinkAction = document.querySelector(
       '[data-testid="context-action-copy-link"]',
     ) as HTMLButtonElement | null;
     expect(copyLinkAction).not.toBeNull();

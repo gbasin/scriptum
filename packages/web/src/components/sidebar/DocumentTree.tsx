@@ -1,8 +1,9 @@
+import { ContextMenu } from "@base-ui-components/react/context-menu";
 import type { Document } from "@scriptum/shared";
+import clsx from "clsx";
 import {
   type ChangeEvent,
   type DragEvent as ReactDragEvent,
-  type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
@@ -11,6 +12,8 @@ import {
   useState,
 } from "react";
 import { SkeletonBlock } from "../Skeleton";
+import controls from "../../styles/Controls.module.css";
+import styles from "./DocumentTree.module.css";
 
 // -- Types --------------------------------------------------------------------
 
@@ -33,12 +36,6 @@ export type ContextMenuAction =
   | "copy-link"
   | "add-tag"
   | "archive";
-
-export interface ContextMenuState {
-  x: number;
-  y: number;
-  document: Document;
-}
 
 export interface DocumentTreeProps {
   /** Documents to display in the tree. */
@@ -221,73 +218,17 @@ const CONTEXT_ACTIONS: { action: ContextMenuAction; label: string }[] = [
   { action: "archive", label: "Archive" },
 ];
 
-function ContextMenu({
-  menu,
-  onAction,
-  onClose,
-}: {
-  menu: ContextMenuState;
-  onAction: (action: ContextMenuAction, doc: Document) => void;
-  onClose: () => void;
-}) {
-  return (
-    <ul
-      data-testid="context-menu"
-      role="menu"
-      style={{
-        background: "#fff",
-        border: "1px solid #d1d5db",
-        borderRadius: "4px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-        left: menu.x,
-        listStyle: "none",
-        margin: 0,
-        padding: "4px 0",
-        position: "fixed",
-        top: menu.y,
-        zIndex: 1000,
-      }}
-    >
-      {CONTEXT_ACTIONS.map(({ action, label }) => (
-        <li key={action}>
-          <button
-            data-testid={`context-action-${action}`}
-            onClick={() => {
-              onAction(action, menu.document);
-              onClose();
-            }}
-            role="menuitem"
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              display: "block",
-              padding: "6px 16px",
-              textAlign: "left",
-              width: "100%",
-            }}
-            type="button"
-          >
-            {label}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 // -- Tree node component -------------------------------------------------------
 
 function TreeNodeItem({
   activeDocumentId,
-  depth,
   draggingDocumentPath,
   dropTargetPath,
   editingDocumentId,
   editingPath,
   expanded,
   node,
-  onContextMenu,
+  onContextAction,
   onDragEndDocument,
   onDragEnterTarget,
   onDragStartDocument,
@@ -300,14 +241,13 @@ function TreeNodeItem({
   onToggle,
 }: {
   activeDocumentId: string | null;
-  depth: number;
   draggingDocumentPath: string | null;
   dropTargetPath: string | null;
   editingDocumentId: string | null;
   editingPath: string;
   expanded: Set<string>;
   node: TreeNode;
-  onContextMenu: (event: MouseEvent, doc: Document) => void;
+  onContextAction: (action: ContextMenuAction, doc: Document) => void;
   onDragEndDocument: () => void;
   onDragEnterTarget: (path: string) => void;
   onDragStartDocument: (node: TreeNode) => void;
@@ -331,14 +271,6 @@ function TreeNodeItem({
     } else if (node.document && onDocumentSelect) {
       onDocumentSelect(node.document.id);
     }
-  };
-
-  const handleContextMenu = (event: MouseEvent) => {
-    if (!node.document) {
-      return;
-    }
-    event.preventDefault();
-    onContextMenu(event, node.document);
   };
 
   const handleRenameInputKeyDown = (
@@ -397,28 +329,24 @@ function TreeNodeItem({
 
   if (isEditing && node.document) {
     return (
-      <li data-testid={`tree-node-${node.fullPath}`} role="treeitem">
-        <div
-          style={{
-            alignItems: "center",
-            display: "flex",
-            gap: "0.35rem",
-            paddingBottom: "2px",
-            paddingLeft: `${depth * 16 + 4}px`,
-            paddingRight: "4px",
-            paddingTop: "2px",
-          }}
-        >
-          <span aria-hidden="true">{fileIcon(node.name)}</span>
+      <li
+        className={styles.treeItem}
+        data-testid={`tree-node-${node.fullPath}`}
+        role="treeitem"
+      >
+        <div className={styles.renameRow}>
+          <span aria-hidden="true" className={styles.treeIcon}>
+            {fileIcon(node.name)}
+          </span>
           <input
             autoFocus
+            className={clsx(controls.textInput, styles.renameInput)}
             data-testid={`tree-rename-input-${node.document.id}`}
             onBlur={() => onRenameCommit(node.document!.id)}
             onChange={(event: ChangeEvent<HTMLInputElement>) =>
               onRenameChange(event.target.value)
             }
             onKeyDown={handleRenameInputKeyDown}
-            style={{ flex: 1, minWidth: 0 }}
             type="text"
             value={editingPath}
           />
@@ -427,60 +355,72 @@ function TreeNodeItem({
     );
   }
 
+  const treeNodeButton = (
+    <button
+      aria-label={node.name}
+      className={clsx(
+        styles.treeNodeButton,
+        isActive && styles.treeNodeButtonActive,
+        isDropTarget && styles.treeNodeButtonDropTarget,
+      )}
+      draggable={Boolean(node.document)}
+      onClick={handleClick}
+      onDragEnd={onDragEndDocument}
+      onDragOver={handleDragOver}
+      onDragStart={handleDragStart}
+      onDrop={handleDrop}
+      type="button"
+    >
+      <span aria-hidden="true" className={styles.treeIcon}>
+        {isFolder ? (isExpanded ? "\u{1F4C2}" : "\u{1F4C1}") : fileIcon(node.name)}
+      </span>
+      {node.name}
+    </button>
+  );
+
   return (
     <>
       <li
         aria-expanded={isFolder ? isExpanded : undefined}
+        className={styles.treeItem}
         data-active={isActive || undefined}
         data-drop-target={isDropTarget || undefined}
         data-testid={`tree-node-${node.fullPath}`}
         role="treeitem"
       >
-        <button
-          aria-label={node.name}
-          draggable={Boolean(node.document)}
-          onClick={handleClick}
-          onContextMenu={handleContextMenu}
-          onDragEnd={onDragEndDocument}
-          onDragOver={handleDragOver}
-          onDragStart={handleDragStart}
-          onDrop={handleDrop}
-          style={{
-            background: isDropTarget
-              ? "#dbeafe"
-              : isActive
-                ? "#e0f2fe"
-                : "none",
-            border: "none",
-            cursor: "pointer",
-            display: "block",
-            fontWeight: isActive ? 600 : 400,
-            paddingBottom: "2px",
-            paddingLeft: `${depth * 16 + 4}px`,
-            paddingRight: "4px",
-            paddingTop: "2px",
-            textAlign: "left",
-            width: "100%",
-          }}
-          type="button"
-        >
-          <span aria-hidden="true" style={{ marginRight: "4px" }}>
-            {isFolder
-              ? isExpanded
-                ? "\u{1F4C2}"
-                : "\u{1F4C1}"
-              : fileIcon(node.name)}
-          </span>
-          {node.name}
-        </button>
+        {node.document ? (
+          <ContextMenu.Root>
+            <ContextMenu.Trigger render={treeNodeButton} />
+            <ContextMenu.Portal>
+              <ContextMenu.Positioner>
+                <ContextMenu.Popup
+                  className={styles.contextMenu}
+                  data-testid="context-menu"
+                >
+                  {CONTEXT_ACTIONS.map(({ action, label }) => (
+                    <ContextMenu.Item
+                      className={styles.contextMenuItem}
+                      data-testid={`context-action-${action}`}
+                      key={action}
+                      onClick={() => onContextAction(action, node.document!)}
+                    >
+                      {label}
+                    </ContextMenu.Item>
+                  ))}
+                </ContextMenu.Popup>
+              </ContextMenu.Positioner>
+            </ContextMenu.Portal>
+          </ContextMenu.Root>
+        ) : (
+          treeNodeButton
+        )}
       </li>
       {isFolder && isExpanded && (
         <li role="none">
-          <ul role="group" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          <ul className={styles.treeGroup} role="group">
             {node.children.map((child) => (
               <TreeNodeItem
                 activeDocumentId={activeDocumentId}
-                depth={depth + 1}
                 draggingDocumentPath={draggingDocumentPath}
                 dropTargetPath={dropTargetPath}
                 editingDocumentId={editingDocumentId}
@@ -488,7 +428,7 @@ function TreeNodeItem({
                 expanded={expanded}
                 key={child.fullPath}
                 node={child}
-                onContextMenu={onContextMenu}
+                onContextAction={onContextAction}
                 onDragEndDocument={onDragEndDocument}
                 onDragEnterTarget={onDragEnterTarget}
                 onDragStartDocument={onDragStartDocument}
@@ -527,10 +467,9 @@ export function DocumentTree({
     return new Set(
       tree
         .filter((node) => node.children.length > 0)
-        .map((node) => node.fullPath),
+      .map((node) => node.fullPath),
     );
   });
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [draggingDocumentPath, setDraggingDocumentPath] = useState<
     string | null
   >(null);
@@ -577,15 +516,6 @@ export function DocumentTree({
       return next;
     });
   }, []);
-
-  const handleContextMenu = useCallback(
-    (event: MouseEvent, document: Document) => {
-      setContextMenu({ document, x: event.clientX, y: event.clientY });
-    },
-    [],
-  );
-
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const beginRenameDocument = useCallback((document: Document) => {
     setEditingDocumentId(document.id);
@@ -711,15 +641,12 @@ export function DocumentTree({
   if (loading) {
     return (
       <div data-testid="document-tree-loading">
-        <div
-          aria-hidden="true"
-          style={{ display: "grid", gap: "0.375rem", marginTop: "0.25rem" }}
-        >
-          <SkeletonBlock style={{ height: "0.75rem", width: "62%" }} />
-          <SkeletonBlock style={{ height: "0.75rem", width: "78%" }} />
-          <SkeletonBlock style={{ height: "0.75rem", width: "54%" }} />
-          <SkeletonBlock style={{ height: "0.75rem", width: "71%" }} />
-          <SkeletonBlock style={{ height: "0.75rem", width: "49%" }} />
+        <div aria-hidden="true" className={styles.loadingList}>
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading62)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading78)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading54)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading71)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading49)} />
         </div>
       </div>
     );
@@ -728,24 +655,17 @@ export function DocumentTree({
   if (documents.length === 0) {
     return (
       <div data-testid="document-tree-empty">
-        <p style={{ color: "#6b7280", fontSize: "0.875rem" }}>
-          No documents yet.
-        </p>
+        <p className={styles.emptyMessage}>No documents yet.</p>
       </div>
     );
   }
 
   return (
     <nav aria-label="Document tree" data-testid="document-tree">
-      <ul
-        onClick={closeContextMenu}
-        role="tree"
-        style={{ listStyle: "none", margin: 0, padding: 0 }}
-      >
+      <ul className={styles.tree} role="tree">
         {orderedTree.map((node) => (
           <TreeNodeItem
             activeDocumentId={activeDocumentId}
-            depth={0}
             draggingDocumentPath={draggingDocumentPath}
             dropTargetPath={dropTargetPath}
             editingDocumentId={editingDocumentId}
@@ -753,7 +673,7 @@ export function DocumentTree({
             expanded={expanded}
             key={node.fullPath}
             node={node}
-            onContextMenu={handleContextMenu}
+            onContextAction={handleContextAction}
             onDragEndDocument={clearDragState}
             onDragEnterTarget={setDropTargetPath}
             onDragStartDocument={(dragNode) =>
@@ -769,13 +689,6 @@ export function DocumentTree({
           />
         ))}
       </ul>
-      {contextMenu ? (
-        <ContextMenu
-          menu={contextMenu}
-          onAction={handleContextAction}
-          onClose={closeContextMenu}
-        />
-      ) : null}
     </nav>
   );
 }

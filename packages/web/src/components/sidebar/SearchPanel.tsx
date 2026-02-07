@@ -1,6 +1,9 @@
 import type { Document } from "@scriptum/shared";
+import clsx from "clsx";
 import { useMemo, useState } from "react";
+import controls from "../../styles/Controls.module.css";
 import { SkeletonBlock } from "../Skeleton";
+import styles from "./SearchPanel.module.css";
 
 export interface SearchPanelResult {
   author: string;
@@ -177,17 +180,10 @@ export function SearchPanel({
 
   return (
     <section aria-label="Search panel" data-testid="search-panel">
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: "0.5rem",
-          marginTop: "1rem",
-        }}
-      >
-        <h2 style={{ margin: 0 }}>Search</h2>
+      <div className={styles.header}>
+        <h2 className={styles.heading}>Search</h2>
         <button
+          className={clsx(controls.buttonBase, controls.buttonSecondary)}
           data-testid="search-panel-close"
           onClick={onClose}
           type="button"
@@ -195,21 +191,23 @@ export function SearchPanel({
           Close
         </button>
       </div>
-      <p style={{ color: "#6b7280", fontSize: "0.8rem", marginTop: 0 }}>
+      <p className={styles.shortcutHint}>
         Shortcut: Cmd/Ctrl+Shift+F
       </p>
-      <div style={{ display: "grid", gap: "0.4rem" }}>
+      <div className={styles.filtersGrid}>
         <input
           aria-label="Search query"
+          className={controls.textInput}
           data-testid="search-panel-query"
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search markdown..."
           type="text"
           value={query}
         />
-        <div style={{ display: "flex", gap: "0.4rem" }}>
+        <div className={styles.filterRow}>
           <select
             aria-label="Filter by tag"
+            className={controls.selectInput}
             data-testid="search-panel-filter-tag"
             onChange={(event) =>
               setTagFilter(event.target.value ? event.target.value : null)
@@ -225,6 +223,7 @@ export function SearchPanel({
           </select>
           <select
             aria-label="Filter by author"
+            className={controls.selectInput}
             data-testid="search-panel-filter-author"
             onChange={(event) =>
               setAuthorFilter(event.target.value ? event.target.value : null)
@@ -239,9 +238,10 @@ export function SearchPanel({
             ))}
           </select>
         </div>
-        <div style={{ display: "flex", gap: "0.4rem" }}>
+        <div className={styles.filterRow}>
           <input
             aria-label="Filter from date"
+            className={controls.textInput}
             data-testid="search-panel-filter-date-from"
             onChange={(event) =>
               setDateFrom(event.target.value ? event.target.value : null)
@@ -251,6 +251,7 @@ export function SearchPanel({
           />
           <input
             aria-label="Filter to date"
+            className={controls.textInput}
             data-testid="search-panel-filter-date-to"
             onChange={(event) =>
               setDateTo(event.target.value ? event.target.value : null)
@@ -263,51 +264,39 @@ export function SearchPanel({
       {loading ? (
         <ul
           aria-hidden="true"
+          className={styles.loadingList}
           data-testid="search-panel-loading"
-          style={{ listStyle: "none", margin: "0.75rem 0 0", padding: 0 }}
         >
           {[0, 1, 2, 3].map((index) => (
-            <li
-              key={`skeleton-${index}`}
-              style={{ marginBottom: "0.45rem" }}
-            >
-              <SkeletonBlock style={{ height: "2.8rem", width: "100%" }} />
+            <li className={styles.resultItem} key={`skeleton-${index}`}>
+              <SkeletonBlock className={styles.loadingCard} />
             </li>
           ))}
         </ul>
       ) : filteredResults.length === 0 ? (
-        <p data-testid="search-panel-empty" style={{ marginTop: "0.75rem" }}>
+        <p className={styles.emptyState} data-testid="search-panel-empty">
           No matches.
         </p>
       ) : (
         <ul
+          className={styles.resultsList}
           data-testid="search-panel-results"
-          style={{ listStyle: "none", margin: "0.75rem 0 0", padding: 0 }}
         >
           {filteredResults.map((result) => (
-            <li key={result.id} style={{ marginBottom: "0.45rem" }}>
+            <li className={styles.resultItem} key={result.id}>
               <button
+                className={styles.resultButton}
                 data-testid={`search-panel-result-${result.id}`}
                 onClick={() => onResultSelect?.(result)}
-                style={{
-                  background: "#f8fafc",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "0.4rem",
-                  cursor: "pointer",
-                  display: "block",
-                  padding: "0.45rem 0.55rem",
-                  textAlign: "left",
-                  width: "100%",
-                }}
                 type="button"
               >
-                <div style={{ fontSize: "0.78rem", fontWeight: 600 }}>
+                <div className={styles.resultPath}>
                   {result.documentPath}
                 </div>
-                <div style={{ color: "#475569", fontSize: "0.72rem" }}>
+                <div className={styles.resultMeta}>
                   Line {result.lineNumber} · {result.author}
                 </div>
-                <div style={{ color: "#334155", fontSize: "0.78rem" }}>
+                <div className={styles.resultSnippet}>
                   {highlightText(result.snippet, query).map((segment, index) =>
                     segment.isMatch ? (
                       <mark key={`${result.id}-${index}`}>{segment.text}</mark>
