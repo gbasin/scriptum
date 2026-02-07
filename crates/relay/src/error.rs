@@ -147,21 +147,23 @@ impl RelayError {
 
 impl IntoResponse for RelayError {
     fn into_response(self) -> Response {
+        let code = self.code;
         let request_id = self.request_id.or_else(current_request_id);
 
         let mut response = (
-            self.code.status(),
+            code.status(),
             Json(json!({
                 "error": {
-                    "code": self.code.as_str(),
+                    "code": code.as_str(),
                     "message": self.message,
-                    "retryable": self.code.retryable(),
+                    "retryable": code.retryable(),
                     "request_id": request_id.clone(),
                     "details": self.details,
                 }
             })),
         )
             .into_response();
+        response.extensions_mut().insert(code);
 
         if let Some(request_id) = request_id {
             attach_request_id_header(&mut response, &request_id);
@@ -296,5 +298,11 @@ mod tests {
         let parsed: Value =
             serde_json::from_slice(&body).expect("error response body should be valid json");
         assert_eq!(parsed["error"]["request_id"], "req-explicit-456");
+    }
+
+    #[test]
+    fn response_extensions_include_canonical_error_code() {
+        let response = RelayError::from_code(ErrorCode::RateLimited).into_response();
+        assert_eq!(response.extensions().get::<ErrorCode>().copied(), Some(ErrorCode::RateLimited));
     }
 }

@@ -18,13 +18,14 @@ use anyhow::Context;
 use axum::{
     body::Body,
     extract::DefaultBodyLimit,
-    http::{Request, StatusCode},
+    http::{header::AUTHORIZATION, HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
     Extension, Json, Router,
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::future::Future;
 use std::pin::Pin;
@@ -32,13 +33,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{sync::Arc, time::Instant};
 use tokio::net::TcpListener;
 use tracing::{error, info};
+use uuid::Uuid;
 use ws::{DocSyncStore, SyncSessionStore};
 
 use crate::auth::{jwt::JwtAccessTokenService, oauth::OAuthState};
 use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
 use crate::error::{
-    attach_request_id_header, request_id_from_headers_or_generate, with_request_id_scope,
-    ErrorCode, RelayError,
+    attach_request_id_header, default_code_for_status, request_id_from_headers_or_generate,
+    with_request_id_scope, ErrorCode, RelayError,
 };
 use crate::sync::sequencer::UpdateSequencer;
 
@@ -99,6 +101,8 @@ async fn main() -> anyhow::Result<()> {
     let cfg = config::RelayConfig::from_env();
 
     tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&cfg.log_filter)),
@@ -241,21 +245,72 @@ async fn request_context_middleware(request: Request<Body>, next: Next) -> Respo
 
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    let endpoint = format!("{method} {path}");
+    let workspace_id = workspace_id_from_path(&path).map(|id| id.to_string());
+    let actor_hash = actor_hash_from_headers(request.headers());
     let started_at = Instant::now();
 
     let mut response = with_request_id_scope(request_id.clone(), next.run(request)).await;
     attach_request_id_header(&mut response, &request_id);
+    let status = response.status();
+    let error_code = response_error_code(&response);
 
     info!(
         request_id = %request_id,
-        method = %method,
-        path = %path,
-        status = response.status().as_u16(),
+        workspace_id = workspace_id.as_deref().unwrap_or(""),
+        actor_hash = actor_hash.as_deref().unwrap_or(""),
+        endpoint = %endpoint,
+        error_code = error_code.unwrap_or(""),
+        status = status.as_u16(),
         latency_ms = started_at.elapsed().as_millis() as u64,
-        "request completed"
+        "relay_request"
     );
 
     response
+}
+
+fn workspace_id_from_path(path: &str) -> Option<Uuid> {
+    let mut segments = path.trim_start_matches('/').split('/');
+    while let Some(segment) = segments.next() {
+        if segment == "workspaces" {
+            let value = segments.next()?;
+            return Uuid::parse_str(value).ok();
+        }
+    }
+    None
+}
+
+fn actor_hash_from_headers(headers: &HeaderMap) -> Option<String> {
+    let token = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_bearer_token)?;
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+fn parse_bearer_token(value: &str) -> Option<&str> {
+    let (scheme, token) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token)
+}
+
+fn response_error_code(response: &Response) -> Option<&'static str> {
+    if let Some(code) = response.extensions().get::<ErrorCode>() {
+        return Some(code.as_str());
+    }
+    let status = response.status();
+    if status.is_client_error() || status.is_server_error() {
+        return Some(default_code_for_status(status).as_str());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -264,20 +319,23 @@ mod tests {
 
     use axum::{
         body::{to_bytes, Body},
-        http::{Method, Request, StatusCode},
+        http::{header::AUTHORIZATION, HeaderMap, Method, Request, StatusCode},
+        response::IntoResponse,
         routing::{get, post},
         Router,
     };
     use serde_json::Value;
+    use sha2::{Digest, Sha256};
     use tower::ServiceExt;
     use uuid::Uuid;
 
     use super::{
-        apply_middleware, build_router, DbCheckFuture, ReadinessProbe, MAX_REQUEST_BODY_BYTES,
+        actor_hash_from_headers, apply_middleware, build_router, response_error_code,
+        workspace_id_from_path, DbCheckFuture, ReadinessProbe, MAX_REQUEST_BODY_BYTES,
     };
     use crate::{
         auth::{jwt::JwtAccessTokenService, oauth::OAuthState},
-        error::REQUEST_ID_HEADER,
+        error::{ErrorCode, REQUEST_ID_HEADER},
         ws::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore},
     };
 
@@ -484,5 +542,48 @@ mod tests {
         assert_eq!(parsed["error"]["retryable"], false);
         assert_eq!(parsed["error"]["request_id"], "req-auth-123");
         assert!(parsed["error"]["details"].is_object());
+    }
+
+    #[test]
+    fn workspace_id_from_path_extracts_workspace_uuid() {
+        let workspace_id = Uuid::new_v4();
+        let path = format!("/v1/workspaces/{workspace_id}/documents");
+        assert_eq!(workspace_id_from_path(&path), Some(workspace_id));
+    }
+
+    #[test]
+    fn workspace_id_from_path_rejects_invalid_uuid() {
+        assert_eq!(workspace_id_from_path("/v1/workspaces/not-a-uuid/documents"), None);
+    }
+
+    #[test]
+    fn actor_hash_from_headers_hashes_bearer_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer token-abc-123".parse().expect("header is valid"));
+
+        let actor_hash = actor_hash_from_headers(&headers).expect("hash should be produced");
+        assert_eq!(actor_hash, format!("{:x}", Sha256::digest(b"token-abc-123")));
+    }
+
+    #[test]
+    fn actor_hash_from_headers_skips_missing_or_invalid_auth() {
+        assert_eq!(actor_hash_from_headers(&HeaderMap::new()), None);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Basic abcdef".parse().expect("header is valid"));
+        assert_eq!(actor_hash_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn response_error_code_uses_response_extension_when_present() {
+        let mut response = StatusCode::UNAUTHORIZED.into_response();
+        response.extensions_mut().insert(ErrorCode::RateLimited);
+        assert_eq!(response_error_code(&response), Some("RATE_LIMITED"));
+    }
+
+    #[test]
+    fn response_error_code_falls_back_to_status_mapping() {
+        let response = StatusCode::UNAUTHORIZED.into_response();
+        assert_eq!(response_error_code(&response), Some("AUTH_INVALID_TOKEN"));
     }
 }
