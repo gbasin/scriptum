@@ -40,8 +40,8 @@ use uuid::Uuid;
 use crate::{
     auth::{
         jwt::JwtAccessTokenService,
-        oauth::OAuthState,
         middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
+        oauth::OAuthState,
     },
     db::pool::{check_pool_health, create_pg_pool, PoolConfig},
     error::{ErrorCode, RelayError},
@@ -682,10 +682,7 @@ fn build_router_with_store(
             "/v1/workspaces",
             post(workspaces::create_workspace).get(workspaces::list_workspaces),
         )
-        .route(
-            "/v1/workspaces/{id}",
-            get(workspaces::get_workspace).route_layer(viewer_role_layer),
-        )
+        .route("/v1/workspaces/{id}", get(workspaces::get_workspace).route_layer(viewer_role_layer))
         .route(
             "/v1/workspaces/{id}",
             patch(workspaces::update_workspace).route_layer(owner_role_layer),

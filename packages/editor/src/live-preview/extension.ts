@@ -1144,6 +1144,38 @@ function parseDestination(rawDestination: string): string {
   return (separator === -1 ? unwrapped : unwrapped.slice(0, separator)).trim();
 }
 
+function sanitizePreviewHref(
+  rawHref: string,
+  kind: "image" | "link",
+): string {
+  const href = rawHref.trim();
+  if (!href) {
+    return "";
+  }
+
+  const lowered = href.toLowerCase();
+  const schemeMatch = lowered.match(/^([a-z][a-z0-9+.-]*):/);
+  if (!schemeMatch) {
+    return href;
+  }
+
+  const scheme = schemeMatch[1];
+  if (
+    scheme === "http" ||
+    scheme === "https" ||
+    scheme === "mailto" ||
+    scheme === "tel"
+  ) {
+    return href;
+  }
+
+  if (kind === "image" && scheme === "blob") {
+    return href;
+  }
+
+  return "";
+}
+
 function extractInlinePreviewTokens(
   lineText: string,
   lineFrom: number,
@@ -1156,7 +1188,7 @@ function extractInlinePreviewTokens(
       continue;
     }
 
-    const href = parseDestination(match[2] ?? "");
+    const href = sanitizePreviewHref(parseDestination(match[2] ?? ""), "image");
     if (!href) {
       continue;
     }
@@ -1180,7 +1212,7 @@ function extractInlinePreviewTokens(
       continue;
     }
 
-    const href = parseDestination(match[2] ?? "");
+    const href = sanitizePreviewHref(parseDestination(match[2] ?? ""), "link");
     if (!href) {
       continue;
     }
@@ -1201,7 +1233,7 @@ function extractInlinePreviewTokens(
       continue;
     }
 
-    const href = (match[1] ?? "").trim();
+    const href = sanitizePreviewHref((match[1] ?? "").trim(), "link");
     if (!href) {
       continue;
     }

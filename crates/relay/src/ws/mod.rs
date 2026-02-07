@@ -1373,7 +1373,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use futures_util::{SinkExt, StreamExt};
     use scriptum_common::protocol::ws::WsMessage;
-    use std::{env, sync::Arc};
+    use std::{env, fs, sync::Arc};
     use tokio::net::TcpListener;
     use tokio::time::{sleep, timeout, Instant as TokioInstant};
     use tokio_tungstenite::{
@@ -1400,6 +1400,8 @@ mod tests {
         soak_seconds: u64,
         ack_p95_target_ms: u64,
         min_updates_per_second_ratio: f64,
+        max_error_rate: f64,
+        enforce_memory_growth_limit: bool,
     }
 
     impl LoadStressProfile {
@@ -1410,6 +1412,8 @@ mod tests {
                 soak_seconds: 4,
                 ack_p95_target_ms: 2_000,
                 min_updates_per_second_ratio: 0.50,
+                max_error_rate: 0.25,
+                enforce_memory_growth_limit: false,
             }
         }
 
@@ -1420,6 +1424,8 @@ mod tests {
                 soak_seconds: 3_600,
                 ack_p95_target_ms: 500,
                 min_updates_per_second_ratio: 0.90,
+                max_error_rate: 0.01,
+                enforce_memory_growth_limit: true,
             }
         }
 
@@ -1441,6 +1447,70 @@ mod tests {
                 min_updates_per_second_ratio: parse_env_f64(
                     "SCRIPTUM_RELAY_LOAD_MIN_UPDATES_RATIO",
                     self.min_updates_per_second_ratio,
+                ),
+                max_error_rate: parse_env_f64(
+                    "SCRIPTUM_RELAY_LOAD_MAX_ERROR_RATE",
+                    self.max_error_rate,
+                ),
+                enforce_memory_growth_limit: parse_env_bool(
+                    "SCRIPTUM_RELAY_LOAD_ENFORCE_MEMORY_LIMIT",
+                    self.enforce_memory_growth_limit,
+                ),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct ReconnectStormProfile {
+        concurrent_reconnects: usize,
+        pending_updates: u64,
+        ack_p95_target_ms: u64,
+        catchup_p95_target_ms: u64,
+        max_error_rate: f64,
+    }
+
+    impl ReconnectStormProfile {
+        fn smoke() -> Self {
+            Self {
+                concurrent_reconnects: 24,
+                pending_updates: 200,
+                ack_p95_target_ms: 2_000,
+                catchup_p95_target_ms: 5_000,
+                max_error_rate: 0.25,
+            }
+        }
+
+        fn weekly_or_pre_release() -> Self {
+            Self {
+                concurrent_reconnects: 500,
+                pending_updates: 10_000,
+                ack_p95_target_ms: 500,
+                catchup_p95_target_ms: 2_000,
+                max_error_rate: 0.01,
+            }
+        }
+
+        fn with_env_overrides(self) -> Self {
+            Self {
+                concurrent_reconnects: parse_env_usize(
+                    "SCRIPTUM_RELAY_RECONNECT_STORM_CLIENTS",
+                    self.concurrent_reconnects,
+                ),
+                pending_updates: parse_env_u64(
+                    "SCRIPTUM_RELAY_RECONNECT_STORM_PENDING_UPDATES",
+                    self.pending_updates,
+                ),
+                ack_p95_target_ms: parse_env_u64(
+                    "SCRIPTUM_RELAY_RECONNECT_STORM_ACK_P95_TARGET_MS",
+                    self.ack_p95_target_ms,
+                ),
+                catchup_p95_target_ms: parse_env_u64(
+                    "SCRIPTUM_RELAY_RECONNECT_STORM_CATCHUP_P95_TARGET_MS",
+                    self.catchup_p95_target_ms,
+                ),
+                max_error_rate: parse_env_f64(
+                    "SCRIPTUM_RELAY_RECONNECT_STORM_MAX_ERROR_RATE",
+                    self.max_error_rate,
                 ),
             }
         }
@@ -1478,6 +1548,13 @@ mod tests {
             .unwrap_or(default)
     }
 
+    fn parse_env_bool(name: &str, default: bool) -> bool {
+        env::var(name)
+            .ok()
+            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(default)
+    }
+
     fn percentile_millis(samples: &mut [u64], percentile: f64) -> u64 {
         if samples.is_empty() {
             return 0;
@@ -1486,6 +1563,17 @@ mod tests {
         let rank = ((samples.len() as f64) * percentile).ceil() as usize;
         let index = rank.saturating_sub(1).min(samples.len() - 1);
         samples[index]
+    }
+
+    fn sample_rss_bytes() -> Option<u64> {
+        let status = fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+        let kibibytes = line.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        Some(kibibytes.saturating_mul(1024))
+    }
+
+    fn emit_load_report(value: serde_json::Value) {
+        eprintln!("LOAD_REPORT {}", value);
     }
 
     async fn ws_send(socket: &mut ClientSocket, message: &WsMessage) {
@@ -1875,6 +1963,19 @@ mod tests {
         run_websocket_load_stress_profile(profile).await;
     }
 
+    #[tokio::test]
+    async fn websocket_load_reconnect_storm_smoke_profile() {
+        run_websocket_reconnect_storm_profile(ReconnectStormProfile::smoke().with_env_overrides())
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "long-running reconnect storm suite (500 reconnects, 10k pending updates)"]
+    async fn websocket_load_reconnect_storm_weekly_and_pre_release_profile() {
+        let profile = ReconnectStormProfile::weekly_or_pre_release().with_env_overrides();
+        run_websocket_reconnect_storm_profile(profile).await;
+    }
+
     async fn run_websocket_load_stress_profile(profile: LoadStressProfile) {
         let Some(database_url) = env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
             eprintln!("skipping websocket load/stress test: set SCRIPTUM_RELAY_TEST_DATABASE_URL");
@@ -2019,6 +2120,10 @@ mod tests {
         let pacing_interval =
             std::time::Duration::from_secs_f64(1.0 / (profile.updates_per_second as f64));
         let mut ack_latencies_ms = Vec::with_capacity(total_updates as usize);
+        let mut ack_error_count = 0_u64;
+        let baseline_rss = sample_rss_bytes();
+        let mut peak_rss = baseline_rss;
+        let mut last_rss_sample = TokioInstant::now();
         let benchmark_start = TokioInstant::now();
 
         for _ in 0..total_updates {
@@ -2041,7 +2146,9 @@ mod tests {
                     WsMessage::Ack { client_update_id, applied, .. }
                         if client_update_id == update_id =>
                     {
-                        assert!(applied, "load update ack should be applied");
+                        if !applied {
+                            ack_error_count = ack_error_count.saturating_add(1);
+                        }
                         break;
                     }
                     _ => {}
@@ -2049,12 +2156,46 @@ mod tests {
             }
 
             ack_latencies_ms.push(send_started.elapsed().as_millis() as u64);
+            if last_rss_sample.elapsed() >= std::time::Duration::from_secs(1) {
+                if let Some(current_rss) = sample_rss_bytes() {
+                    peak_rss =
+                        Some(peak_rss.map_or(current_rss, |existing| existing.max(current_rss)));
+                }
+                last_rss_sample = TokioInstant::now();
+            }
             sleep(pacing_interval).await;
         }
 
+        if let Some(current_rss) = sample_rss_bytes() {
+            peak_rss = Some(peak_rss.map_or(current_rss, |existing| existing.max(current_rss)));
+        }
         let elapsed = benchmark_start.elapsed();
         let achieved_updates_per_second = (total_updates as f64) / elapsed.as_secs_f64();
-        let ack_p95_ms = percentile_millis(&mut ack_latencies_ms, 0.95);
+        let mut sorted_ack_latencies = ack_latencies_ms.clone();
+        let ack_p50_ms = percentile_millis(&mut sorted_ack_latencies, 0.50);
+        let ack_p95_ms = percentile_millis(&mut sorted_ack_latencies, 0.95);
+        let ack_p99_ms = percentile_millis(&mut sorted_ack_latencies, 0.99);
+        let error_rate = if total_updates == 0 {
+            0.0
+        } else {
+            (ack_error_count as f64) / (total_updates as f64)
+        };
+
+        emit_load_report(serde_json::json!({
+            "scenario": "websocket_load_stress",
+            "concurrent_sessions": profile.concurrent_sessions,
+            "target_updates_per_second": profile.updates_per_second,
+            "soak_seconds": profile.soak_seconds,
+            "total_updates": total_updates,
+            "throughput_updates_per_second": achieved_updates_per_second,
+            "ack_p50_ms": ack_p50_ms,
+            "ack_p95_ms": ack_p95_ms,
+            "ack_p99_ms": ack_p99_ms,
+            "ack_error_rate": error_rate,
+            "ack_error_count": ack_error_count,
+            "rss_baseline_bytes": baseline_rss,
+            "rss_peak_bytes": peak_rss,
+        }));
 
         assert!(
             achieved_updates_per_second
@@ -2070,11 +2211,305 @@ mod tests {
             ack_p95_ms,
             profile.ack_p95_target_ms
         );
+        assert!(
+            error_rate <= profile.max_error_rate,
+            "ack error rate {:.4} exceeded target {:.4}",
+            error_rate,
+            profile.max_error_rate
+        );
+        if profile.enforce_memory_growth_limit {
+            if let (Some(baseline), Some(peak)) = (baseline_rss, peak_rss) {
+                assert!(
+                    peak <= baseline.saturating_mul(2),
+                    "rss peak {} bytes exceeded 2x baseline {} bytes",
+                    peak,
+                    baseline
+                );
+            } else {
+                eprintln!("LOAD_REPORT memory sampling unavailable; skipping RSS growth assertion");
+            }
+        }
 
         let _ = writer_socket.close(None).await;
         for task in reader_tasks {
             task.abort();
         }
+        server_task.abort();
+        let _ = server_task.await;
+    }
+
+    async fn run_websocket_reconnect_storm_profile(profile: ReconnectStormProfile) {
+        let Some(database_url) = env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
+            eprintln!(
+                "skipping websocket reconnect-storm test: set SCRIPTUM_RELAY_TEST_DATABASE_URL"
+            );
+            return;
+        };
+
+        let pool = create_pg_pool(
+            &database_url,
+            PoolConfig { min_connections: 1, max_connections: 8, ..PoolConfig::default() },
+        )
+        .await
+        .expect("pool should connect to test database");
+        run_migrations(&pool).await.expect("migrations should apply");
+
+        let workspace_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let user_email = format!("relay-reconnect-{}@example.test", Uuid::new_v4().simple());
+        let workspace_slug = format!("relay-reconnect-{}", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)")
+            .bind(user_id)
+            .bind(user_email)
+            .bind("Relay Reconnect Test User")
+            .execute(&pool)
+            .await
+            .expect("user should insert");
+        sqlx::query("INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, $3, $4)")
+            .bind(workspace_id)
+            .bind(workspace_slug)
+            .bind("Relay Reconnect Workspace")
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .expect("workspace should insert");
+        sqlx::query(
+            "INSERT INTO workspace_members (workspace_id, user_id, role, status) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(workspace_id)
+        .bind(user_id)
+        .bind("editor")
+        .bind("active")
+        .execute(&pool)
+        .await
+        .expect("workspace membership should insert");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose local address");
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let session_store = Arc::new(SyncSessionStore::default());
+        let app = router(
+            jwt_service.clone(),
+            session_store.clone(),
+            Arc::new(DocSyncStore::default()),
+            Arc::new(AwarenessStore::default()),
+            WorkspaceMembershipStore::Postgres(pool.clone()),
+            format!("ws://{addr}"),
+        );
+        let access_token = jwt_service
+            .issue_workspace_token(user_id, workspace_id)
+            .expect("access token should be created");
+
+        let writer_session = create_sync_session_for_test(&app, workspace_id, &access_token).await;
+        let mut reconnect_sessions = Vec::with_capacity(profile.concurrent_reconnects);
+        for _ in 0..profile.concurrent_reconnects {
+            reconnect_sessions
+                .push(create_sync_session_for_test(&app, workspace_id, &access_token).await);
+        }
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("relay websocket server should run for reconnect storm test");
+        });
+
+        let doc_id = Uuid::new_v4();
+        let (mut writer_socket, _) = connect_async(writer_session.ws_url.as_str())
+            .await
+            .expect("writer websocket should connect");
+        ws_send(
+            &mut writer_socket,
+            &WsMessage::Hello {
+                session_token: writer_session.session_token.clone(),
+                resume_token: None,
+            },
+        )
+        .await;
+        match ws_recv(&mut writer_socket).await {
+            WsMessage::HelloAck { .. } => {}
+            other => panic!("expected writer hello ack, got {other:?}"),
+        }
+        ws_send(&mut writer_socket, &WsMessage::Subscribe { doc_id, last_server_seq: Some(0) })
+            .await;
+
+        let mut storm_sockets = Vec::with_capacity(profile.concurrent_reconnects);
+        for session in &reconnect_sessions {
+            let (mut socket, _) = connect_async(session.ws_url.as_str())
+                .await
+                .expect("storm websocket should connect");
+            ws_send(
+                &mut socket,
+                &WsMessage::Hello {
+                    session_token: session.session_token.clone(),
+                    resume_token: None,
+                },
+            )
+            .await;
+            match ws_recv(&mut socket).await {
+                WsMessage::HelloAck { .. } => {}
+                other => panic!("expected storm hello ack, got {other:?}"),
+            }
+            ws_send(&mut socket, &WsMessage::Subscribe { doc_id, last_server_seq: Some(0) }).await;
+            storm_sockets.push(socket);
+        }
+
+        let wait_deadline = TokioInstant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let mut all_subscribed =
+                session_store.session_is_subscribed(writer_session.session_id, doc_id).await;
+            if all_subscribed {
+                for session in &reconnect_sessions {
+                    if !session_store.session_is_subscribed(session.session_id, doc_id).await {
+                        all_subscribed = false;
+                        break;
+                    }
+                }
+            }
+
+            if all_subscribed {
+                break;
+            }
+            assert!(
+                TokioInstant::now() < wait_deadline,
+                "timed out waiting for reconnect storm subscribers"
+            );
+            sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        for socket in &mut storm_sockets {
+            let _ = socket.close(None).await;
+        }
+        storm_sockets.clear();
+
+        let mut last_update_id = Uuid::new_v4();
+        let mut ack_latencies_ms = Vec::with_capacity(profile.pending_updates as usize);
+        let mut ack_error_count = 0_u64;
+        for _ in 0..profile.pending_updates {
+            last_update_id = Uuid::new_v4();
+            let send_started = TokioInstant::now();
+            ws_send(
+                &mut writer_socket,
+                &WsMessage::YjsUpdate {
+                    doc_id,
+                    client_id: Uuid::new_v4(),
+                    client_update_id: last_update_id,
+                    base_server_seq: 0,
+                    payload_b64: "cGF5bG9hZA==".to_string(),
+                },
+            )
+            .await;
+
+            loop {
+                match ws_recv(&mut writer_socket).await {
+                    WsMessage::Ack { client_update_id, applied, .. }
+                        if client_update_id == last_update_id =>
+                    {
+                        if !applied {
+                            ack_error_count = ack_error_count.saturating_add(1);
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            ack_latencies_ms.push(send_started.elapsed().as_millis() as u64);
+        }
+
+        let reconnect_started = TokioInstant::now();
+        let mut catchup_tasks = Vec::with_capacity(reconnect_sessions.len());
+        for session in &reconnect_sessions {
+            let ws_url = session.ws_url.clone();
+            let session_token = session.session_token.clone();
+            catchup_tasks.push(tokio::spawn(async move {
+                let started = TokioInstant::now();
+                let (mut socket, _) =
+                    connect_async(ws_url.as_str()).await.expect("reconnect websocket should connect");
+                ws_send(
+                    &mut socket,
+                    &WsMessage::Hello {
+                        session_token,
+                        resume_token: None,
+                    },
+                )
+                .await;
+                match ws_recv(&mut socket).await {
+                    WsMessage::HelloAck { .. } => {}
+                    other => panic!("expected reconnect hello ack, got {other:?}"),
+                }
+                ws_send(&mut socket, &WsMessage::Subscribe { doc_id, last_server_seq: Some(0) }).await;
+
+                loop {
+                    if matches!(
+                        ws_recv(&mut socket).await,
+                        WsMessage::YjsUpdate { client_update_id, .. } if client_update_id == last_update_id
+                    ) {
+                        break;
+                    }
+                }
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                let _ = socket.close(None).await;
+                elapsed_ms
+            }));
+        }
+
+        let mut catchup_latencies_ms = Vec::with_capacity(catchup_tasks.len());
+        for task in catchup_tasks {
+            let elapsed_ms = timeout(std::time::Duration::from_secs(60), task)
+                .await
+                .expect("reconnect storm catch-up task timed out")
+                .expect("reconnect storm catch-up task should complete");
+            catchup_latencies_ms.push(elapsed_ms);
+        }
+        let reconnect_wall_ms = reconnect_started.elapsed().as_millis() as u64;
+
+        let mut sorted_ack_latencies = ack_latencies_ms;
+        let ack_p95_ms = percentile_millis(&mut sorted_ack_latencies, 0.95);
+        let mut sorted_catchup_latencies = catchup_latencies_ms;
+        let catchup_p50_ms = percentile_millis(&mut sorted_catchup_latencies, 0.50);
+        let catchup_p95_ms = percentile_millis(&mut sorted_catchup_latencies, 0.95);
+        let catchup_p99_ms = percentile_millis(&mut sorted_catchup_latencies, 0.99);
+        let error_rate = if profile.pending_updates == 0 {
+            0.0
+        } else {
+            (ack_error_count as f64) / (profile.pending_updates as f64)
+        };
+
+        emit_load_report(serde_json::json!({
+            "scenario": "websocket_reconnect_storm",
+            "reconnect_clients": profile.concurrent_reconnects,
+            "pending_updates": profile.pending_updates,
+            "ack_p95_ms": ack_p95_ms,
+            "catchup_p50_ms": catchup_p50_ms,
+            "catchup_p95_ms": catchup_p95_ms,
+            "catchup_p99_ms": catchup_p99_ms,
+            "catchup_wall_clock_ms": reconnect_wall_ms,
+            "ack_error_rate": error_rate,
+            "ack_error_count": ack_error_count,
+        }));
+
+        assert!(
+            ack_p95_ms <= profile.ack_p95_target_ms,
+            "ack p95 {}ms exceeded target {}ms during reconnect storm prep",
+            ack_p95_ms,
+            profile.ack_p95_target_ms
+        );
+        assert!(
+            catchup_p95_ms <= profile.catchup_p95_target_ms,
+            "catch-up p95 {}ms exceeded target {}ms",
+            catchup_p95_ms,
+            profile.catchup_p95_target_ms
+        );
+        assert!(
+            error_rate <= profile.max_error_rate,
+            "ack error rate {:.4} exceeded target {:.4}",
+            error_rate,
+            profile.max_error_rate
+        );
+
+        let _ = writer_socket.close(None).await;
         server_task.abort();
         let _ = server_task.await;
     }

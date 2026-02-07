@@ -37,15 +37,9 @@ fn rest_contract_declares_part3_endpoint_matrix() {
         "/v1/ws/{session_id}",
     ];
 
-    let contract_surface = [
-        API_MOD_SOURCE,
-        AUTH_SOURCE,
-        DOCUMENTS_SOURCE,
-        COMMENTS_SOURCE,
-        SEARCH_SOURCE,
-        WS_SOURCE,
-    ]
-    .join("\n");
+    let contract_surface =
+        [API_MOD_SOURCE, AUTH_SOURCE, DOCUMENTS_SOURCE, COMMENTS_SOURCE, SEARCH_SOURCE, WS_SOURCE]
+            .join("\n");
 
     let mut missing = BTreeSet::new();
     for path in expected_paths {
@@ -54,50 +48,23 @@ fn rest_contract_declares_part3_endpoint_matrix() {
         }
     }
 
-    assert!(
-        missing.is_empty(),
-        "missing route declarations for: {missing:?}",
-    );
+    assert!(missing.is_empty(), "missing route declarations for: {missing:?}",);
 }
 
 #[test]
 fn rest_contract_declares_expected_http_method_bindings() {
     let expectations = [
-        (
-            AUTH_SOURCE,
-            "/v1/auth/oauth/github/start",
-            &["post(start_github_oauth)"][..],
-        ),
-        (
-            AUTH_SOURCE,
-            "/v1/auth/oauth/github/callback",
-            &["post(callback_github_oauth)"][..],
-        ),
-        (
-            AUTH_SOURCE,
-            "/v1/auth/token/refresh",
-            &["post(handle_token_refresh)"][..],
-        ),
-        (
-            AUTH_SOURCE,
-            "/v1/auth/logout",
-            &["post(handle_logout)"][..],
-        ),
+        (AUTH_SOURCE, "/v1/auth/oauth/github/start", &["post(start_github_oauth)"][..]),
+        (AUTH_SOURCE, "/v1/auth/oauth/github/callback", &["post(callback_github_oauth)"][..]),
+        (AUTH_SOURCE, "/v1/auth/token/refresh", &["post(handle_token_refresh)"][..]),
+        (AUTH_SOURCE, "/v1/auth/logout", &["post(handle_logout)"][..]),
         (
             API_MOD_SOURCE,
             "/v1/workspaces",
             &["post(workspaces::create_workspace)", ".get(workspaces::list_workspaces)"][..],
         ),
-        (
-            API_MOD_SOURCE,
-            "/v1/workspaces/{id}",
-            &["get(workspaces::get_workspace)"][..],
-        ),
-        (
-            API_MOD_SOURCE,
-            "/v1/workspaces/{id}",
-            &["patch(workspaces::update_workspace)"][..],
-        ),
+        (API_MOD_SOURCE, "/v1/workspaces/{id}", &["get(workspaces::get_workspace)"][..]),
+        (API_MOD_SOURCE, "/v1/workspaces/{id}", &["patch(workspaces::update_workspace)"][..]),
         (
             API_MOD_SOURCE,
             "/v1/workspaces/{workspace_id}/members/{member_id}",
@@ -113,11 +80,7 @@ fn rest_contract_declares_expected_http_method_bindings() {
             "/v1/workspaces/{workspace_id}/invites",
             &["post(members::create_invite)"][..],
         ),
-        (
-            API_MOD_SOURCE,
-            "/v1/invites/{token}/accept",
-            &["post(members::accept_invite)"][..],
-        ),
+        (API_MOD_SOURCE, "/v1/invites/{token}/accept", &["post(members::accept_invite)"][..]),
         (
             API_MOD_SOURCE,
             "/v1/workspaces/{id}/share-links",
@@ -128,11 +91,7 @@ fn rest_contract_declares_expected_http_method_bindings() {
             "/v1/workspaces/{id}/share-links/{share_link_id}",
             &["patch(update_share_link)", "delete(revoke_share_link)"][..],
         ),
-        (
-            API_MOD_SOURCE,
-            "/v1/share-links/redeem",
-            &["post(redeem_share_link)"][..],
-        ),
+        (API_MOD_SOURCE, "/v1/share-links/redeem", &["post(redeem_share_link)"][..]),
         (
             DOCUMENTS_SOURCE,
             "/v1/workspaces/{ws_id}/documents",
@@ -178,30 +137,19 @@ fn rest_contract_declares_expected_http_method_bindings() {
             "/v1/workspaces/{ws_id}/comments/{thread_id}/reopen",
             &["post(reopen_comment_thread)"][..],
         ),
-        (
-            SEARCH_SOURCE,
-            "/v1/workspaces/{id}/search",
-            &["get(search_documents)"][..],
-        ),
+        (SEARCH_SOURCE, "/v1/workspaces/{id}/search", &["get(search_documents)"][..]),
         (
             WS_SOURCE,
             "/v1/workspaces/{workspace_id}/sync-sessions",
             &["post(create_sync_session)"][..],
         ),
-        (
-            WS_SOURCE,
-            "/v1/ws/{session_id}",
-            &["get(ws_upgrade)"][..],
-        ),
+        (WS_SOURCE, "/v1/ws/{session_id}", &["get(ws_upgrade)"][..]),
     ];
 
     for (source, endpoint, required_tokens) in expectations {
         assert!(source.contains(endpoint), "route `{endpoint}` must exist");
         for token in required_tokens {
-            assert!(
-                source.contains(token),
-                "route `{endpoint}` must include token `{token}`",
-            );
+            assert!(source.contains(token), "route `{endpoint}` must include token `{token}`",);
         }
     }
 }

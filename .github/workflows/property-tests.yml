@@ -10,7 +10,7 @@ env:
 
 jobs:
   property-tests-nightly:
-    name: CRDT Convergence + Diff Randomized
+    name: CRDT Convergence + Diff Property Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -23,8 +23,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run CRDT convergence property test (nightly)
-        run: cargo test -p scriptum-daemon randomized_convergence_property_10k_ops_nightly -- --ignored --nocapture
+      - name: Run daemon CRDT convergence property suite
+        run: cargo test -p scriptum-daemon --test crdt_convergence_property -- --nocapture
 
-      - name: Run diff-to-Yjs randomized property test (nightly)
-        run: cargo test -p scriptum-common randomized_large_diffs_nightly -- --ignored --nocapture
+      - name: Run daemon diff-to-Yjs property suite
+        run: cargo test -p scriptum-daemon --test diff_to_yjs_property -- --nocapture

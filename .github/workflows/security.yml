@@ -26,16 +26,30 @@ jobs:
         uses: taiki-e/install-action@cargo-deny
 
       - name: AuthZ bypass checks
-        run: cargo test -p scriptum-relay patch_workspace_requires_owner_role -- --nocapture
+        run: cargo test -p scriptum-relay --test security_authz -- --nocapture
 
       - name: Path traversal checks
-        run: cargo test -p scriptum-common test_reject_backslash_traversal -- --nocapture
-
-      - name: XSS sanitization checks
-        run: cargo test -p scriptum-relay sanitize_strips_script_tags -- --nocapture
+        run: cargo test -p scriptum-daemon --test security_path_traversal -- --nocapture
 
       - name: Token replay checks
-        run: cargo test -p scriptum-relay refresh_reuse_detection_revokes_family -- --nocapture
+        run: cargo test -p scriptum-relay --test security_token -- --nocapture
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: XSS sanitization checks
+        run: pnpm --filter @scriptum/editor exec vitest run src/live-preview/security.test.ts
 
       - name: Brute-force rate limiting checks
         run: cargo test -p scriptum-relay start_rate_limits_and_sets_retry_after_header -- --nocapture

@@ -1758,10 +1758,8 @@ mod tests {
         let raw_token =
             seed_refresh(&store, Uuid::new_v4(), Uuid::new_v4(), Duration::days(30)).await;
 
-        let response = app
-            .oneshot(logout_request(json!({ "refresh_token": raw_token }), None))
-            .await
-            .unwrap();
+        let response =
+            app.oneshot(logout_request(json!({ "refresh_token": raw_token }), None)).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

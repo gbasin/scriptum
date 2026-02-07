@@ -22,7 +22,9 @@ fn websocket_contract_heartbeat_and_timeout_match_spec() {
 
 #[test]
 fn websocket_contract_protocol_version_is_scriptum_sync_v1() {
-    assert!(RELAY_PROTOCOL_SOURCE.contains("pub const CURRENT_VERSION: &str = \"scriptum-sync.v1\""));
+    assert!(
+        RELAY_PROTOCOL_SOURCE.contains("pub const CURRENT_VERSION: &str = \"scriptum-sync.v1\"")
+    );
     assert!(RELAY_PROTOCOL_SOURCE.contains("const SUPPORTED_VERSIONS"));
     assert!(RELAY_PROTOCOL_SOURCE.contains("CURRENT_VERSION"));
 }
@@ -50,19 +52,10 @@ fn websocket_contract_message_shapes_match_spec() {
                 resume_expires_at: "2026-02-07T00:10:00Z".to_string(),
             },
             "hello_ack",
-            &[
-                "type",
-                "server_time",
-                "resume_accepted",
-                "resume_token",
-                "resume_expires_at",
-            ][..],
+            &["type", "server_time", "resume_accepted", "resume_token", "resume_expires_at"][..],
         ),
         (
-            WsMessage::Subscribe {
-                doc_id,
-                last_server_seq: Some(7),
-            },
+            WsMessage::Subscribe { doc_id, last_server_seq: Some(7) },
             "subscribe",
             &["type", "doc_id", "last_server_seq"][..],
         ),
@@ -75,31 +68,16 @@ fn websocket_contract_message_shapes_match_spec() {
                 payload_b64: "AQID".to_string(),
             },
             "yjs_update",
-            &[
-                "type",
-                "doc_id",
-                "client_id",
-                "client_update_id",
-                "base_server_seq",
-                "payload_b64",
-            ][..],
+            &["type", "doc_id", "client_id", "client_update_id", "base_server_seq", "payload_b64"]
+                [..],
         ),
         (
-            WsMessage::Ack {
-                doc_id,
-                client_update_id,
-                server_seq: 8,
-                applied: true,
-            },
+            WsMessage::Ack { doc_id, client_update_id, server_seq: 8, applied: true },
             "ack",
             &["type", "doc_id", "client_update_id", "server_seq", "applied"][..],
         ),
         (
-            WsMessage::Snapshot {
-                doc_id,
-                snapshot_seq: 9,
-                payload_b64: "CQgH".to_string(),
-            },
+            WsMessage::Snapshot { doc_id, snapshot_seq: 9, payload_b64: "CQgH".to_string() },
             "snapshot",
             &["type", "doc_id", "snapshot_seq", "payload_b64"][..],
         ),
@@ -137,10 +115,8 @@ fn websocket_contract_message_shapes_match_spec() {
 
 #[test]
 fn websocket_contract_optional_fields_are_omitted_when_absent() {
-    let hello_without_resume = WsMessage::Hello {
-        session_token: "session-token".to_string(),
-        resume_token: None,
-    };
+    let hello_without_resume =
+        WsMessage::Hello { session_token: "session-token".to_string(), resume_token: None };
     let error_without_doc = WsMessage::Error {
         code: "AUTH_INVALID_TOKEN".to_string(),
         message: "invalid token".to_string(),
@@ -156,12 +132,8 @@ fn websocket_contract_optional_fields_are_omitted_when_absent() {
 }
 
 fn object_keys(value: &Value) -> Vec<String> {
-    let mut keys = value
-        .as_object()
-        .expect("value should be an object")
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut keys =
+        value.as_object().expect("value should be an object").keys().cloned().collect::<Vec<_>>();
     keys.sort();
     keys
 }
@@ -169,10 +141,7 @@ fn object_keys(value: &Value) -> Vec<String> {
 fn parse_u64_const(source: &str, name: &str) -> u64 {
     let needle = format!("const {name}:");
     let index = source.find(&needle).expect("constant must be declared");
-    let line = source[index..]
-        .lines()
-        .next()
-        .expect("constant declaration line must exist");
+    let line = source[index..].lines().next().expect("constant declaration line must exist");
     let raw_value = line
         .split('=')
         .nth(1)
