@@ -24,7 +24,9 @@ describe("mcp tool contract", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const daemonClient: DaemonClient = {
-      request: async () => ({}),
+      async request() {
+        return {} as never;
+      },
     };
     const server = createServer({
       daemonClient,
@@ -66,19 +68,19 @@ describe("mcp tool contract", () => {
       InMemoryTransport.createLinkedPair();
     const calls: Array<{ method: string; params: unknown }> = [];
     const daemonClient: DaemonClient = {
-      request: async (method, params) => {
+      async request(method: string, params?: unknown) {
         calls.push({ method, params: params ?? null });
         if (method === "agent.status") {
           return {
             active_sessions: [],
             change_token: "tok-1",
             echoed_params: params ?? null,
-          };
+          } as never;
         }
         return {
           rpc_method: method,
           echoed_params: params ?? null,
-        };
+        } as never;
       },
     };
     const server = createServer({

@@ -63,27 +63,27 @@ describe("mcp server scaffold", () => {
       ],
     };
     const daemonClient: DaemonClient = {
-      request: async (method, params) => {
+      async request(method: string, params?: unknown) {
         daemonCalls.push({ method, params });
         if (method === "workspace.list") {
-          return workspaceListPayload;
+          return workspaceListPayload as never;
         }
         if (method === "doc.tree") {
-          return docTreePayload;
+          return docTreePayload as never;
         }
         if (method === "doc.read") {
-          return docReadPayload;
+          return docReadPayload as never;
         }
         if (method === "doc.sections") {
-          return docSectionsPayload;
+          return docSectionsPayload as never;
         }
         if (method === "agent.list") {
-          return agentListPayload;
+          return agentListPayload as never;
         }
         return {
           forwarded_method: method,
           forwarded_params: params ?? null,
-        };
+        } as never;
       },
     };
     const server = createServer({

@@ -11,12 +11,14 @@
   "scripts": {
     "build": "echo \"@scriptum/mcp-server build\"",
     "lint": "echo \"@scriptum/mcp-server lint\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest"
   },
   "devDependencies": {
+    "@types/node": "^25.2.1",
     "typescript": "latest",
     "vitest": "latest"
   }

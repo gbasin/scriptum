@@ -289,11 +289,14 @@ function extractChangeToken(payload: unknown): string | null {
 }
 
 function makeToolResult(payload: unknown) {
-  const normalizedPayload = payload ?? null;
+  const text = JSON.stringify(payload ?? null);
   return {
-    content: [{ type: "text", text: JSON.stringify(normalizedPayload) }],
-    structuredContent: normalizedPayload,
-  } as const;
+    content: [{ type: "text" as const, text }],
+    structuredContent:
+      payload != null && typeof payload === "object" && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : undefined,
+  };
 }
 
 function registerResourceHandlers(
@@ -460,5 +463,5 @@ function makeResourceResult(uri: URL, payload: unknown) {
         text: JSON.stringify(normalizedPayload),
       },
     ],
-  } as const;
+  };
 }
