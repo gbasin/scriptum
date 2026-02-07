@@ -18,14 +18,7 @@ import {
   TagsList,
 } from "./sidebar/TagsList";
 import { WorkspaceDropdown } from "./sidebar/WorkspaceDropdown";
-
-const OUTLINE_ACTIVE_OFFSET_PX = 120;
-
-interface OutlineHeading {
-  id: string;
-  level: number;
-  text: string;
-}
+import { Outline } from "./right-panel/Outline";
 
 interface ParsedWikiLink {
   raw: string;
@@ -63,74 +56,6 @@ export function isNewDocumentShortcut(event: KeyboardEvent): boolean {
 function titleFromPath(path: string): string {
   const segments = path.split("/").filter(Boolean);
   return segments[segments.length - 1] ?? path;
-}
-
-function normalizeHeadingSlug(value: string): string {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "section";
-}
-
-function collectOutlineHeadings(container: HTMLElement | null): OutlineHeading[] {
-  if (!container) {
-    return [];
-  }
-
-  const headingElements = Array.from(
-    container.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6"),
-  );
-
-  return headingElements.map((heading, index) => {
-    const text = heading.textContent?.trim() ?? "";
-    if (!heading.id) {
-      heading.id = `outline-${normalizeHeadingSlug(text)}-${index + 1}`;
-    }
-
-    const headingLevelRaw = Number.parseInt(heading.tagName.slice(1), 10);
-    const level = Number.isFinite(headingLevelRaw)
-      ? Math.min(6, Math.max(1, headingLevelRaw))
-      : 1;
-
-    return {
-      id: heading.id,
-      level,
-      text: text || `Section ${index + 1}`,
-    };
-  });
-}
-
-function detectActiveOutlineHeadingId(
-  container: HTMLElement | null,
-): string | null {
-  if (!container) {
-    return null;
-  }
-
-  const headingElements = Array.from(
-    container.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6"),
-  );
-  if (headingElements.length === 0) {
-    return null;
-  }
-
-  let activeHeadingId: string | null = null;
-  for (const heading of headingElements) {
-    if (!heading.id) {
-      continue;
-    }
-    if (heading.getBoundingClientRect().top <= OUTLINE_ACTIVE_OFFSET_PX) {
-      activeHeadingId = heading.id;
-    }
-  }
-
-  if (activeHeadingId) {
-    return activeHeadingId;
-  }
-
-  return headingElements.find((heading) => heading.id)?.id ?? null;
 }
 
 function normalizeBacklinkTarget(value: string): string {
@@ -393,10 +318,7 @@ export function Layout() {
   );
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [outlinePanelOpen, setOutlinePanelOpen] = useState(true);
-  const [outlineHeadings, setOutlineHeadings] = useState<OutlineHeading[]>([]);
-  const [activeOutlineHeadingId, setActiveOutlineHeadingId] = useState<
-    string | null
-  >(null);
+  const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(null);
   const editorAreaRef = useRef<HTMLElement | null>(null);
 
   const workspaceDocuments = useMemo(
@@ -510,47 +432,6 @@ export function Layout() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [createUntitledDocument]);
-
-  useEffect(() => {
-    const container = editorAreaRef.current;
-    if (!container || typeof window === "undefined") {
-      return undefined;
-    }
-
-    let latestOutlineHeadings = collectOutlineHeadings(container);
-    setOutlineHeadings(latestOutlineHeadings);
-    setActiveOutlineHeadingId(detectActiveOutlineHeadingId(container));
-
-    const refreshOutline = () => {
-      latestOutlineHeadings = collectOutlineHeadings(container);
-      setOutlineHeadings(latestOutlineHeadings);
-      setActiveOutlineHeadingId(detectActiveOutlineHeadingId(container));
-    };
-
-    const updateActiveHeading = () => {
-      if (latestOutlineHeadings.length === 0) {
-        setActiveOutlineHeadingId(null);
-        return;
-      }
-      setActiveOutlineHeadingId(detectActiveOutlineHeadingId(container));
-    };
-
-    const observer = new MutationObserver(refreshOutline);
-    observer.observe(container, {
-      characterData: true,
-      childList: true,
-      subtree: true,
-    });
-
-    window.addEventListener("scroll", updateActiveHeading, { passive: true });
-    window.addEventListener("resize", updateActiveHeading);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("scroll", updateActiveHeading);
-      window.removeEventListener("resize", updateActiveHeading);
-    };
-  }, [activeDocumentId, activeWorkspaceId]);
 
   useEffect(() => {
     if (!renameBacklinkToast) {
@@ -730,23 +611,6 @@ export function Layout() {
     }
   };
 
-  const handleOutlineHeadingClick = (headingId: string) => {
-    const container = editorAreaRef.current;
-    if (!container) {
-      return;
-    }
-
-    const targetHeading = Array.from(
-      container.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6"),
-    ).find((heading) => heading.id === headingId);
-    if (!targetHeading) {
-      return;
-    }
-
-    targetHeading.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActiveOutlineHeadingId(headingId);
-  };
-
   const handleBacklinkSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
   };
@@ -816,7 +680,10 @@ export function Layout() {
       <main
         aria-label="Editor area"
         data-testid="app-editor-area"
-        ref={editorAreaRef}
+        ref={(node) => {
+          editorAreaRef.current = node;
+          setOutlineContainer(node);
+        }}
         style={{ flex: 1, padding: "1rem" }}
       >
         <Outlet />
@@ -849,45 +716,7 @@ export function Layout() {
             </button>
           </div>
 
-          {outlineHeadings.length === 0 ? (
-            <p data-testid="outline-empty" style={{ color: "#6b7280", margin: 0 }}>
-              No headings in this document.
-            </p>
-          ) : (
-            <ul
-              aria-label="Document heading outline"
-              data-testid="outline-list"
-              style={{ listStyle: "none", margin: 0, padding: 0 }}
-            >
-              {outlineHeadings.map((heading) => (
-                <li key={heading.id}>
-                  <button
-                    data-active={heading.id === activeOutlineHeadingId}
-                    data-testid={`outline-heading-${heading.id}`}
-                    onClick={() => handleOutlineHeadingClick(heading.id)}
-                    style={{
-                      background:
-                        heading.id === activeOutlineHeadingId ? "#e0e7ff" : "transparent",
-                      border: "none",
-                      borderRadius: "0.375rem",
-                      color: "#111827",
-                      cursor: "pointer",
-                      display: "block",
-                      fontSize: "0.875rem",
-                      marginBottom: "0.25rem",
-                      padding: "0.3rem 0.4rem",
-                      paddingLeft: `${0.4 + (heading.level - 1) * 0.6}rem`,
-                      textAlign: "left",
-                      width: "100%",
-                    }}
-                    type="button"
-                  >
-                    {heading.text}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <Outline editorContainer={outlineContainer} />
 
           <section
             aria-label="Incoming backlinks"
