@@ -8,7 +8,10 @@ function workspaceBase(workspaceId: string): string {
   return `${API_V1_PREFIX}/workspaces/${segment(workspaceId)}`;
 }
 
-function workspaceDocumentBase(workspaceId: string, documentId: string): string {
+function workspaceDocumentBase(
+  workspaceId: string,
+  documentId: string,
+): string {
   return `${workspaceBase(workspaceId)}/documents/${segment(documentId)}`;
 }
 
@@ -76,11 +79,17 @@ export function getDocument(workspaceId: string, documentId: string): string {
   return workspaceDocumentBase(workspaceId, documentId);
 }
 
-export function updateDocument(workspaceId: string, documentId: string): string {
+export function updateDocument(
+  workspaceId: string,
+  documentId: string,
+): string {
   return workspaceDocumentBase(workspaceId, documentId);
 }
 
-export function deleteDocument(workspaceId: string, documentId: string): string {
+export function deleteDocument(
+  workspaceId: string,
+  documentId: string,
+): string {
   return workspaceDocumentBase(workspaceId, documentId);
 }
 
@@ -100,7 +109,10 @@ export function createComment(workspaceId: string, documentId: string): string {
   return `${workspaceDocumentBase(workspaceId, documentId)}/comments`;
 }
 
-export function addCommentMessage(workspaceId: string, commentId: string): string {
+export function addCommentMessage(
+  workspaceId: string,
+  commentId: string,
+): string {
   return `${workspaceBase(workspaceId)}/comments/${segment(commentId)}/messages`;
 }
 
@@ -116,7 +128,10 @@ export function createShareLink(workspaceId: string): string {
   return `${workspaceBase(workspaceId)}/share-links`;
 }
 
-export function updateShareLink(workspaceId: string, shareLinkId: string): string {
+export function updateShareLink(
+  workspaceId: string,
+  shareLinkId: string,
+): string {
   return `${workspaceBase(workspaceId)}/share-links/${segment(shareLinkId)}`;
 }
 

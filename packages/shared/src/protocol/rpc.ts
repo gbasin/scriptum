@@ -14,7 +14,11 @@ export interface JsonRpcErrorResponse {
   error: JsonRpcError;
 }
 
-export type RpcBundleInclude = "parents" | "children" | "backlinks" | "comments";
+export type RpcBundleInclude =
+  | "parents"
+  | "children"
+  | "backlinks"
+  | "comments";
 
 export type AgentClaimMode = "exclusive" | "shared";
 
@@ -200,7 +204,7 @@ export interface DocDiffResult {
   patch_md: string;
 }
 
-export interface AgentWhoamiParams {}
+export type AgentWhoamiParams = {};
 
 export interface AgentWhoamiResult {
   agent_id: string;

@@ -79,4 +79,3 @@ export type WsMessage =
   | SnapshotMessage
   | AwarenessUpdateMessage
   | ErrorMessage;
-

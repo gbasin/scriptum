@@ -13,7 +13,8 @@ describe("mcp server scaffold", () => {
   });
 
   it("registers tool and resource handlers over MCP transport", async () => {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     const daemonCalls: Array<{ method: string; params: unknown }> = [];
     const workspaceListPayload = {
       items: [
@@ -132,7 +133,8 @@ describe("mcp server scaffold", () => {
       ).toBe(true);
       expect(
         resourceTemplates.resourceTemplates.some(
-          (resource) => resource.uriTemplate === "scriptum://docs/{id}/sections",
+          (resource) =>
+            resource.uriTemplate === "scriptum://docs/{id}/sections",
         ),
       ).toBe(true);
 
@@ -370,7 +372,9 @@ describe("mcp server scaffold", () => {
       const agentsResourceResult = await client.readResource({
         uri: "scriptum://agents",
       });
-      const agentsResourcePayload = readResourceTextPayload(agentsResourceResult) as {
+      const agentsResourcePayload = readResourceTextPayload(
+        agentsResourceResult,
+      ) as {
         connected_agent: string;
         total_agents: number;
         workspaces: Array<{

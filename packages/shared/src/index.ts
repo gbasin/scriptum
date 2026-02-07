@@ -1,3 +1,36 @@
+export type {
+  AcceptInviteRequest,
+  AclOverride,
+  AddCommentMessageRequest,
+  AddTagsRequest,
+  AuthLogoutRequest,
+  AuthRefreshRequest,
+  AuthRefreshResponse,
+  CreateAclOverrideRequest,
+  CreateCommentRequest,
+  CreateDocumentRequest,
+  CreateShareLinkRequest,
+  CreateWorkspaceRequest,
+  InviteToWorkspaceRequest,
+  OAuthCallbackRequest,
+  OAuthCallbackResponse,
+  OAuthStartRequest,
+  OAuthStartResponse,
+  PagedResponse,
+  RelayErrorEnvelope,
+  ReopenCommentRequest,
+  ResolveCommentRequest,
+  ScriptumApiClientOptions,
+  SearchDocumentResult,
+  UpdateDocumentRequest,
+  UpdateShareLinkRequest,
+  UpdateWorkspaceRequest,
+  WorkspaceMember,
+} from "./api/client";
+export {
+  ScriptumApiClient,
+  ScriptumApiError,
+} from "./api/client";
 export {
   acceptInvite,
   addCommentMessage,
@@ -30,69 +63,6 @@ export {
   updateShareLink,
   updateWorkspace,
 } from "./api/endpoints";
-export {
-  ScriptumApiClient,
-  ScriptumApiError,
-} from "./api/client";
-export type {
-  AcceptInviteRequest,
-  AclOverride,
-  AddCommentMessageRequest,
-  AddTagsRequest,
-  AuthLogoutRequest,
-  AuthRefreshRequest,
-  AuthRefreshResponse,
-  CreateAclOverrideRequest,
-  CreateCommentRequest,
-  CreateDocumentRequest,
-  CreateShareLinkRequest,
-  CreateWorkspaceRequest,
-  InviteToWorkspaceRequest,
-  OAuthCallbackRequest,
-  OAuthCallbackResponse,
-  OAuthStartRequest,
-  OAuthStartResponse,
-  PagedResponse,
-  RelayErrorEnvelope,
-  ReopenCommentRequest,
-  ResolveCommentRequest,
-  ScriptumApiClientOptions,
-  SearchDocumentResult,
-  UpdateDocumentRequest,
-  UpdateShareLinkRequest,
-  UpdateWorkspaceRequest,
-  WorkspaceMember,
-} from "./api/client";
-export type {
-  AckMessage,
-  AwarenessPeer,
-  AwarenessUpdateMessage,
-  ErrorMessage,
-  HelloAckMessage,
-  HelloMessage,
-  SnapshotMessage,
-  SubscribeMessage,
-  WsMessage,
-  WsMessageType,
-  YjsUpdateMessage,
-} from "./protocol/ws";
-export type { Agent } from "./types/agent";
-export type { CommentMessage, CommentThread } from "./types/comment";
-export type { Document } from "./types/document";
-export type { Section } from "./types/section";
-export type { ShareLink, SyncSession } from "./types/sync";
-export type {
-  Workspace,
-  WorkspaceAgentsConfig,
-  WorkspaceAppearanceConfig,
-  WorkspaceConfig,
-  WorkspaceDefaultRole,
-  WorkspaceDensity,
-  WorkspaceGeneralConfig,
-  WorkspaceGitSyncConfig,
-  WorkspacePermissionsConfig,
-  WorkspaceTheme,
-} from "./types/workspace";
 export type {
   AgentClaimMode,
   AgentClaimParams,
@@ -145,3 +115,33 @@ export type {
   WorkspaceOpenResult,
   YjsOps,
 } from "./protocol/rpc";
+export type {
+  AckMessage,
+  AwarenessPeer,
+  AwarenessUpdateMessage,
+  ErrorMessage,
+  HelloAckMessage,
+  HelloMessage,
+  SnapshotMessage,
+  SubscribeMessage,
+  WsMessage,
+  WsMessageType,
+  YjsUpdateMessage,
+} from "./protocol/ws";
+export type { Agent } from "./types/agent";
+export type { CommentMessage, CommentThread } from "./types/comment";
+export type { Document } from "./types/document";
+export type { Section } from "./types/section";
+export type { ShareLink, SyncSession } from "./types/sync";
+export type {
+  Workspace,
+  WorkspaceAgentsConfig,
+  WorkspaceAppearanceConfig,
+  WorkspaceConfig,
+  WorkspaceDefaultRole,
+  WorkspaceDensity,
+  WorkspaceGeneralConfig,
+  WorkspaceGitSyncConfig,
+  WorkspacePermissionsConfig,
+  WorkspaceTheme,
+} from "./types/workspace";

@@ -53,14 +53,18 @@ describe("api endpoint builders", () => {
     );
     expect(listDocuments("ws-1")).toBe("/v1/workspaces/ws-1/documents");
     expect(createDocument("ws-1")).toBe("/v1/workspaces/ws-1/documents");
-    expect(getDocument("ws-1", "doc-1")).toBe("/v1/workspaces/ws-1/documents/doc-1");
+    expect(getDocument("ws-1", "doc-1")).toBe(
+      "/v1/workspaces/ws-1/documents/doc-1",
+    );
     expect(updateDocument("ws-1", "doc-1")).toBe(
       "/v1/workspaces/ws-1/documents/doc-1",
     );
     expect(deleteDocument("ws-1", "doc-1")).toBe(
       "/v1/workspaces/ws-1/documents/doc-1",
     );
-    expect(addTags("ws-1", "doc-1")).toBe("/v1/workspaces/ws-1/documents/doc-1/tags");
+    expect(addTags("ws-1", "doc-1")).toBe(
+      "/v1/workspaces/ws-1/documents/doc-1/tags",
+    );
     expect(searchDocuments("ws-1")).toBe("/v1/workspaces/ws-1/search");
     expect(listComments("ws-1", "doc-1")).toBe(
       "/v1/workspaces/ws-1/documents/doc-1/comments",
@@ -91,7 +95,9 @@ describe("api endpoint builders", () => {
   });
 
   it("encodes path segments", () => {
-    expect(getWorkspace("ws/team alpha")).toBe("/v1/workspaces/ws%2Fteam%20alpha");
+    expect(getWorkspace("ws/team alpha")).toBe(
+      "/v1/workspaces/ws%2Fteam%20alpha",
+    );
     expect(getDocument("ws-1", "docs/path.md")).toBe(
       "/v1/workspaces/ws-1/documents/docs%2Fpath.md",
     );

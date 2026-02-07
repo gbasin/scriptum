@@ -125,7 +125,9 @@ async function sendRequestAndReadResponseLine(
     let responseBuffer = "";
 
     const timeoutHandle = setTimeout(() => {
-      fail(new Error(`timed out waiting for daemon response after ${timeoutMs}ms`));
+      fail(
+        new Error(`timed out waiting for daemon response after ${timeoutMs}ms`),
+      );
     }, timeoutMs);
 
     const cleanup = () => {

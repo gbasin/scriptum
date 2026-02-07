@@ -1,5 +1,5 @@
-import { createServer, type Server as NetServer } from "node:net";
 import { rm } from "node:fs/promises";
+import { createServer, type Server as NetServer } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -26,7 +26,10 @@ describe("createDaemonClient", () => {
         }
 
         const line = requestBuffer.slice(0, newlineIndex);
-        const request = JSON.parse(line) as { method: string; params?: unknown };
+        const request = JSON.parse(line) as {
+          method: string;
+          params?: unknown;
+        };
         receivedMethod = request.method;
         receivedParams = request.params ?? null;
 
@@ -51,7 +54,10 @@ describe("createDaemonClient", () => {
 
     try {
       const client = createDaemonClient({ socketPath, timeoutMs: 1_000 });
-      const result = await client.request<{ agent_id: string }>("agent.whoami", {});
+      const result = await client.request<{ agent_id: string }>(
+        "agent.whoami",
+        {},
+      );
 
       expect(result.agent_id).toBe("claude-1");
       expect(receivedMethod).toBe("agent.whoami");
@@ -75,9 +81,9 @@ describe("createDaemonClient", () => {
       timeoutMs: 500,
     });
 
-    await expect(
-      client.request("workspace.list", {}),
-    ).rejects.toBeInstanceOf(DaemonNotRunningError);
+    await expect(client.request("workspace.list", {})).rejects.toBeInstanceOf(
+      DaemonNotRunningError,
+    );
   });
 });
 
@@ -94,7 +100,10 @@ async function cleanupSocketFile(socketPath: string): Promise<void> {
   await rm(socketPath, { force: true });
 }
 
-async function listenOnSocket(server: NetServer, socketPath: string): Promise<void> {
+async function listenOnSocket(
+  server: NetServer,
+  socketPath: string,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(socketPath, () => resolve());

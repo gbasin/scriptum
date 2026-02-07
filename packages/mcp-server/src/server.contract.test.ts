@@ -21,7 +21,8 @@ const MCP_TO_DAEMON_CONTRACT: Record<string, string> = {
 
 describe("mcp tool contract", () => {
   it("exposes the exact tool set expected by the daemon RPC contract", async () => {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     const daemonClient: DaemonClient = {
       request: async () => ({}),
     };
@@ -61,7 +62,8 @@ describe("mcp tool contract", () => {
   });
 
   it("maps MCP passthrough tools to the expected daemon methods", async () => {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     const calls: Array<{ method: string; params: unknown }> = [];
     const daemonClient: DaemonClient = {
       request: async (method, params) => {

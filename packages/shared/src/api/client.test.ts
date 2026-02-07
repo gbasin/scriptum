@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ScriptumApiClient, ScriptumApiError } from "./client";
+import { ScriptumApiClient, type ScriptumApiError } from "./client";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -75,7 +75,7 @@ describe("ScriptumApiClient", () => {
     await client.updateWorkspace(
       "w-1",
       { slug: "w-1-updated" },
-      { ifMatch: "\"etag-1\"" },
+      { ifMatch: '"etag-1"' },
     );
 
     const [, createInit] = fetchImpl.mock.calls[0]!;
@@ -84,7 +84,7 @@ describe("ScriptumApiClient", () => {
 
     const [, patchInit] = fetchImpl.mock.calls[1]!;
     expect(patchInit?.method).toBe("PATCH");
-    expect(readHeader(patchInit, "If-Match")).toBe("\"etag-1\"");
+    expect(readHeader(patchInit, "If-Match")).toBe('"etag-1"');
   });
 
   it("does not add idempotency key to auth endpoints", async () => {

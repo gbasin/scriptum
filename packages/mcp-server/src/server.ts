@@ -1,9 +1,12 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer,
+  ResourceTemplate,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { CallToolRequestParamsSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestParamsSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createDaemonClient, type DaemonClient } from "./daemon-client";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
@@ -11,7 +14,8 @@ const SERVER_INFO: Implementation = {
   name: "scriptum-mcp-server",
   version: "0.0.0",
 };
-const PASSTHROUGH_TOOL_INPUT_SCHEMA = CallToolRequestParamsSchema.shape.arguments;
+const PASSTHROUGH_TOOL_INPUT_SCHEMA =
+  CallToolRequestParamsSchema.shape.arguments;
 
 interface ToolDefinition {
   readonly description: string;
@@ -120,15 +124,11 @@ class DefaultScriptumMcpServer implements ScriptumMcpServer {
     this.daemonClient = options.daemonClient ?? createDaemonClient();
     this.transportFactory = options.transportFactory ?? createStdioTransport;
 
-    registerToolHandlers(
-      this.mcpServer,
-      this.daemonClient,
-      () => this.resolveAgentName(),
+    registerToolHandlers(this.mcpServer, this.daemonClient, () =>
+      this.resolveAgentName(),
     );
-    registerResourceHandlers(
-      this.mcpServer,
-      this.daemonClient,
-      () => this.resolveAgentName(),
+    registerResourceHandlers(this.mcpServer, this.daemonClient, () =>
+      this.resolveAgentName(),
     );
   }
 
@@ -151,7 +151,9 @@ class DefaultScriptumMcpServer implements ScriptumMcpServer {
   }
 
   resolveAgentName(): string {
-    return resolveAgentNameFromClientInfo(this.mcpServer.server.getClientVersion());
+    return resolveAgentNameFromClientInfo(
+      this.mcpServer.server.getClientVersion(),
+    );
   }
 }
 
@@ -208,13 +210,10 @@ function registerToolHandlers(
     async (toolArgs) => {
       const subscribeParams = toToolPayload(toolArgs);
       const previousChangeToken = extractPreviousChangeToken(subscribeParams);
-      const statusPayload = await daemonClient.request(
-        "agent.status",
-        {
-          ...stripSubscribeTokenParams(subscribeParams),
-          agent_name: resolveAgentName(),
-        },
-      );
+      const statusPayload = await daemonClient.request("agent.status", {
+        ...stripSubscribeTokenParams(subscribeParams),
+        agent_name: resolveAgentName(),
+      });
       const currentChangeToken = extractChangeToken(statusPayload);
 
       return makeToolResult({
@@ -321,17 +320,19 @@ function registerResourceHandlers(
     "scriptum://agents",
     {
       title: "Scriptum Agents",
-      description:
-        "List active agents grouped by workspace.",
+      description: "List active agents grouped by workspace.",
       mimeType: "application/json",
     },
     async (uri) => {
       const workspaces = await listWorkspaces(daemonClient);
       const workspacesWithAgents = [];
       for (const workspace of workspaces) {
-        const agentList = await daemonClient.request<AgentListResponse>("agent.list", {
-          workspace_id: workspace.workspace_id,
-        });
+        const agentList = await daemonClient.request<AgentListResponse>(
+          "agent.list",
+          {
+            workspace_id: workspace.workspace_id,
+          },
+        );
         workspacesWithAgents.push({
           workspace_id: workspace.workspace_id,
           name: workspace.name,
@@ -432,7 +433,11 @@ async function resolveWorkspaceForDocId(
 function parseResourceVariable(variables: Variables, key: string): string {
   const value = variables[key];
   const raw =
-    typeof value === "string" ? value : Array.isArray(value) ? value[0] : undefined;
+    typeof value === "string"
+      ? value
+      : Array.isArray(value)
+        ? value[0]
+        : undefined;
   if (!raw) {
     throw new Error(`resource URI is missing required variable: ${key}`);
   }

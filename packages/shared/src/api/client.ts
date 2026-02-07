@@ -297,7 +297,9 @@ async function parseJsonMaybe(response: Response): Promise<unknown> {
 export class ScriptumApiClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly tokenProvider: (() => Promise<string | null>) | (() => string | null);
+  private readonly tokenProvider:
+    | (() => Promise<string | null>)
+    | (() => string | null);
   private readonly idempotencyKeyFactory: () => string;
 
   constructor(options: ScriptumApiClientOptions) {
@@ -358,7 +360,10 @@ export class ScriptumApiClient {
     );
   }
 
-  private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  private async request<T>(
+    path: string,
+    options: RequestOptions = {},
+  ): Promise<T> {
     const method = options.method ?? "GET";
     const url = this.buildUrl(path, options.query);
     const headers = new Headers();
@@ -385,7 +390,8 @@ export class ScriptumApiClient {
     const response = await this.fetchImpl(url.toString(), {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
     });
 
     if (!response.ok) {
@@ -403,7 +409,9 @@ export class ScriptumApiClient {
     });
   }
 
-  authOAuthCallback(body: OAuthCallbackRequest): Promise<OAuthCallbackResponse> {
+  authOAuthCallback(
+    body: OAuthCallbackRequest,
+  ): Promise<OAuthCallbackResponse> {
     return this.request(authOAuthCallbackPath(), {
       method: "POST",
       body,
@@ -436,7 +444,9 @@ export class ScriptumApiClient {
     });
   }
 
-  createWorkspace(body: CreateWorkspaceRequest): Promise<{ workspace: Workspace }> {
+  createWorkspace(
+    body: CreateWorkspaceRequest,
+  ): Promise<{ workspace: Workspace }> {
     return this.request(createWorkspacePath(), {
       method: "POST",
       body,
@@ -547,7 +557,11 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     params?: { include_content?: boolean; include_sections?: boolean },
-  ): Promise<{ document: Document; content_md?: string; sections?: Section[] }> {
+  ): Promise<{
+    document: Document;
+    content_md?: string;
+    sections?: Section[];
+  }> {
     return this.request(getDocumentPath(workspaceId, documentId), {
       query: params,
     });
@@ -603,7 +617,9 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     params?: { status?: "open" | "resolved"; limit?: number; cursor?: string },
-  ): Promise<PagedResponse<{ thread: CommentThread; messages: CommentMessage[] }>> {
+  ): Promise<
+    PagedResponse<{ thread: CommentThread; messages: CommentMessage[] }>
+  > {
     return this.request(listCommentsPath(workspaceId, documentId), {
       query: params,
     });
