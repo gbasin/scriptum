@@ -1,0 +1,30 @@
+name: Property Tests
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  property-tests-nightly:
+    name: CRDT Convergence + Diff Randomized
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run CRDT convergence property test (nightly)
+        run: cargo test -p scriptum-daemon randomized_convergence_property_10k_ops_nightly -- --ignored --nocapture
+
+      - name: Run diff-to-Yjs randomized property test (nightly)
+        run: cargo test -p scriptum-common randomized_large_diffs_nightly -- --ignored --nocapture
