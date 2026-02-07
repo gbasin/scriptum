@@ -104,6 +104,15 @@ function renderUseYjs(options: UseYjsOptions) {
   };
 }
 
+function requireProvider(
+  provider: FakeCollaborationProvider | null,
+): FakeCollaborationProvider {
+  if (provider === null) {
+    throw new Error("fakeProvider was not initialized");
+  }
+  return provider;
+}
+
 describe("useYjs", () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -131,6 +140,7 @@ describe("useYjs", () => {
       workspaceId: "ws-alpha",
     });
     const state = harness.latest();
+    const provider = requireProvider(fakeProvider);
 
     expect(createCollaborationProviderMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -139,11 +149,11 @@ describe("useYjs", () => {
         url: "ws://127.0.0.1:39091/yjs",
       }),
     );
-    expect(state.provider).toBe(fakeProvider);
-    expect(state.ydoc).toBe(fakeProvider?.doc);
-    expect(state.ytext).toBe(fakeProvider?.yText);
+    expect(state.provider).toBe(provider);
+    expect(state.ydoc).toBe(provider.doc);
+    expect(state.ytext).toBe(provider.yText);
     expect(state.status).toBe("connected");
-    expect(fakeProvider?.connect).toHaveBeenCalledTimes(1);
+    expect(provider.connect).toHaveBeenCalledTimes(1);
 
     harness.unmount();
   });
@@ -162,11 +172,12 @@ describe("useYjs", () => {
     });
     const state = harness.latest();
     const docDestroySpy = vi.spyOn(state.ydoc as Y.Doc, "destroy");
+    const provider = requireProvider(fakeProvider);
 
     harness.unmount();
 
-    expect(fakeProvider?.disconnect).toHaveBeenCalledTimes(1);
-    expect(fakeProvider?.destroy).toHaveBeenCalledTimes(1);
+    expect(provider.disconnect).toHaveBeenCalledTimes(1);
+    expect(provider.destroy).toHaveBeenCalledTimes(1);
     expect(docDestroySpy).toHaveBeenCalledTimes(1);
   });
 
@@ -185,19 +196,20 @@ describe("useYjs", () => {
       reconnectDelayMs: 25,
       runtime: "desktop",
     });
+    const provider = requireProvider(fakeProvider);
 
-    expect(fakeProvider?.connect).toHaveBeenCalledTimes(1);
+    expect(provider.connect).toHaveBeenCalledTimes(1);
     expect(harness.latest().status).toBe("connected");
 
     act(() => {
-      fakeProvider?.provider.emitStatus("disconnected");
+      provider.provider.emitStatus("disconnected");
     });
     expect(harness.latest().status).toBe("disconnected");
 
     act(() => {
       vi.advanceTimersByTime(25);
     });
-    expect(fakeProvider?.connect).toHaveBeenCalledTimes(2);
+    expect(provider.connect).toHaveBeenCalledTimes(2);
     expect(harness.latest().status).toBe("connected");
 
     harness.unmount();
@@ -218,8 +230,9 @@ describe("useYjs", () => {
       docId: "doc-error",
       runtime: "desktop",
     });
+    const provider = requireProvider(fakeProvider);
 
-    expect(fakeProvider?.connect).toHaveBeenCalledTimes(1);
+    expect(provider.connect).toHaveBeenCalledTimes(1);
     expect(harness.latest().status).toBe("error");
 
     harness.unmount();
@@ -248,4 +261,3 @@ describe("useYjs", () => {
     harness.unmount();
   });
 });
-
