@@ -7,14 +7,8 @@ use uuid::Uuid;
 
 #[test]
 fn rejects_parent_directory_traversal_sequences() {
-    assert_eq!(
-        normalize_path("../../../etc/passwd"),
-        Err(PathError::Traversal("..".to_string()))
-    );
-    assert_eq!(
-        normalize_path("docs/../secrets.md"),
-        Err(PathError::Traversal("..".to_string()))
-    );
+    assert_eq!(normalize_path("../../../etc/passwd"), Err(PathError::Traversal("..".to_string())));
+    assert_eq!(normalize_path("docs/../secrets.md"), Err(PathError::Traversal("..".to_string())));
 }
 
 #[test]
@@ -58,13 +52,9 @@ async fn workspace_import_ignores_symlink_escape_attempts() {
         "workspace.create should succeed: {create_response:?}"
     );
 
-    let result = create_response
-        .result
-        .expect("workspace.create result should exist");
-    let workspace_id: Uuid = serde_json::from_value(
-        result["workspace_id"].clone(),
-    )
-    .expect("workspace_id should decode");
+    let result = create_response.result.expect("workspace.create result should exist");
+    let workspace_id: Uuid =
+        serde_json::from_value(result["workspace_id"].clone()).expect("workspace_id should decode");
 
     let tree_request = Request::new(
         "doc.tree",
@@ -72,10 +62,7 @@ async fn workspace_import_ignores_symlink_escape_attempts() {
         RequestId::Number(902),
     );
     let tree_response = dispatch_request(tree_request, &state).await;
-    assert!(
-        tree_response.error.is_none(),
-        "doc.tree should succeed: {tree_response:?}"
-    );
+    assert!(tree_response.error.is_none(), "doc.tree should succeed: {tree_response:?}");
     let tree = tree_response.result.expect("doc.tree result should exist");
     assert_eq!(
         tree["total"].as_u64(),

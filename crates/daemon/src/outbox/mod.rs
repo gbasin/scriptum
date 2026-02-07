@@ -463,7 +463,7 @@ mod tests {
         // Fail MAX_ATTEMPTS times.
         for i in 0..MAX_ATTEMPTS {
             // Advance time past the backoff.
-            now = now + chrono::Duration::seconds(60);
+            now += chrono::Duration::seconds(60);
             let ready = q.ready_to_send(now).expect("ready");
             assert!(!ready.is_empty(), "attempt {i}: should be ready");
             q.mark_sent(id).expect("mark_sent");
@@ -471,7 +471,7 @@ mod tests {
         }
 
         // Should NOT appear in ready_to_send anymore (it's dead).
-        now = now + chrono::Duration::seconds(60);
+        now += chrono::Duration::seconds(60);
         let ready = q.ready_to_send(now).expect("ready after dead");
         assert!(ready.is_empty());
 

@@ -50,7 +50,7 @@ where
         }
         OutputFormat::Json => {
             serde_json::to_writer(&mut out, value)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             writeln!(out)
         }
     }
@@ -74,7 +74,7 @@ where
         }
         OutputFormat::Json => {
             serde_json::to_writer(&mut *writer, value)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             writeln!(writer)
         }
     }

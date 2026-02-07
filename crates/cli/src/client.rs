@@ -184,7 +184,7 @@ impl DaemonClient {
                 );
             }
 
-            return response.result.context("daemon json-rpc response missing `result` field");
+            response.result.context("daemon json-rpc response missing `result` field")
         }
 
         #[cfg(not(unix))]

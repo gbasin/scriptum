@@ -43,20 +43,17 @@ use uuid::Uuid;
 /// Controls git sync behavior for this workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum GitSyncPolicy {
     /// No automatic git operations.
     Disabled,
     /// Commit on triggers but never push.
+    #[default]
     Manual,
     /// Commit + push with rebase on triggers.
     AutoRebase,
 }
 
-impl Default for GitSyncPolicy {
-    fn default() -> Self {
-        Self::Manual
-    }
-}
 
 // ── Git state ───────────────────────────────────────────────────────
 

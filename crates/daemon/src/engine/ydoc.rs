@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn test_create_new_doc() {
         let doc = YDoc::new();
-        assert!(doc.encode_state().len() > 0);
+        assert!(!doc.encode_state().is_empty());
     }
 
     #[test]

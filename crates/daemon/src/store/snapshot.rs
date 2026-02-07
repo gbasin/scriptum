@@ -81,9 +81,8 @@ impl SnapshotStore {
 
         let target_path = self.snapshot_path(doc_id);
         let tmp_path = self.temp_path_for(doc_id);
-        let mut file = open_private_truncate(&tmp_path).with_context(|| {
-            format!("failed to open temp snapshot `{}`", tmp_path.display())
-        })?;
+        let mut file = open_private_truncate(&tmp_path)
+            .with_context(|| format!("failed to open temp snapshot `{}`", tmp_path.display()))?;
         ensure_owner_only_file(&tmp_path)?;
 
         file.write_all(&header).context("failed to write snapshot header")?;
@@ -310,15 +309,12 @@ mod tests {
         let store = SnapshotStore::new(tmp.path().join("crdt_store")).expect("snapshot store");
         let doc_id = Uuid::new_v4();
 
-        let path = store
-            .save_snapshot(doc_id, 1, b"snapshot payload")
-            .expect("snapshot should be saved");
+        let path =
+            store.save_snapshot(doc_id, 1, b"snapshot payload").expect("snapshot should be saved");
 
-        let mode = std::fs::metadata(path)
-            .expect("snapshot metadata should load")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode =
+            std::fs::metadata(path).expect("snapshot metadata should load").permissions().mode()
+                & 0o777;
         assert_eq!(mode, 0o600);
     }
 }

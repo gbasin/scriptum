@@ -18,10 +18,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             auth::init_deep_link_bridge(app);
-            if let Err(error) = tray::init(&app.handle()) {
+            if let Err(error) = tray::init(app.handle()) {
                 eprintln!("failed to initialize system tray: {error}");
             }
-            updater::init(&app.handle());
+            updater::init(app.handle());
             tauri::async_runtime::spawn(async {
                 if let Err(error) = daemon::run_embedded_daemon().await {
                     eprintln!("embedded daemon exited unexpectedly: {error:#}");
@@ -29,7 +29,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .menu(|app| menu::build_menu(app))
+        .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
         .invoke_handler(tauri::generate_handler![
             commands::greet,

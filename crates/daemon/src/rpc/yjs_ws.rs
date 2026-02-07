@@ -143,9 +143,9 @@ async fn process_incoming_binary(
     {
         let awareness = state.inner.awareness.lock().await;
         let mut decoder = DecoderV1::new(Cursor::new(payload));
-        let mut reader = MessageReader::new(&mut decoder);
+        let reader = MessageReader::new(&mut decoder);
 
-        while let Some(next_message) = reader.next() {
+        for next_message in reader {
             let message = next_message.context("failed to decode y-sync message")?;
             match message {
                 Message::Sync(SyncMessage::SyncStep1(state_vector)) => {

@@ -77,8 +77,9 @@ pub fn ensure_owner_only_file(path: &Path) -> Result<()> {
             .with_context(|| format!("failed to read metadata for `{}`", path.display()))?;
         let mode = metadata.permissions().mode() & 0o777;
         if mode != 0o600 {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("failed to set owner-only mode on `{}`", path.display()))?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).with_context(|| {
+                format!("failed to set owner-only mode on `{}`", path.display())
+            })?;
         }
     }
 
@@ -103,8 +104,9 @@ pub fn ensure_owner_only_dir(path: &Path) -> Result<()> {
             .with_context(|| format!("failed to read metadata for `{}`", path.display()))?;
         let mode = metadata.permissions().mode() & 0o777;
         if mode != 0o700 {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-                .with_context(|| format!("failed to set owner-only mode on `{}`", path.display()))?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
+                format!("failed to set owner-only mode on `{}`", path.display())
+            })?;
         }
     }
 
@@ -151,9 +153,8 @@ fn master_key() -> Result<[u8; MASTER_KEY_BYTES]> {
 
 fn load_or_create_master_key() -> Result<[u8; MASTER_KEY_BYTES]> {
     if let Ok(value) = std::env::var("SCRIPTUM_DAEMON_MASTER_KEY_BASE64") {
-        return decode_key(&value).context(
-            "SCRIPTUM_DAEMON_MASTER_KEY_BASE64 must be a base64url-no-pad 32-byte key",
-        );
+        return decode_key(&value)
+            .context("SCRIPTUM_DAEMON_MASTER_KEY_BASE64 must be a base64url-no-pad 32-byte key");
     }
 
     let store = KeyringSecretStore;
@@ -184,11 +185,7 @@ fn decode_key(encoded: &str) -> Result<[u8; MASTER_KEY_BYTES]> {
         .decode(encoded.trim())
         .context("master key is not valid base64url-no-pad")?;
     if bytes.len() != MASTER_KEY_BYTES {
-        bail!(
-            "master key must be {} bytes, got {} bytes",
-            MASTER_KEY_BYTES,
-            bytes.len()
-        );
+        bail!("master key must be {} bytes, got {} bytes", MASTER_KEY_BYTES, bytes.len());
     }
 
     let mut key = [0u8; MASTER_KEY_BYTES];
@@ -238,17 +235,15 @@ struct KeyringSecretStore;
 
 impl SecretStore for KeyringSecretStore {
     fn set_secret(&self, service: &str, account: &str, value: &str) -> Result<()> {
-        let entry = keyring::Entry::new(service, account)
-            .context("failed to initialize keychain entry")?;
-        entry
-            .set_password(value)
-            .context("failed to write keychain entry")?;
+        let entry =
+            keyring::Entry::new(service, account).context("failed to initialize keychain entry")?;
+        entry.set_password(value).context("failed to write keychain entry")?;
         Ok(())
     }
 
     fn get_secret(&self, service: &str, account: &str) -> Result<Option<String>> {
-        let entry = keyring::Entry::new(service, account)
-            .context("failed to initialize keychain entry")?;
+        let entry =
+            keyring::Entry::new(service, account).context("failed to initialize keychain entry")?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -257,8 +252,8 @@ impl SecretStore for KeyringSecretStore {
     }
 
     fn delete_secret(&self, service: &str, account: &str) -> Result<()> {
-        let entry = keyring::Entry::new(service, account)
-            .context("failed to initialize keychain entry")?;
+        let entry =
+            keyring::Entry::new(service, account).context("failed to initialize keychain entry")?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(error).context("failed to delete keychain entry"),

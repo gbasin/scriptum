@@ -180,15 +180,10 @@ async fn handle_socket(
 
     let hello_started_at = Instant::now();
     let hello = match socket.recv().await {
-        Some(Ok(Message::Text(raw_message))) => {
-            match ws_protocol::decode_message(&raw_message) {
-                Ok(WsMessage::Hello { session_token, resume_token }) => match handle_hello_message(
-                    &session_store,
-                    session_id,
-                    session_token,
-                    resume_token,
-                )
-                .await
+        Some(Ok(Message::Text(raw_message))) => match ws_protocol::decode_message(&raw_message) {
+            Ok(WsMessage::Hello { session_token, resume_token }) => {
+                match handle_hello_message(&session_store, session_id, session_token, resume_token)
+                    .await
                 {
                     Ok(hello_ack) => hello_ack,
                     Err(error_message) => {
@@ -202,29 +197,29 @@ async fn handle_socket(
                         session_store.mark_disconnected(session_id).await;
                         return;
                     }
-                },
-                _ => {
-                    metrics::record_ws_request(
-                        "hello",
-                        true,
-                        hello_started_at.elapsed().as_millis() as u64,
-                    );
-                    let _ = ws_protocol::send_ws_message(
-                        &mut socket,
-                        &WsMessage::Error {
-                            code: "SYNC_HELLO_REQUIRED".to_string(),
-                            message: "first WebSocket message must be a hello frame".to_string(),
-                            retryable: false,
-                            doc_id: None,
-                        },
-                    )
-                    .await;
-                    let _ = socket.send(Message::Close(None)).await;
-                    session_store.mark_disconnected(session_id).await;
-                    return;
                 }
             }
-        }
+            _ => {
+                metrics::record_ws_request(
+                    "hello",
+                    true,
+                    hello_started_at.elapsed().as_millis() as u64,
+                );
+                let _ = ws_protocol::send_ws_message(
+                    &mut socket,
+                    &WsMessage::Error {
+                        code: "SYNC_HELLO_REQUIRED".to_string(),
+                        message: "first WebSocket message must be a hello frame".to_string(),
+                        retryable: false,
+                        doc_id: None,
+                    },
+                )
+                .await;
+                let _ = socket.send(Message::Close(None)).await;
+                session_store.mark_disconnected(session_id).await;
+                return;
+            }
+        },
         _ => {
             metrics::record_ws_request(
                 "hello",

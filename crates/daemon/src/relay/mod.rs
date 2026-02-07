@@ -173,10 +173,7 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
     ///
     /// This enables zero-config peer discovery for direct TCP optimization
     /// while keeping relay as the always-on durable transport.
-    pub fn discover_lan_peers(
-        &self,
-        timeout: Duration,
-    ) -> Result<Vec<mdns::LanPeerEndpoint>> {
+    pub fn discover_lan_peers(&self, timeout: Duration) -> Result<Vec<mdns::LanPeerEndpoint>> {
         mdns::discover_lan_peers(self.config.workspace_id, timeout).map_err(|error| anyhow!(error))
     }
 
@@ -382,13 +379,12 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
 }
 
 fn validate_relay_url(value: &str) -> Result<()> {
-    let parsed = Url::parse(value).map_err(|error| anyhow!("invalid relay_url `{value}`: {error}"))?;
+    let parsed =
+        Url::parse(value).map_err(|error| anyhow!("invalid relay_url `{value}`: {error}"))?;
     match parsed.scheme() {
         "https" => Ok(()),
         "http" if is_loopback_host(parsed.host_str()) => Ok(()),
-        _ => Err(anyhow!(
-            "relay_url must use https (http is allowed only for localhost testing)"
-        )),
+        _ => Err(anyhow!("relay_url must use https (http is allowed only for localhost testing)")),
     }
 }
 
@@ -397,9 +393,7 @@ fn validate_ws_url(value: &str) -> Result<()> {
     match parsed.scheme() {
         "wss" => Ok(()),
         "ws" if is_loopback_host(parsed.host_str()) => Ok(()),
-        _ => Err(anyhow!(
-            "ws_url must use wss (ws is allowed only for localhost testing)"
-        )),
+        _ => Err(anyhow!("ws_url must use wss (ws is allowed only for localhost testing)")),
     }
 }
 
@@ -421,7 +415,7 @@ trait DurationSaturatingMul {
 
 impl DurationSaturatingMul for Duration {
     fn saturating_mul(self, rhs: u64) -> Self {
-        let nanos = (self.as_nanos() as u128).saturating_mul(rhs as u128);
+        let nanos = self.as_nanos().saturating_mul(rhs as u128);
         if nanos > u64::MAX as u128 {
             Duration::from_secs(u64::MAX)
         } else {

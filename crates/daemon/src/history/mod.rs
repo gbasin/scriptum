@@ -106,13 +106,18 @@ impl ReplayEngine {
         // Clone current state so restore generation never mutates caller-owned state.
         let current_state = current_document.encode_state();
         let current_state_vector = current_document.encode_state_vector();
-        let working_doc =
-            YDoc::from_state(&current_state).context("failed to clone current document for restore")?;
+        let working_doc = YDoc::from_state(&current_state)
+            .context("failed to clone current document for restore")?;
 
         let target_content = replay.document.get_text_string("content");
         let current_content = working_doc.get_text_string("content");
         if current_content != target_content {
-            working_doc.replace_text("content", 0, working_doc.text_len("content"), &target_content);
+            working_doc.replace_text(
+                "content",
+                0,
+                working_doc.text_len("content"),
+                &target_content,
+            );
         }
 
         let restore_update = working_doc
@@ -252,9 +257,7 @@ mod tests {
 
         let materialized =
             YDoc::from_state(&current_doc.encode_state()).expect("current state should clone");
-        materialized
-            .apply_update(&restore.restore_update)
-            .expect("restore update should apply");
+        materialized.apply_update(&restore.restore_update).expect("restore update should apply");
         assert_eq!(materialized.get_text_string("content"), "abc");
     }
 

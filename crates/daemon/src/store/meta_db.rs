@@ -4,9 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-use crate::security::{
-    ensure_owner_only_dir, ensure_owner_only_file, open_private_append,
-};
+use crate::security::{ensure_owner_only_dir, ensure_owner_only_file, open_private_append};
 
 const MIGRATION_V1_SQL: &str = r#"
 CREATE TABLE documents_local (

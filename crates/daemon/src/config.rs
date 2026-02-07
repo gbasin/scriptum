@@ -78,34 +78,27 @@ impl GlobalConfig {
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ConfigError::Io)?;
-            ensure_owner_only_dir(parent).map_err(|error| {
-                ConfigError::Io(std::io::Error::other(error.to_string()))
-            })?;
+            ensure_owner_only_dir(parent)
+                .map_err(|error| ConfigError::Io(std::io::Error::other(error.to_string())))?;
         }
         let contents = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
-        std::fs::write(path, contents).map_err(ConfigError::Io)
-            .and_then(|_| {
-                ensure_owner_only_file(path).map_err(|error| {
-                    ConfigError::Io(std::io::Error::other(error.to_string()))
-                })
-            })
+        std::fs::write(path, contents).map_err(ConfigError::Io).and_then(|_| {
+            ensure_owner_only_file(path)
+                .map_err(|error| ConfigError::Io(std::io::Error::other(error.to_string())))
+        })
     }
 }
 
 /// AI service configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
+#[derive(Default)]
 pub struct AiConfig {
     /// API keys are stored in the OS keychain, not in config files.
     /// Model to use (e.g. `claude-haiku-4-5-20251001`).
     pub model: Option<String>,
 }
 
-impl Default for AiConfig {
-    fn default() -> Self {
-        Self { model: None }
-    }
-}
 
 /// Editor type for this client.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,6 +113,7 @@ pub enum EditorTypeConfig {
 /// Per-workspace configuration at `<root>/.scriptum/workspace.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[derive(Default)]
 pub struct WorkspaceConfig {
     /// Git settings for this workspace.
     pub git: GitConfig,
@@ -127,11 +121,6 @@ pub struct WorkspaceConfig {
     pub sync: SyncConfig,
 }
 
-impl Default for WorkspaceConfig {
-    fn default() -> Self {
-        Self { git: GitConfig::default(), sync: SyncConfig::default() }
-    }
-}
 
 impl WorkspaceConfig {
     /// Load from `<root>/.scriptum/workspace.toml`. Returns defaults if
@@ -157,17 +146,14 @@ impl WorkspaceConfig {
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ConfigError::Io)?;
-            ensure_owner_only_dir(parent).map_err(|error| {
-                ConfigError::Io(std::io::Error::other(error.to_string()))
-            })?;
+            ensure_owner_only_dir(parent)
+                .map_err(|error| ConfigError::Io(std::io::Error::other(error.to_string())))?;
         }
         let contents = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
-        std::fs::write(path, contents).map_err(ConfigError::Io)
-            .and_then(|_| {
-                ensure_owner_only_file(path).map_err(|error| {
-                    ConfigError::Io(std::io::Error::other(error.to_string()))
-                })
-            })
+        std::fs::write(path, contents).map_err(ConfigError::Io).and_then(|_| {
+            ensure_owner_only_file(path)
+                .map_err(|error| ConfigError::Io(std::io::Error::other(error.to_string())))
+        })
     }
 }
 
@@ -226,6 +212,7 @@ pub enum RedactionPolicy {
 /// Sync configuration per workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[derive(Default)]
 pub struct SyncConfig {
     /// Relay URL override for this workspace (uses global if unset).
     pub relay_url: Option<String>,
@@ -233,11 +220,6 @@ pub struct SyncConfig {
     pub workspace_id: Option<String>,
 }
 
-impl Default for SyncConfig {
-    fn default() -> Self {
-        Self { relay_url: None, workspace_id: None }
-    }
-}
 
 // ── Errors ─────────────────────────────────────────────────────────
 

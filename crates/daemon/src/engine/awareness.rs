@@ -4,16 +4,13 @@ use yrs::sync::{Awareness, AwarenessUpdate, DefaultProtocol, Message, Protocol};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PresenceKind {
+    #[default]
     Human,
     Agent,
 }
 
-impl Default for PresenceKind {
-    fn default() -> Self {
-        Self::Human
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PresenceUser {

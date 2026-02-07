@@ -293,7 +293,7 @@ impl TriggerCollector {
 
         let idle_elapsed = now
             .checked_duration_since(last_edit)
-            .map_or(false, |elapsed| elapsed >= self.config.idle_fallback_timeout);
+            .is_some_and(|elapsed| elapsed >= self.config.idle_fallback_timeout);
         if !idle_elapsed {
             return false;
         }
@@ -305,7 +305,7 @@ impl TriggerCollector {
         match self.last_commit_at {
             Some(last) => now
                 .checked_duration_since(last)
-                .map_or(false, |elapsed| elapsed >= self.config.min_commit_interval),
+                .is_some_and(|elapsed| elapsed >= self.config.min_commit_interval),
             None => true, // First commit — no debounce.
         }
     }

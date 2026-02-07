@@ -3,9 +3,9 @@ pub mod protocol;
 mod session;
 
 pub(crate) use handler::router;
-pub(crate) use session::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore};
 #[cfg(test)]
 pub(crate) use session::CreateSyncSessionResponse;
+pub(crate) use session::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore};
 
 #[cfg(test)]
 pub(crate) use handler::{

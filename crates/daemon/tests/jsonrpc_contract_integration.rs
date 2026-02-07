@@ -266,22 +266,16 @@ async fn core_method_result_shapes_match_contract() {
 
     let whoami = call_raw(
         &state,
-        &Request::new(
-            "agent.whoami",
-            Some(json!({})),
-            RequestId::String("whoami".to_string()),
-        ),
+        &Request::new("agent.whoami", Some(json!({})), RequestId::String("whoami".to_string())),
     )
     .await;
     assert_eq!(whoami.error, None);
     let whoami_result = whoami.result.expect("agent.whoami should return a result object");
     assert!(whoami_result.get("agent_id").is_some());
-    assert!(
-        whoami_result
-            .get("capabilities")
-            .and_then(|value| value.as_array())
-            .is_some_and(|capabilities| !capabilities.is_empty()),
-    );
+    assert!(whoami_result
+        .get("capabilities")
+        .and_then(|value| value.as_array())
+        .is_some_and(|capabilities| !capabilities.is_empty()),);
 
     let workspace_root = unique_temp_path("scriptum-jsonrpc-shape-contract-workspace");
     fs::create_dir_all(&workspace_root).expect("workspace root path should be creatable");
@@ -303,10 +297,7 @@ async fn core_method_result_shapes_match_contract() {
     let create_result =
         create_workspace.result.expect("workspace.create should return a result object");
     for key in ["workspace_id", "name", "root_path", "created_at"] {
-        assert!(
-            create_result.get(key).is_some(),
-            "workspace.create result must contain `{key}`",
-        );
+        assert!(create_result.get(key).is_some(), "workspace.create result must contain `{key}`",);
     }
 
     let workspace_id: Uuid = serde_json::from_value(
@@ -343,10 +334,7 @@ async fn core_method_result_shapes_match_contract() {
     assert_eq!(open_workspace.error, None);
     let open_result = open_workspace.result.expect("workspace.open should return a result object");
     for key in ["workspace_id", "name", "root_path", "doc_count", "created_at"] {
-        assert!(
-            open_result.get(key).is_some(),
-            "workspace.open result must contain `{key}`",
-        );
+        assert!(open_result.get(key).is_some(), "workspace.open result must contain `{key}`",);
     }
 }
 
@@ -387,10 +375,7 @@ async fn jsonrpc_version_matrix_supports_current_and_rejects_legacy() {
         .await;
 
         let error = response.error.expect("unsupported version should return an error");
-        assert_eq!(
-            error.code, INVALID_REQUEST,
-            "json-rpc version `{version}` should be rejected",
-        );
+        assert_eq!(error.code, INVALID_REQUEST, "json-rpc version `{version}` should be rejected",);
     }
 }
 

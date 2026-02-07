@@ -56,8 +56,7 @@ impl WalStore {
     pub fn append_update(&self, payload: &[u8]) -> Result<()> {
         let encrypted_payload =
             encrypt_at_rest(payload).context("failed to encrypt wal payload at rest")?;
-        let len =
-            u32::try_from(encrypted_payload.len()).context("wal payload exceeds u32::MAX")?;
+        let len = u32::try_from(encrypted_payload.len()).context("wal payload exceeds u32::MAX")?;
         let checksum = checksum(&encrypted_payload);
         let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + encrypted_payload.len());
         frame.extend_from_slice(&len.to_le_bytes());
@@ -367,11 +366,9 @@ mod tests {
         let wal = WalStore::open(tmp.path().join("secure.wal")).expect("wal should open");
         wal.append_update(b"payload").expect("append should succeed");
 
-        let mode = std::fs::metadata(wal.path())
-            .expect("wal metadata should load")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode =
+            std::fs::metadata(wal.path()).expect("wal metadata should load").permissions().mode()
+                & 0o777;
         assert_eq!(mode, 0o600);
     }
 }

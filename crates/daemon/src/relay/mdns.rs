@@ -58,8 +58,8 @@ pub fn discover_lan_peers(
     workspace_id: Uuid,
     timeout: Duration,
 ) -> Result<Vec<LanPeerEndpoint>, String> {
-    let socket =
-        UdpSocket::bind(("0.0.0.0", 0)).map_err(|error| format!("failed to bind mDNS socket: {error}"))?;
+    let socket = UdpSocket::bind(("0.0.0.0", 0))
+        .map_err(|error| format!("failed to bind mDNS socket: {error}"))?;
     socket
         .set_multicast_loop_v4(false)
         .map_err(|error| format!("failed to configure mDNS socket loopback: {error}"))?;
@@ -212,11 +212,7 @@ fn merge_records_from_packet(records: &mut MdnsRecords, packet: &[u8]) -> Result
                 if rdlen == 16 {
                     let mut octets = [0u8; 16];
                     octets.copy_from_slice(&packet[rdata_start..rdata_end]);
-                    records
-                        .addresses
-                        .entry(owner_name)
-                        .or_default()
-                        .push(IpAddr::from(octets));
+                    records.addresses.entry(owner_name).or_default().push(IpAddr::from(octets));
                 }
             }
             _ => {}
@@ -262,8 +258,7 @@ fn resolve_records(records: &MdnsRecords, workspace_id: Uuid) -> Vec<LanPeerEndp
             continue;
         }
 
-        let peer_id =
-            txt.and_then(|map| map.get("peer_id").or_else(|| map.get("peer"))).cloned();
+        let peer_id = txt.and_then(|map| map.get("peer_id").or_else(|| map.get("peer"))).cloned();
         for address in addresses {
             let addr = SocketAddr::new(address, srv.port);
             peers.entry((instance.clone(), addr)).or_insert_with(|| LanPeerEndpoint {
@@ -390,7 +385,11 @@ fn parse_txt_kv_pairs(payload: &[u8]) -> HashMap<String, String> {
 
 fn normalize_dns_name(name: &str) -> String {
     let trimmed = name.trim().trim_end_matches('.');
-    if trimmed.is_empty() { ".".to_string() } else { format!("{}.", trimmed.to_ascii_lowercase()) }
+    if trimmed.is_empty() {
+        ".".to_string()
+    } else {
+        format!("{}.", trimmed.to_ascii_lowercase())
+    }
 }
 
 fn read_u16(packet: &[u8], offset: usize) -> Result<u16, String> {
@@ -420,7 +419,7 @@ mod tests {
     #[test]
     fn build_ptr_query_targets_scriptum_service() {
         let query = build_ptr_query(SCRIPTUM_SYNC_SERVICE_TYPE).expect("query should build");
-        assert_eq!(query.len() > DNS_HEADER_LEN, true);
+        assert!(query.len() > DNS_HEADER_LEN);
         assert_eq!(u16::from_be_bytes([query[4], query[5]]), 1, "one question expected");
     }
 
@@ -435,10 +434,7 @@ mod tests {
                 srv_record(service_instance, 39092, host),
                 txt_record(
                     service_instance,
-                    &[
-                        format!("workspace_id={workspace_id}"),
-                        "peer_id=peer-a".to_string(),
-                    ],
+                    &[format!("workspace_id={workspace_id}"), "peer_id=peer-a".to_string()],
                 ),
                 a_record(host, Ipv4Addr::new(192, 168, 1, 20)),
             ],
@@ -452,7 +448,10 @@ mod tests {
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].instance_name, normalize_dns_name(service_instance));
         assert_eq!(peers[0].peer_id.as_deref(), Some("peer-a"));
-        assert_eq!(peers[0].addr, SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), 39092));
+        assert_eq!(
+            peers[0].addr,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), 39092)
+        );
     }
 
     #[test]
@@ -516,7 +515,8 @@ mod tests {
             0, 0, // additional
         ]);
         let question_offset = packet.len();
-        encode_dns_name(SCRIPTUM_SYNC_SERVICE_TYPE, &mut packet).expect("question name should encode");
+        encode_dns_name(SCRIPTUM_SYNC_SERVICE_TYPE, &mut packet)
+            .expect("question name should encode");
         packet.extend_from_slice(&DNS_TYPE_PTR.to_be_bytes());
         packet.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
 
@@ -531,19 +531,14 @@ mod tests {
         packet.extend_from_slice(&ptr_rdata);
 
         // SRV
-        push_record(
-            &mut packet,
-            service_instance,
-            DNS_TYPE_SRV,
-            {
-                let mut data = Vec::new();
-                data.extend_from_slice(&0u16.to_be_bytes());
-                data.extend_from_slice(&0u16.to_be_bytes());
-                data.extend_from_slice(&39095u16.to_be_bytes());
-                encode_dns_name(host, &mut data).expect("srv host should encode");
-                data
-            },
-        );
+        push_record(&mut packet, service_instance, DNS_TYPE_SRV, {
+            let mut data = Vec::new();
+            data.extend_from_slice(&0u16.to_be_bytes());
+            data.extend_from_slice(&0u16.to_be_bytes());
+            data.extend_from_slice(&39095u16.to_be_bytes());
+            encode_dns_name(host, &mut data).expect("srv host should encode");
+            data
+        });
         // TXT
         push_record(
             &mut packet,
@@ -552,12 +547,7 @@ mod tests {
             encode_txt_entries(&[format!("workspace_id={workspace_id}")]),
         );
         // A
-        push_record(
-            &mut packet,
-            host,
-            DNS_TYPE_A,
-            vec![192, 168, 1, 25],
-        );
+        push_record(&mut packet, host, DNS_TYPE_A, vec![192, 168, 1, 25]);
 
         let mut records = MdnsRecords::default();
         merge_records_from_packet(&mut records, &packet).expect("packet should parse");
@@ -639,14 +629,18 @@ mod tests {
     fn build_response_packet(records: &[ResourceRecord], question_count: u16) -> Vec<u8> {
         let mut packet = Vec::new();
         packet.extend_from_slice(&[
-            0, 0, // id
-            0, 0, // flags
+            0,
+            0, // id
+            0,
+            0, // flags
             (question_count >> 8) as u8,
             (question_count & 0xFF) as u8,
             ((records.len() as u16) >> 8) as u8,
             ((records.len() as u16) & 0xFF) as u8,
-            0, 0, // authority
-            0, 0, // additional
+            0,
+            0, // authority
+            0,
+            0, // additional
         ]);
         for record in records {
             push_record(&mut packet, &record.owner, record.rr_type, record.rdata.clone());

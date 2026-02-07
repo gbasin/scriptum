@@ -76,7 +76,7 @@ fn dirs_path() -> Result<PathBuf> {
 
 fn home_dir() -> Option<PathBuf> {
     // Prefer $HOME, fallback to platform-specific lookup
-    std::env::var_os("HOME").map(PathBuf::from).or_else(|| {
+    std::env::var_os("HOME").map(PathBuf::from).or({
         #[cfg(unix)]
         {
             // fallback: getpwuid

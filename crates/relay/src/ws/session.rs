@@ -187,7 +187,6 @@ pub struct CreateSyncSessionResponse {
     pub resume_expires_at: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionTokenValidation {
     Valid { resume_accepted: bool, resume_token: String, resume_expires_at: chrono::DateTime<Utc> },
