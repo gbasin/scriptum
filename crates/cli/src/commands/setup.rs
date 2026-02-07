@@ -245,6 +245,8 @@ echo "  scriptum claim <section>      Claim advisory lease"
             "pre-tool-use.sh",
             r#"#!/usr/bin/env bash
 # Scriptum PreToolUse hook — warn about .md file edits.
+# Triggered on Write|Edit tools. Warns about section overlaps
+# and suggests using scriptum edit for attribution.
 set -euo pipefail
 
 # Parse the tool input to check if target is a .md file.
@@ -253,8 +255,11 @@ INPUT=$(cat)
 FILE=$(echo "$INPUT" | grep -oP '"file_path"\s*:\s*"[^"]*\.md"' || true)
 
 if [ -n "$FILE" ]; then
-    echo "Note: Consider using \`scriptum edit\` for better attribution and section-level sync."
-    scriptum conflicts 2>/dev/null || true
+    echo "⚠ Scriptum: Direct .md edit detected."
+    echo "  Prefer \`scriptum edit\` for CRDT attribution and section-level sync."
+    echo ""
+    echo "Section overlap check:"
+    scriptum conflicts 2>/dev/null || echo "  (overlap check unavailable — daemon not running)"
 fi
 "#,
         ),
@@ -262,6 +267,8 @@ fi
             "post-tool-use.sh",
             r#"#!/usr/bin/env bash
 # Scriptum PostToolUse hook — confirm file sync after .md edits.
+# Triggered on Write|Edit tools. Confirms file watcher will sync
+# the change and reports any active section conflicts.
 set -euo pipefail
 
 # Parse tool input for .md file path.
@@ -270,19 +277,42 @@ FILE=$(echo "$INPUT" | grep -oP '"file_path"\s*:\s*"[^"]*\.md"' || true)
 
 if [ -n "$FILE" ]; then
     echo "Scriptum: File watcher will sync this change to CRDT."
-    scriptum conflicts 2>/dev/null || true
+    echo "  Run \`scriptum status\` to verify sync completed."
+    CONFLICTS=$(scriptum conflicts 2>/dev/null || true)
+    if [ -n "$CONFLICTS" ]; then
+        echo ""
+        echo "Active conflicts:"
+        echo "$CONFLICTS"
+    fi
 fi
 "#,
         ),
         (
             "stop.sh",
             r#"#!/usr/bin/env bash
-# Scriptum Stop hook — check for unsynced changes.
+# Scriptum Stop hook — check for unsynced changes at session end.
+# Warns if there are pending changes that haven't been synced to CRDT.
 set -euo pipefail
 
 echo "=== Scriptum Session End ==="
-scriptum status 2>/dev/null || echo "(status unavailable)"
-scriptum conflicts 2>/dev/null || true
+echo ""
+
+# Check for pending/unsynced changes.
+STATUS=$(scriptum status 2>/dev/null || echo "")
+if [ -n "$STATUS" ]; then
+    echo "$STATUS"
+    if echo "$STATUS" | grep -qi "pending\|unsynced\|dirty"; then
+        echo ""
+        echo "⚠ Warning: You may have unsynced changes."
+        echo "  Ensure the daemon is running and changes are persisted."
+    fi
+else
+    echo "(Scriptum status unavailable — daemon not running)"
+fi
+
+echo ""
+echo "Overlap check:"
+scriptum conflicts 2>/dev/null || echo "  (no conflicts or daemon not running)"
 "#,
         ),
     ]
@@ -547,6 +577,65 @@ mod tests {
         for (event, groups) in &settings.hooks {
             assert_eq!(groups, &loaded.hooks[event]);
         }
+    }
+
+    #[test]
+    fn pre_tool_use_script_warns_about_overlaps_and_suggests_scriptum_edit() {
+        let script = hook_script_text("pre-tool-use.sh");
+        assert!(script.contains("file_path"), "should parse file_path from JSON");
+        assert!(script.contains(".md"), "should detect .md files");
+        assert!(
+            script.contains("scriptum edit"),
+            "should suggest scriptum edit for attribution"
+        );
+        assert!(
+            script.contains("scriptum conflicts"),
+            "should check for section overlaps"
+        );
+        assert!(
+            script.contains("CRDT attribution"),
+            "should mention CRDT attribution benefit"
+        );
+    }
+
+    #[test]
+    fn post_tool_use_script_confirms_sync_and_reports_conflicts() {
+        let script = hook_script_text("post-tool-use.sh");
+        assert!(script.contains("file_path"), "should parse file_path from JSON");
+        assert!(script.contains(".md"), "should detect .md files");
+        assert!(
+            script.contains("File watcher will sync"),
+            "should confirm file watcher sync"
+        );
+        assert!(
+            script.contains("scriptum status"),
+            "should suggest verifying sync status"
+        );
+        assert!(
+            script.contains("scriptum conflicts"),
+            "should check for conflicts"
+        );
+    }
+
+    #[test]
+    fn stop_script_warns_about_unsynced_changes() {
+        let script = hook_script_text("stop.sh");
+        assert!(
+            script.contains("Session End"),
+            "should show session end banner"
+        );
+        assert!(
+            script.contains("scriptum status"),
+            "should check status for pending changes"
+        );
+        assert!(
+            script.contains("unsynced"),
+            "should warn about unsynced changes"
+        );
+        assert!(
+            script.contains("scriptum conflicts"),
+            "should check for overlaps at session end"
+        );
     }
 
     #[test]
