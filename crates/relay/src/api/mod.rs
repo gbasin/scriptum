@@ -2,12 +2,12 @@ pub mod comments;
 pub mod documents;
 pub mod search;
 
-use std::{collections::HashMap, env, sync::Arc};
+use std::{collections::HashMap, env, sync::{Arc, Mutex}, time::Instant};
 
 use anyhow::{Context, Result};
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Argon2,
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, SaltString},
+    Argon2, PasswordVerifier,
 };
 use axum::{
     extract::{Extension, FromRequestParts, Json, Path, Query, Request, State},
@@ -40,10 +40,18 @@ use crate::{
 
 const DEFAULT_PAGE_SIZE: usize = 50;
 const MAX_PAGE_SIZE: usize = 100;
+const REDEEM_RATE_LIMIT_MAX: u32 = 5;
+const REDEEM_RATE_LIMIT_WINDOW_SECS: u64 = 900; // 15 minutes
+
+struct RedeemRateEntry {
+    count: u32,
+    window_start: Instant,
+}
 
 #[derive(Clone)]
 struct ApiState {
     store: WorkspaceStore,
+    redeem_limiter: Arc<Mutex<HashMap<Vec<u8>, RedeemRateEntry>>>,
 }
 
 #[derive(Clone)]
@@ -148,6 +156,31 @@ struct CreateShareLinkRequest {
     password: Option<String>,
 }
 
+#[derive(Deserialize, Clone)]
+struct UpdateShareLinkRequest {
+    permission: Option<String>,
+    #[serde(default)]
+    expires_at: Option<Option<DateTime<Utc>>>,
+    #[serde(default)]
+    max_uses: Option<Option<i32>>,
+    disabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct RedeemShareLinkRequest {
+    token: String,
+    password: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RedeemShareLinkResponse {
+    workspace_id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    remaining_uses: Option<i32>,
+}
+
 #[derive(Deserialize)]
 struct ListWorkspacesQuery {
     limit: Option<usize>,
@@ -170,6 +203,11 @@ struct ShareLinkEnvelope {
     share_link: ShareLink,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ShareLinksEnvelope {
+    items: Vec<ShareLink>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct ShareLink {
     id: Uuid,
@@ -182,6 +220,7 @@ struct ShareLink {
     disabled: bool,
     created_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
+    etag: String,
     url_once: String,
 }
 
@@ -391,7 +430,12 @@ struct ShareLinkRecord {
 }
 
 impl ShareLinkRecord {
+    fn etag(&self) -> String {
+        share_link_etag(self)
+    }
+
     fn into_share_link(self, url_once: String) -> ShareLink {
+        let etag = self.etag();
         ShareLink {
             id: self.id,
             target_type: self.target_type,
@@ -403,6 +447,7 @@ impl ShareLinkRecord {
             disabled: self.disabled,
             created_at: self.created_at,
             revoked_at: self.revoked_at,
+            etag,
             url_once,
         }
     }
@@ -449,6 +494,54 @@ impl From<ShareLinkRow> for ShareLinkRecord {
     }
 }
 
+#[derive(Clone)]
+struct ShareLinkLookup {
+    id: Uuid,
+    workspace_id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    password_hash: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    use_count: i32,
+    disabled: bool,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ShareLinkLookupRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    target_type: String,
+    target_id: Uuid,
+    permission: String,
+    password_hash: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    max_uses: Option<i32>,
+    use_count: i32,
+    disabled: bool,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+impl From<ShareLinkLookupRow> for ShareLinkLookup {
+    fn from(value: ShareLinkLookupRow) -> Self {
+        Self {
+            id: value.id,
+            workspace_id: value.workspace_id,
+            target_type: value.target_type,
+            target_id: value.target_id,
+            permission: value.permission,
+            password_hash: value.password_hash,
+            expires_at: value.expires_at,
+            max_uses: value.max_uses,
+            use_count: value.use_count,
+            disabled: value.disabled,
+            revoked_at: value.revoked_at,
+        }
+    }
+}
+
 impl From<WorkspaceRow> for WorkspaceRecord {
     fn from(value: WorkspaceRow) -> Self {
         Self {
@@ -470,6 +563,7 @@ enum ApiError {
     Conflict { message: &'static str },
     PreconditionRequired,
     PreconditionFailed,
+    RateLimited { message: &'static str },
     Internal(anyhow::Error),
 }
 
@@ -488,6 +582,10 @@ impl ApiError {
 
     fn conflict(_code: &'static str, message: &'static str) -> Self {
         Self::Conflict { message }
+    }
+
+    fn rate_limited(_code: &'static str, message: &'static str) -> Self {
+        Self::RateLimited { message }
     }
 
     fn internal(error: anyhow::Error) -> Self {
@@ -519,6 +617,9 @@ impl IntoResponse for ApiError {
                 "If-Match does not match current workspace state",
             )
             .into_response(),
+            Self::RateLimited { message } => {
+                RelayError::new(ErrorCode::RateLimited, message).into_response()
+            }
             Self::Internal(error) => {
                 tracing::error!(error = ?error, "workspace api internal error");
                 RelayError::from_code(ErrorCode::InternalError).into_response()
@@ -547,7 +648,10 @@ fn build_router_with_store(
     store: WorkspaceStore,
     jwt_service: Arc<JwtAccessTokenService>,
 ) -> Router {
-    let state = ApiState { store };
+    let state = ApiState {
+        store,
+        redeem_limiter: Arc::new(Mutex::new(HashMap::new())),
+    };
     let viewer_role_layer =
         middleware::from_fn_with_state(state.clone(), require_workspace_viewer_role);
     let editor_role_layer =
@@ -567,7 +671,11 @@ fn build_router_with_store(
         .route("/v1/workspaces/{id}", patch(update_workspace).route_layer(owner_role_layer))
         .route(
             "/v1/workspaces/{id}/share-links",
-            post(create_share_link).route_layer(editor_role_layer),
+            post(create_share_link).get(list_share_links).route_layer(editor_role_layer.clone()),
+        )
+        .route(
+            "/v1/workspaces/{id}/share-links/{share_link_id}",
+            patch(update_share_link).delete(revoke_share_link).route_layer(editor_role_layer),
         )
         .route(
             "/v1/workspaces/{workspace_id}/members",
@@ -589,8 +697,13 @@ fn build_router_with_store(
             )),
         )
         .route("/v1/invites/{token}/accept", post(accept_invite))
-        .with_state(state)
+        .with_state(state.clone())
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
+        .merge(
+            Router::new()
+                .route("/v1/share-links/redeem", post(redeem_share_link))
+                .with_state(state),
+        )
 }
 
 async fn create_workspace(
@@ -691,6 +804,44 @@ async fn create_share_link(
     ))
 }
 
+async fn list_share_links(
+    State(state): State<ApiState>,
+    Path(workspace_id): Path<Uuid>,
+) -> Result<Json<ShareLinksEnvelope>, ApiError> {
+    let items = state
+        .store
+        .list_share_links(workspace_id)
+        .await?
+        .into_iter()
+        .map(|share_link| share_link.into_share_link(String::new()))
+        .collect();
+    Ok(Json(ShareLinksEnvelope { items }))
+}
+
+async fn update_share_link(
+    State(state): State<ApiState>,
+    Path((workspace_id, share_link_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateShareLinkRequest>,
+) -> Result<Json<ShareLinkEnvelope>, ApiError> {
+    validate_share_link_update_request(&payload)?;
+    let if_match = extract_if_match(&headers)?;
+    let share_link = state
+        .store
+        .update_share_link(workspace_id, share_link_id, if_match, payload)
+        .await?;
+
+    Ok(Json(ShareLinkEnvelope { share_link: share_link.into_share_link(String::new()) }))
+}
+
+async fn revoke_share_link(
+    State(state): State<ApiState>,
+    Path((workspace_id, share_link_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    state.store.revoke_share_link(workspace_id, share_link_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_members(
     State(state): State<ApiState>,
     Path(workspace_id): Path<Uuid>,
@@ -783,6 +934,83 @@ async fn accept_invite(
     let record = state.store.accept_invite(token_hash, user.user_id).await?;
 
     Ok(Json(InviteEnvelope { invite: record.into_invite() }))
+}
+
+async fn redeem_share_link(
+    State(state): State<ApiState>,
+    Json(payload): Json<RedeemShareLinkRequest>,
+) -> Result<Json<RedeemShareLinkResponse>, ApiError> {
+    if payload.token.trim().is_empty() {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "token is required"));
+    }
+
+    let token_hash = hash_share_link_token(&payload.token);
+
+    // Rate limit check per token hash.
+    {
+        let mut limiter = state.redeem_limiter.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let entry = limiter.entry(token_hash.clone()).or_insert(RedeemRateEntry {
+            count: 0,
+            window_start: now,
+        });
+        if now.duration_since(entry.window_start).as_secs() > REDEEM_RATE_LIMIT_WINDOW_SECS {
+            entry.count = 0;
+            entry.window_start = now;
+        }
+        entry.count += 1;
+        if entry.count > REDEEM_RATE_LIMIT_MAX {
+            return Err(ApiError::rate_limited(
+                "RATE_LIMITED",
+                "too many redeem attempts for this token",
+            ));
+        }
+    }
+
+    let link = state.store.find_share_link_by_token_hash(token_hash).await?;
+
+    if link.disabled {
+        return Err(ApiError::bad_request(
+            "SHARE_LINK_DISABLED",
+            "this share link has been disabled",
+        ));
+    }
+    if link.revoked_at.is_some() {
+        return Err(ApiError::bad_request(
+            "SHARE_LINK_REVOKED",
+            "this share link has been revoked",
+        ));
+    }
+    if link.expires_at.is_some_and(|expires| expires < Utc::now()) {
+        return Err(ApiError::bad_request(
+            "SHARE_LINK_EXPIRED",
+            "this share link has expired",
+        ));
+    }
+    if link.max_uses.is_some_and(|max| link.use_count >= max) {
+        return Err(ApiError::bad_request(
+            "SHARE_LINK_EXHAUSTED",
+            "this share link has reached its maximum uses",
+        ));
+    }
+
+    // Verify password if required.
+    if let Some(ref hash) = link.password_hash {
+        let password = payload.password.as_deref().unwrap_or("");
+        verify_share_link_password(password, hash)?;
+    }
+
+    state.store.increment_share_link_use_count(link.id).await?;
+
+    let remaining_uses = link.max_uses.map(|max| max - link.use_count - 1);
+
+    Ok(Json(RedeemShareLinkResponse {
+        workspace_id: link.workspace_id,
+        target_type: link.target_type,
+        target_id: link.target_id,
+        permission: link.permission,
+        remaining_uses,
+    }))
 }
 
 async fn require_workspace_viewer_role(
@@ -939,6 +1167,42 @@ impl WorkspaceStore {
         }
     }
 
+    async fn list_share_links(&self, workspace_id: Uuid) -> Result<Vec<ShareLinkRecord>, ApiError> {
+        match self {
+            Self::Postgres(pool) => list_share_links_pg(pool, workspace_id).await,
+            Self::Memory(store) => list_share_links_memory(store, workspace_id).await,
+        }
+    }
+
+    async fn update_share_link(
+        &self,
+        workspace_id: Uuid,
+        share_link_id: Uuid,
+        if_match: &str,
+        payload: UpdateShareLinkRequest,
+    ) -> Result<ShareLinkRecord, ApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                update_share_link_pg(pool, workspace_id, share_link_id, if_match, payload).await
+            }
+            Self::Memory(store) => {
+                update_share_link_memory(store, workspace_id, share_link_id, if_match, payload)
+                    .await
+            }
+        }
+    }
+
+    async fn revoke_share_link(
+        &self,
+        workspace_id: Uuid,
+        share_link_id: Uuid,
+    ) -> Result<(), ApiError> {
+        match self {
+            Self::Postgres(pool) => revoke_share_link_pg(pool, workspace_id, share_link_id).await,
+            Self::Memory(store) => revoke_share_link_memory(store, workspace_id, share_link_id).await,
+        }
+    }
+
     async fn update_workspace(
         &self,
         user_id: Uuid,
@@ -1034,6 +1298,28 @@ impl WorkspaceStore {
         match self {
             Self::Postgres(pool) => accept_invite_pg(pool, token_hash, user_id).await,
             Self::Memory(store) => accept_invite_memory(store, token_hash, user_id).await,
+        }
+    }
+
+    async fn find_share_link_by_token_hash(
+        &self,
+        token_hash: Vec<u8>,
+    ) -> Result<ShareLinkLookup, ApiError> {
+        match self {
+            Self::Postgres(pool) => find_share_link_by_token_hash_pg(pool, token_hash).await,
+            Self::Memory(store) => find_share_link_by_token_hash_memory(store, token_hash).await,
+        }
+    }
+
+    async fn increment_share_link_use_count(
+        &self,
+        share_link_id: Uuid,
+    ) -> Result<(), ApiError> {
+        match self {
+            Self::Postgres(pool) => increment_share_link_use_count_pg(pool, share_link_id).await,
+            Self::Memory(store) => {
+                increment_share_link_use_count_memory(store, share_link_id).await
+            }
         }
     }
 }
@@ -1216,6 +1502,203 @@ async fn create_share_link_pg(
     .map_err(map_sqlx_error)?;
 
     Ok(row.into())
+}
+
+async fn list_share_links_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+) -> Result<Vec<ShareLinkRecord>, ApiError> {
+    let rows = sqlx::query_as::<_, ShareLinkRow>(
+        r#"
+        SELECT
+            id,
+            target_type,
+            target_id,
+            permission,
+            expires_at,
+            max_uses,
+            use_count,
+            disabled,
+            created_at,
+            revoked_at
+        FROM share_links
+        WHERE workspace_id = $1
+        ORDER BY created_at DESC, id DESC
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(rows.into_iter().map(ShareLinkRecord::from).collect())
+}
+
+async fn share_link_record_by_id_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    share_link_id: Uuid,
+) -> Result<Option<ShareLinkRecord>, ApiError> {
+    let row = sqlx::query_as::<_, ShareLinkRow>(
+        r#"
+        SELECT
+            id,
+            target_type,
+            target_id,
+            permission,
+            expires_at,
+            max_uses,
+            use_count,
+            disabled,
+            created_at,
+            revoked_at
+        FROM share_links
+        WHERE workspace_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(share_link_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(row.map(ShareLinkRecord::from))
+}
+
+async fn update_share_link_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    share_link_id: Uuid,
+    if_match: &str,
+    payload: UpdateShareLinkRequest,
+) -> Result<ShareLinkRecord, ApiError> {
+    let Some(current) = share_link_record_by_id_pg(pool, workspace_id, share_link_id).await? else {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    };
+
+    if !etag_matches(if_match, &current.etag()) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
+    let permission = payload.permission.unwrap_or(current.permission);
+    let expires_at = match payload.expires_at {
+        Some(value) => value,
+        None => current.expires_at,
+    };
+    let max_uses = match payload.max_uses {
+        Some(value) => value,
+        None => current.max_uses,
+    };
+    let disabled = payload.disabled.unwrap_or(current.disabled);
+
+    let row = sqlx::query_as::<_, ShareLinkRow>(
+        r#"
+        UPDATE share_links
+        SET
+            permission = $3,
+            expires_at = $4,
+            max_uses = $5,
+            disabled = $6
+        WHERE workspace_id = $1
+          AND id = $2
+        RETURNING
+            id,
+            target_type,
+            target_id,
+            permission,
+            expires_at,
+            max_uses,
+            use_count,
+            disabled,
+            created_at,
+            revoked_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(share_link_id)
+    .bind(permission)
+    .bind(expires_at)
+    .bind(max_uses)
+    .bind(disabled)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or_else(|| ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"))?;
+
+    Ok(row.into())
+}
+
+async fn revoke_share_link_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    share_link_id: Uuid,
+) -> Result<(), ApiError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE share_links
+        SET
+            disabled = TRUE,
+            revoked_at = COALESCE(revoked_at, now())
+        WHERE workspace_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(share_link_id)
+    .execute(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    }
+
+    Ok(())
+}
+
+async fn find_share_link_by_token_hash_pg(
+    pool: &PgPool,
+    token_hash: Vec<u8>,
+) -> Result<ShareLinkLookup, ApiError> {
+    let row = sqlx::query_as::<_, ShareLinkLookupRow>(
+        r#"
+        SELECT
+            id,
+            workspace_id,
+            target_type,
+            target_id,
+            permission,
+            password_hash,
+            expires_at,
+            max_uses,
+            use_count,
+            disabled,
+            revoked_at
+        FROM share_links
+        WHERE token_hash = $1
+        "#,
+    )
+    .bind(&token_hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or_else(|| ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link not found"))?;
+
+    Ok(row.into())
+}
+
+async fn increment_share_link_use_count_pg(
+    pool: &PgPool,
+    share_link_id: Uuid,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE share_links SET use_count = use_count + 1 WHERE id = $1")
+        .bind(share_link_id)
+        .execute(pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+    Ok(())
 }
 
 async fn update_workspace_pg(
@@ -1529,6 +2012,180 @@ async fn create_share_link_memory(
         created_at: share_link.created_at,
         revoked_at: share_link.revoked_at,
     })
+}
+
+async fn list_share_links_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+) -> Result<Vec<ShareLinkRecord>, ApiError> {
+    let state = store.read().await;
+    let Some(workspace) = state.workspaces.get(&workspace_id) else {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    };
+    if workspace.deleted_at.is_some() {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    }
+
+    let mut items = state
+        .share_links
+        .values()
+        .filter(|share_link| share_link.workspace_id == workspace_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+
+    Ok(items
+        .into_iter()
+        .map(|share_link| ShareLinkRecord {
+            id: share_link.id,
+            target_type: share_link.target_type,
+            target_id: share_link.target_id,
+            permission: share_link.permission,
+            expires_at: share_link.expires_at,
+            max_uses: share_link.max_uses,
+            use_count: share_link.use_count,
+            disabled: share_link.disabled,
+            created_at: share_link.created_at,
+            revoked_at: share_link.revoked_at,
+        })
+        .collect())
+}
+
+async fn update_share_link_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    share_link_id: Uuid,
+    if_match: &str,
+    payload: UpdateShareLinkRequest,
+) -> Result<ShareLinkRecord, ApiError> {
+    let mut state = store.write().await;
+    let Some(workspace) = state.workspaces.get(&workspace_id) else {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    };
+    if workspace.deleted_at.is_some() {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    }
+
+    let Some(share_link) = state.share_links.get_mut(&share_link_id) else {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    };
+    if share_link.workspace_id != workspace_id {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    }
+
+    let current = ShareLinkRecord {
+        id: share_link.id,
+        target_type: share_link.target_type.clone(),
+        target_id: share_link.target_id,
+        permission: share_link.permission.clone(),
+        expires_at: share_link.expires_at,
+        max_uses: share_link.max_uses,
+        use_count: share_link.use_count,
+        disabled: share_link.disabled,
+        created_at: share_link.created_at,
+        revoked_at: share_link.revoked_at,
+    };
+    if !etag_matches(if_match, &current.etag()) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
+    if let Some(permission) = payload.permission {
+        share_link.permission = permission;
+    }
+    if let Some(expires_at) = payload.expires_at {
+        share_link.expires_at = expires_at;
+    }
+    if let Some(max_uses) = payload.max_uses {
+        share_link.max_uses = max_uses;
+    }
+    if let Some(disabled) = payload.disabled {
+        share_link.disabled = disabled;
+    }
+
+    Ok(ShareLinkRecord {
+        id: share_link.id,
+        target_type: share_link.target_type.clone(),
+        target_id: share_link.target_id,
+        permission: share_link.permission.clone(),
+        expires_at: share_link.expires_at,
+        max_uses: share_link.max_uses,
+        use_count: share_link.use_count,
+        disabled: share_link.disabled,
+        created_at: share_link.created_at,
+        revoked_at: share_link.revoked_at,
+    })
+}
+
+async fn revoke_share_link_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    share_link_id: Uuid,
+) -> Result<(), ApiError> {
+    let mut state = store.write().await;
+    let Some(workspace) = state.workspaces.get(&workspace_id) else {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    };
+    if workspace.deleted_at.is_some() {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    }
+
+    let Some(share_link) = state.share_links.get_mut(&share_link_id) else {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    };
+    if share_link.workspace_id != workspace_id {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    }
+
+    share_link.disabled = true;
+    if share_link.revoked_at.is_none() {
+        share_link.revoked_at = Some(Utc::now());
+    }
+
+    Ok(())
+}
+
+async fn find_share_link_by_token_hash_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    token_hash: Vec<u8>,
+) -> Result<ShareLinkLookup, ApiError> {
+    let state = store.read().await;
+    let link = state
+        .share_links
+        .values()
+        .find(|link| link.token_hash == token_hash)
+        .ok_or_else(|| ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link not found"))?;
+
+    Ok(ShareLinkLookup {
+        id: link.id,
+        workspace_id: link.workspace_id,
+        target_type: link.target_type.clone(),
+        target_id: link.target_id,
+        permission: link.permission.clone(),
+        password_hash: link.password_hash.clone(),
+        expires_at: link.expires_at,
+        max_uses: link.max_uses,
+        use_count: link.use_count,
+        disabled: link.disabled,
+        revoked_at: link.revoked_at,
+    })
+}
+
+async fn increment_share_link_use_count_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    share_link_id: Uuid,
+) -> Result<(), ApiError> {
+    let mut state = store.write().await;
+    let link = state
+        .share_links
+        .get_mut(&share_link_id)
+        .ok_or_else(|| ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link not found"))?;
+    link.use_count += 1;
+    Ok(())
 }
 
 async fn update_workspace_memory(
@@ -2102,6 +2759,25 @@ fn member_etag(user_id: Uuid, joined_at: DateTime<Utc>) -> String {
     format!("\"mem-{user_id}-{}\"", joined_at.timestamp_micros())
 }
 
+fn share_link_etag(share_link: &ShareLinkRecord) -> String {
+    format!(
+        "\"sl-{}-{}-{}-{}-{}-{}-{}\"",
+        share_link.id,
+        share_link.permission,
+        share_link
+            .expires_at
+            .map(|value| value.timestamp_micros())
+            .unwrap_or_default(),
+        share_link.max_uses.unwrap_or_default(),
+        share_link.use_count,
+        i32::from(share_link.disabled),
+        share_link
+            .revoked_at
+            .map(|value| value.timestamp_micros())
+            .unwrap_or_default()
+    )
+}
+
 fn validate_member_update(payload: &UpdateMemberRequest) -> Result<(), ApiError> {
     if let Some(role) = payload.role.as_deref() {
         if role != "owner" && role != "editor" && role != "viewer" {
@@ -2246,6 +2922,36 @@ fn validate_share_link_request(
     Ok(())
 }
 
+fn validate_share_link_update_request(payload: &UpdateShareLinkRequest) -> Result<(), ApiError> {
+    if payload.permission.is_none()
+        && payload.expires_at.is_none()
+        && payload.max_uses.is_none()
+        && payload.disabled.is_none()
+    {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "at least one field must be provided for patch",
+        ));
+    }
+
+    if let Some(permission) = payload.permission.as_deref() {
+        if permission != "view" && permission != "edit" {
+            return Err(ApiError::bad_request(
+                "VALIDATION_ERROR",
+                "permission must be one of: view, edit",
+            ));
+        }
+    }
+    if payload.max_uses.flatten().is_some_and(|value| value <= 0) {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "max_uses must be greater than 0"));
+    }
+    if payload.expires_at.flatten().is_some_and(|value| value <= Utc::now()) {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "expires_at must be in the future"));
+    }
+
+    Ok(())
+}
+
 fn generate_share_link_token() -> String {
     let mut bytes = [0_u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
@@ -2270,6 +2976,14 @@ fn build_share_link_url(token: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), token)
 }
 
+fn verify_share_link_password(password: &str, hash: &str) -> Result<(), ApiError> {
+    let parsed = PasswordHash::new(hash)
+        .map_err(|e| ApiError::internal(anyhow::anyhow!("invalid password hash: {e}")))?;
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .map_err(|_| ApiError::bad_request("INVALID_PASSWORD", "incorrect share link password"))
+}
+
 fn map_sqlx_error(error: sqlx::Error) -> ApiError {
     if let sqlx::Error::Database(database_error) = &error {
         if database_error.code().as_deref() == Some("23505") {
@@ -2284,8 +2998,9 @@ fn map_sqlx_error(error: sqlx::Error) -> ApiError {
 mod tests {
     use super::{
         build_router_with_store, CreateWorkspaceRequest, InviteEnvelope, MemberEnvelope,
-        MembersPageEnvelope, MemoryInvite, MemoryMembership, MemoryWorkspace, MemoryWorkspaceStore,
-        ShareLinkEnvelope, WorkspaceEnvelope, WorkspaceStore, WorkspacesPageEnvelope,
+        MembersPageEnvelope, MemoryInvite, MemoryMembership, MemoryShareLink, MemoryWorkspace,
+        MemoryWorkspaceStore, RedeemShareLinkResponse, ShareLinkEnvelope, ShareLinksEnvelope,
+        WorkspaceEnvelope, WorkspaceStore, WorkspacesPageEnvelope,
     };
     use crate::auth::jwt::JwtAccessTokenService;
     use axum::{
@@ -2494,6 +3209,180 @@ mod tests {
             .password_hash
             .as_deref()
             .is_some_and(|value| value.starts_with("$argon2id$")));
+    }
+
+    #[tokio::test]
+    async fn share_link_management_supports_list_patch_and_revoke() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let user_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let now = Utc::now();
+        let store = Arc::new(RwLock::new(MemoryWorkspaceStore::default()));
+
+        {
+            let mut guard = store.write().await;
+            guard.workspaces.insert(
+                workspace_id,
+                MemoryWorkspace {
+                    id: workspace_id,
+                    slug: "links".to_owned(),
+                    name: "Links".to_owned(),
+                    created_at: now,
+                    updated_at: now,
+                    deleted_at: None,
+                },
+            );
+            guard.memberships.insert(
+                (workspace_id, user_id),
+                MemoryMembership {
+                    role: "editor".to_owned(),
+                    status: "active".to_owned(),
+                    email: "editor@test.local".to_owned(),
+                    display_name: "Editor".to_owned(),
+                    joined_at: now,
+                },
+            );
+        }
+
+        let router = build_router_with_store(
+            WorkspaceStore::Memory(store.clone()),
+            Arc::clone(&jwt_service),
+        );
+        let token = bearer_token(&jwt_service, user_id, workspace_id);
+
+        let create_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "target_type": "workspace",
+                            "target_id": workspace_id,
+                            "permission": "view"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create share link should return response");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let created: ShareLinkEnvelope = read_json(create_response).await;
+
+        let list_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("list share links should return response");
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let list_body: ShareLinksEnvelope = read_json(list_response).await;
+        assert_eq!(list_body.items.len(), 1);
+        assert_eq!(list_body.items[0].id, created.share_link.id);
+
+        let missing_if_match = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "permission": "edit" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("patch share link should return response");
+        assert_eq!(missing_if_match.status(), StatusCode::PRECONDITION_REQUIRED);
+
+        let stale_if_match = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "\"stale\"")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "permission": "edit" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("patch share link should return response");
+        assert_eq!(stale_if_match.status(), StatusCode::PRECONDITION_FAILED);
+
+        let new_expiry = (Utc::now() + chrono::Duration::days(14)).to_rfc3339();
+        let update_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", &created.share_link.etag)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "permission": "edit",
+                            "max_uses": 25,
+                            "expires_at": new_expiry,
+                            "disabled": false
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("patch share link should return response");
+        assert_eq!(update_response.status(), StatusCode::OK);
+        let updated: ShareLinkEnvelope = read_json(update_response).await;
+        assert_eq!(updated.share_link.permission, "edit");
+        assert_eq!(updated.share_link.max_uses, Some(25));
+        assert!(!updated.share_link.disabled);
+        assert_ne!(updated.share_link.etag, created.share_link.etag);
+
+        let revoke_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("revoke share link should return response");
+        assert_eq!(revoke_response.status(), StatusCode::NO_CONTENT);
+
+        let list_after_revoke_response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("list share links should return response");
+        assert_eq!(list_after_revoke_response.status(), StatusCode::OK);
+        let list_after_revoke: ShareLinksEnvelope = read_json(list_after_revoke_response).await;
+        assert_eq!(list_after_revoke.items.len(), 1);
+        assert!(list_after_revoke.items[0].disabled);
+        assert!(list_after_revoke.items[0].revoked_at.is_some());
     }
 
     #[tokio::test]
@@ -3435,5 +4324,292 @@ mod tests {
             .expect("accept invite request should return response");
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Share link redeem ────────────────────────────────────────────
+
+    fn setup_workspace_with_share_link(
+        password_hash: Option<String>,
+        max_uses: Option<i32>,
+        expires_at: Option<chrono::DateTime<Utc>>,
+        disabled: bool,
+    ) -> (
+        axum::Router,
+        Arc<JwtAccessTokenService>,
+        Uuid,
+        String,
+        Uuid,
+        Arc<RwLock<MemoryWorkspaceStore>>,
+    ) {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let user_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let share_link_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let raw_token = "redeem-test-token-abc123";
+        let token_hash = Sha256::digest(raw_token.as_bytes()).to_vec();
+
+        let mut mem_store = MemoryWorkspaceStore::default();
+        mem_store.workspaces.insert(
+            workspace_id,
+            MemoryWorkspace {
+                id: workspace_id,
+                slug: "redeem-ws".to_owned(),
+                name: "Redeem WS".to_owned(),
+                created_at: now,
+                updated_at: now,
+                deleted_at: None,
+            },
+        );
+        mem_store.memberships.insert(
+            (workspace_id, user_id),
+            MemoryMembership {
+                role: "owner".to_owned(),
+                status: "active".to_owned(),
+                email: "owner@test.local".to_owned(),
+                display_name: "Owner".to_owned(),
+                joined_at: now,
+            },
+        );
+        mem_store.share_links.insert(
+            share_link_id,
+            MemoryShareLink {
+                id: share_link_id,
+                workspace_id,
+                target_type: "workspace".to_owned(),
+                target_id: workspace_id,
+                permission: "view".to_owned(),
+                token_hash,
+                password_hash,
+                expires_at,
+                max_uses,
+                use_count: 0,
+                disabled,
+                created_at: now,
+                revoked_at: None,
+            },
+        );
+
+        let store = Arc::new(RwLock::new(mem_store));
+        let router = build_router_with_store(
+            WorkspaceStore::Memory(store.clone()),
+            Arc::clone(&jwt_service),
+        );
+        (router, jwt_service, workspace_id, raw_token.to_owned(), share_link_id, store)
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_grants_access_without_auth() {
+        let (router, _jwt_service, workspace_id, raw_token, share_link_id, store) =
+            setup_workspace_with_share_link(None, Some(10), None, false);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "token": raw_token }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: RedeemShareLinkResponse = read_json(response).await;
+        assert_eq!(body.workspace_id, workspace_id);
+        assert_eq!(body.target_type, "workspace");
+        assert_eq!(body.target_id, workspace_id);
+        assert_eq!(body.permission, "view");
+        assert_eq!(body.remaining_uses, Some(9));
+
+        // Verify use_count was incremented.
+        let guard = store.read().await;
+        let link = guard.share_links.get(&share_link_id).unwrap();
+        assert_eq!(link.use_count, 1);
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_rejects_invalid_token() {
+        let (router, _jwt_service, _workspace_id, _raw_token, _share_link_id, _store) =
+            setup_workspace_with_share_link(None, None, None, false);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "token": "nonexistent-token" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_rejects_disabled_link() {
+        let (router, _jwt_service, _workspace_id, raw_token, _share_link_id, _store) =
+            setup_workspace_with_share_link(None, None, None, true);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "token": raw_token }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_rejects_expired_link() {
+        let expired = Utc::now() - chrono::Duration::hours(1);
+        let (router, _jwt_service, _workspace_id, raw_token, _share_link_id, _store) =
+            setup_workspace_with_share_link(None, None, Some(expired), false);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "token": raw_token }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_rejects_exhausted_uses() {
+        let (router, _jwt_service, _workspace_id, raw_token, share_link_id, store) =
+            setup_workspace_with_share_link(None, Some(1), None, false);
+
+        // Set use_count to max_uses so it's exhausted.
+        {
+            let mut guard = store.write().await;
+            guard.share_links.get_mut(&share_link_id).unwrap().use_count = 1;
+        }
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "token": raw_token }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_validates_password() {
+        let password = "super-secret";
+        let password_hash = super::hash_share_link_password(password).unwrap();
+        let (router, _jwt_service, workspace_id, raw_token, _share_link_id, _store) =
+            setup_workspace_with_share_link(Some(password_hash), None, None, false);
+
+        // Wrong password.
+        let bad_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({ "token": raw_token, "password": "wrong" }).to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+        assert_eq!(bad_response.status(), StatusCode::BAD_REQUEST);
+
+        // Correct password.
+        let good_response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({ "token": raw_token, "password": password }).to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+        assert_eq!(good_response.status(), StatusCode::OK);
+        let body: RedeemShareLinkResponse = read_json(good_response).await;
+        assert_eq!(body.workspace_id, workspace_id);
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_rate_limits_after_max_attempts() {
+        let (router, _jwt_service, _workspace_id, _raw_token, _share_link_id, _store) =
+            setup_workspace_with_share_link(None, None, None, false);
+
+        // Send REDEEM_RATE_LIMIT_MAX + 1 requests with a bad token to trigger rate limit.
+        let bad_token = "rate-limit-test-token";
+        for i in 0..=super::REDEEM_RATE_LIMIT_MAX {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/v1/share-links/redeem")
+                        .header("content-type", "application/json")
+                        .body(Body::from(json!({ "token": bad_token }).to_string()))
+                        .expect("request should build"),
+                )
+                .await
+                .expect("redeem request should return response");
+
+            if i < super::REDEEM_RATE_LIMIT_MAX {
+                // First N requests fail with NOT_FOUND (bad token).
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "attempt {i}");
+            } else {
+                // The N+1 request should be rate limited.
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS, "attempt {i}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn redeem_share_link_rejects_empty_token() {
+        let (router, _jwt_service, _workspace_id, _raw_token, _share_link_id, _store) =
+            setup_workspace_with_share_link(None, None, None, false);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/share-links/redeem")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "token": "  " }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("redeem request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
