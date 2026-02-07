@@ -13,7 +13,7 @@ use axum::{
     http::{header::IF_MATCH, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -102,6 +102,9 @@ struct MemoryWorkspace {
 struct MemoryMembership {
     role: String,
     status: String,
+    email: String,
+    display_name: String,
+    joined_at: DateTime<Utc>,
 }
 
 #[derive(Clone)]
@@ -178,6 +181,100 @@ struct ShareLink {
     created_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
     url_once: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MemberEnvelope {
+    member: Member,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MembersPageEnvelope {
+    items: Vec<Member>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Member {
+    user_id: Uuid,
+    email: String,
+    display_name: String,
+    role: String,
+    status: String,
+    joined_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+struct UpdateMemberRequest {
+    role: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListMembersQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+#[derive(Clone)]
+struct MemberRecord {
+    user_id: Uuid,
+    email: String,
+    display_name: String,
+    role: String,
+    status: String,
+    joined_at: DateTime<Utc>,
+}
+
+impl MemberRecord {
+    fn etag(&self) -> String {
+        member_etag(self.user_id, self.joined_at)
+    }
+
+    fn into_member(self) -> Member {
+        Member {
+            user_id: self.user_id,
+            email: self.email,
+            display_name: self.display_name,
+            role: self.role,
+            status: self.status,
+            joined_at: self.joined_at,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct MemberRow {
+    user_id: Uuid,
+    email: String,
+    display_name: String,
+    role: String,
+    status: String,
+    joined_at: DateTime<Utc>,
+}
+
+impl From<MemberRow> for MemberRecord {
+    fn from(value: MemberRow) -> Self {
+        Self {
+            user_id: value.user_id,
+            email: value.email,
+            display_name: value.display_name,
+            role: value.role,
+            status: value.status,
+            joined_at: value.joined_at,
+        }
+    }
+}
+
+struct MemberPage {
+    items: Vec<MemberRecord>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Clone)]
+struct MemberCursor {
+    joined_at: DateTime<Utc>,
+    user_id: Uuid,
 }
 
 #[derive(Clone)]
@@ -368,6 +465,12 @@ fn build_router_with_store(
         middleware::from_fn_with_state(state.clone(), require_workspace_editor_role);
     let owner_role_layer =
         middleware::from_fn_with_state(state.clone(), require_workspace_owner_role);
+    let members_viewer_layer =
+        middleware::from_fn_with_state(state.clone(), require_workspace_viewer_role);
+    let members_owner_layer =
+        middleware::from_fn_with_state(state.clone(), require_workspace_owner_role);
+    let members_delete_owner_layer =
+        middleware::from_fn_with_state(state.clone(), require_workspace_owner_role);
 
     Router::new()
         .route("/v1/workspaces", post(create_workspace).get(list_workspaces))
@@ -376,6 +479,18 @@ fn build_router_with_store(
         .route(
             "/v1/workspaces/{id}/share-links",
             post(create_share_link).route_layer(editor_role_layer),
+        )
+        .route(
+            "/v1/workspaces/{workspace_id}/members",
+            get(list_members).route_layer(members_viewer_layer),
+        )
+        .route(
+            "/v1/workspaces/{workspace_id}/members/{member_id}",
+            patch(update_member).route_layer(members_owner_layer),
+        )
+        .route(
+            "/v1/workspaces/{workspace_id}/members/{member_id}",
+            delete(delete_member).route_layer(members_delete_owner_layer),
         )
         .with_state(state)
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
@@ -477,6 +592,60 @@ async fn create_share_link(
             share_link: share_link.into_share_link(build_share_link_url(&token)),
         }),
     ))
+}
+
+async fn list_members(
+    State(state): State<ApiState>,
+    Path(workspace_id): Path<Uuid>,
+    Query(query): Query<ListMembersQuery>,
+) -> Result<Json<MembersPageEnvelope>, ApiError> {
+    let limit = normalize_limit(query.limit);
+    let cursor = match query.cursor {
+        Some(raw_cursor) => Some(parse_member_cursor(&raw_cursor)?),
+        None => None,
+    };
+
+    let page = state.store.list_members(workspace_id, limit, cursor).await?;
+
+    Ok(Json(MembersPageEnvelope {
+        items: page.items.into_iter().map(MemberRecord::into_member).collect(),
+        next_cursor: page.next_cursor,
+    }))
+}
+
+async fn update_member(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path((workspace_id, member_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateMemberRequest>,
+) -> Result<Json<MemberEnvelope>, ApiError> {
+    validate_member_update(&payload)?;
+
+    if member_id == user.user_id {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot modify your own membership"));
+    }
+
+    let if_match = extract_if_match(&headers)?;
+    let record = state.store.update_member(workspace_id, member_id, if_match, payload).await?;
+
+    Ok(Json(MemberEnvelope { member: record.into_member() }))
+}
+
+async fn delete_member(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path((workspace_id, member_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    if member_id == user.user_id {
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot remove your own membership"));
+    }
+
+    let if_match = extract_if_match(&headers)?;
+    state.store.delete_member(workspace_id, member_id, if_match).await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn require_workspace_viewer_role(
@@ -646,6 +815,49 @@ impl WorkspaceStore {
             }
             Self::Memory(store) => {
                 update_workspace_memory(store, user_id, workspace_id, if_match, payload).await
+            }
+        }
+    }
+
+    async fn list_members(
+        &self,
+        workspace_id: Uuid,
+        limit: usize,
+        cursor: Option<MemberCursor>,
+    ) -> Result<MemberPage, ApiError> {
+        match self {
+            Self::Postgres(pool) => list_members_pg(pool, workspace_id, limit, cursor).await,
+            Self::Memory(store) => list_members_memory(store, workspace_id, limit, cursor).await,
+        }
+    }
+
+    async fn update_member(
+        &self,
+        workspace_id: Uuid,
+        member_id: Uuid,
+        if_match: &str,
+        payload: UpdateMemberRequest,
+    ) -> Result<MemberRecord, ApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                update_member_pg(pool, workspace_id, member_id, if_match, payload).await
+            }
+            Self::Memory(store) => {
+                update_member_memory(store, workspace_id, member_id, if_match, payload).await
+            }
+        }
+    }
+
+    async fn delete_member(
+        &self,
+        workspace_id: Uuid,
+        member_id: Uuid,
+        if_match: &str,
+    ) -> Result<(), ApiError> {
+        match self {
+            Self::Postgres(pool) => delete_member_pg(pool, workspace_id, member_id, if_match).await,
+            Self::Memory(store) => {
+                delete_member_memory(store, workspace_id, member_id, if_match).await
             }
         }
     }
@@ -964,7 +1176,13 @@ async fn create_workspace_memory(
     );
     state.memberships.insert(
         (workspace_id, user_id),
-        MemoryMembership { role: "owner".to_owned(), status: "active".to_owned() },
+        MemoryMembership {
+            role: "owner".to_owned(),
+            status: "active".to_owned(),
+            email: format!("user-{}@test.local", user_id),
+            display_name: format!("User {}", &user_id.to_string()[..8]),
+            joined_at: now,
+        },
     );
 
     Ok(WorkspaceRecord {
@@ -1207,6 +1425,275 @@ async fn update_workspace_memory(
     })
 }
 
+// ── Member implementations ───────────────────────────────────────────
+
+async fn list_members_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    limit: usize,
+    cursor: Option<MemberCursor>,
+) -> Result<MemberPage, ApiError> {
+    let cursor_joined_at = cursor.as_ref().map(|c| c.joined_at);
+    let cursor_user_id = cursor.as_ref().map(|c| c.user_id);
+
+    let rows: Vec<MemberRow> = sqlx::query_as::<_, MemberRow>(
+        r#"
+        SELECT
+            wm.user_id,
+            u.email,
+            u.display_name,
+            wm.role,
+            wm.status,
+            wm.joined_at
+        FROM workspace_members AS wm
+        INNER JOIN users AS u ON u.id = wm.user_id
+        WHERE wm.workspace_id = $1
+          AND (
+            $3::timestamptz IS NULL
+            OR wm.joined_at > $3
+            OR (wm.joined_at = $3 AND wm.user_id > $4)
+          )
+        ORDER BY wm.joined_at ASC, wm.user_id ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind((limit + 1) as i64)
+    .bind(cursor_joined_at)
+    .bind(cursor_user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    let mut items: Vec<MemberRecord> = rows.into_iter().map(MemberRecord::from).collect();
+    Ok(paginate_member_records(&mut items, limit))
+}
+
+async fn update_member_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    member_id: Uuid,
+    if_match: &str,
+    payload: UpdateMemberRequest,
+) -> Result<MemberRecord, ApiError> {
+    let current = sqlx::query_as::<_, MemberRow>(
+        r#"
+        SELECT
+            wm.user_id,
+            u.email,
+            u.display_name,
+            wm.role,
+            wm.status,
+            wm.joined_at
+        FROM workspace_members AS wm
+        INNER JOIN users AS u ON u.id = wm.user_id
+        WHERE wm.workspace_id = $1
+          AND wm.user_id = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(member_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or_else(|| ApiError::not_found("MEMBER_NOT_FOUND", "workspace member not found"))?;
+
+    let current_record: MemberRecord = current.into();
+    if !etag_matches(if_match, &current_record.etag()) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
+    if current_record.role == "owner" && payload.role.as_deref().is_some_and(|r| r != "owner") {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "cannot demote the last owner",
+        ));
+    }
+
+    let row = sqlx::query_as::<_, MemberRow>(
+        r#"
+        UPDATE workspace_members AS wm
+        SET
+            role = COALESCE($3, wm.role),
+            status = COALESCE($4, wm.status)
+        FROM users AS u
+        WHERE wm.workspace_id = $1
+          AND wm.user_id = $2
+          AND u.id = wm.user_id
+        RETURNING wm.user_id, u.email, u.display_name, wm.role, wm.status, wm.joined_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(member_id)
+    .bind(payload.role)
+    .bind(payload.status)
+    .fetch_one(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(row.into())
+}
+
+async fn delete_member_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    member_id: Uuid,
+    if_match: &str,
+) -> Result<(), ApiError> {
+    let current = sqlx::query_as::<_, MemberRow>(
+        r#"
+        SELECT
+            wm.user_id,
+            u.email,
+            u.display_name,
+            wm.role,
+            wm.status,
+            wm.joined_at
+        FROM workspace_members AS wm
+        INNER JOIN users AS u ON u.id = wm.user_id
+        WHERE wm.workspace_id = $1
+          AND wm.user_id = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(member_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or_else(|| ApiError::not_found("MEMBER_NOT_FOUND", "workspace member not found"))?;
+
+    let current_record: MemberRecord = current.into();
+    if !etag_matches(if_match, &current_record.etag()) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
+    if current_record.role == "owner" {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "cannot remove a workspace owner",
+        ));
+    }
+
+    sqlx::query("DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2")
+        .bind(workspace_id)
+        .bind(member_id)
+        .execute(pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+    Ok(())
+}
+
+async fn list_members_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    limit: usize,
+    cursor: Option<MemberCursor>,
+) -> Result<MemberPage, ApiError> {
+    let state = store.read().await;
+
+    let mut items: Vec<MemberRecord> = state
+        .memberships
+        .iter()
+        .filter_map(|((ws_id, user_id), membership)| {
+            if *ws_id != workspace_id {
+                return None;
+            }
+            Some(MemberRecord {
+                user_id: *user_id,
+                email: membership.email.clone(),
+                display_name: membership.display_name.clone(),
+                role: membership.role.clone(),
+                status: membership.status.clone(),
+                joined_at: membership.joined_at,
+            })
+        })
+        .collect();
+
+    items.sort_by(|left, right| {
+        left.joined_at.cmp(&right.joined_at).then_with(|| left.user_id.cmp(&right.user_id))
+    });
+
+    if let Some(cursor) = cursor {
+        items.retain(|item| {
+            item.joined_at > cursor.joined_at
+                || (item.joined_at == cursor.joined_at && item.user_id > cursor.user_id)
+        });
+    }
+
+    Ok(paginate_member_records(&mut items, limit))
+}
+
+async fn update_member_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    member_id: Uuid,
+    if_match: &str,
+    payload: UpdateMemberRequest,
+) -> Result<MemberRecord, ApiError> {
+    let mut state = store.write().await;
+    let Some(member) = state.memberships.get(&(workspace_id, member_id)) else {
+        return Err(ApiError::not_found("MEMBER_NOT_FOUND", "workspace member not found"));
+    };
+
+    let current_etag = member_etag(member_id, member.joined_at);
+    if !etag_matches(if_match, &current_etag) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
+    if member.role == "owner" && payload.role.as_deref().is_some_and(|r| r != "owner") {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "cannot demote the last owner",
+        ));
+    }
+
+    let member = state.memberships.get_mut(&(workspace_id, member_id)).unwrap();
+
+    if let Some(role) = payload.role {
+        member.role = role;
+    }
+    if let Some(status) = payload.status {
+        member.status = status;
+    }
+
+    Ok(MemberRecord {
+        user_id: member_id,
+        email: member.email.clone(),
+        display_name: member.display_name.clone(),
+        role: member.role.clone(),
+        status: member.status.clone(),
+        joined_at: member.joined_at,
+    })
+}
+
+async fn delete_member_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    member_id: Uuid,
+    if_match: &str,
+) -> Result<(), ApiError> {
+    let mut state = store.write().await;
+    let Some(member) = state.memberships.get(&(workspace_id, member_id)) else {
+        return Err(ApiError::not_found("MEMBER_NOT_FOUND", "workspace member not found"));
+    };
+
+    let current_etag = member_etag(member_id, member.joined_at);
+    if !etag_matches(if_match, &current_etag) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
+    if member.role == "owner" {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "cannot remove a workspace owner",
+        ));
+    }
+
+    state.memberships.remove(&(workspace_id, member_id));
+    Ok(())
+}
+
 fn paginate_records(items: &mut Vec<WorkspaceRecord>, limit: usize) -> WorkspacePage {
     let has_more = items.len() > limit;
     if has_more {
@@ -1220,6 +1707,68 @@ fn paginate_records(items: &mut Vec<WorkspaceRecord>, limit: usize) -> Workspace
     };
 
     WorkspacePage { items: std::mem::take(items), next_cursor }
+}
+
+fn paginate_member_records(items: &mut Vec<MemberRecord>, limit: usize) -> MemberPage {
+    let has_more = items.len() > limit;
+    if has_more {
+        items.truncate(limit);
+    }
+
+    let next_cursor = if has_more {
+        items
+            .last()
+            .map(|record| encode_member_cursor(record.joined_at, record.user_id))
+    } else {
+        None
+    };
+
+    MemberPage { items: std::mem::take(items), next_cursor }
+}
+
+fn encode_member_cursor(joined_at: DateTime<Utc>, user_id: Uuid) -> String {
+    format!("{}|{user_id}", joined_at.timestamp_micros())
+}
+
+fn parse_member_cursor(value: &str) -> Result<MemberCursor, ApiError> {
+    let (timestamp, id) = value
+        .split_once('|')
+        .ok_or_else(|| ApiError::bad_request("INVALID_CURSOR", "cursor format is invalid"))?;
+
+    let timestamp = timestamp
+        .parse::<i64>()
+        .map_err(|_| ApiError::bad_request("INVALID_CURSOR", "cursor timestamp is invalid"))?;
+    let joined_at = DateTime::<Utc>::from_timestamp_micros(timestamp)
+        .ok_or_else(|| ApiError::bad_request("INVALID_CURSOR", "cursor timestamp is invalid"))?;
+    let user_id = Uuid::parse_str(id)
+        .map_err(|_| ApiError::bad_request("INVALID_CURSOR", "cursor id is invalid"))?;
+
+    Ok(MemberCursor { joined_at, user_id })
+}
+
+fn member_etag(user_id: Uuid, joined_at: DateTime<Utc>) -> String {
+    format!("\"mem-{user_id}-{}\"", joined_at.timestamp_micros())
+}
+
+fn validate_member_update(payload: &UpdateMemberRequest) -> Result<(), ApiError> {
+    if let Some(role) = payload.role.as_deref() {
+        if role != "owner" && role != "editor" && role != "viewer" {
+            return Err(ApiError::bad_request(
+                "VALIDATION_ERROR",
+                "role must be one of: owner, editor, viewer",
+            ));
+        }
+    }
+    if let Some(status) = payload.status.as_deref() {
+        if status != "active" && status != "invited" && status != "suspended" {
+            return Err(ApiError::bad_request(
+                "VALIDATION_ERROR",
+                "status must be one of: active, invited, suspended",
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn normalize_limit(limit: Option<usize>) -> usize {
@@ -1360,9 +1909,9 @@ fn map_sqlx_error(error: sqlx::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_router_with_store, CreateWorkspaceRequest, MemoryMembership, MemoryWorkspace,
-        MemoryWorkspaceStore, ShareLinkEnvelope, WorkspaceEnvelope, WorkspaceStore,
-        WorkspacesPageEnvelope,
+        build_router_with_store, CreateWorkspaceRequest, MemberEnvelope, MembersPageEnvelope,
+        MemoryMembership, MemoryWorkspace, MemoryWorkspaceStore, ShareLinkEnvelope,
+        WorkspaceEnvelope, WorkspaceStore, WorkspacesPageEnvelope,
     };
     use crate::auth::jwt::JwtAccessTokenService;
     use axum::{
@@ -1449,7 +1998,13 @@ mod tests {
             );
             guard.memberships.insert(
                 (workspace_id, user_id),
-                MemoryMembership { role: "viewer".to_owned(), status: "active".to_owned() },
+                MemoryMembership {
+                    role: "viewer".to_owned(),
+                    status: "active".to_owned(),
+                    email: "viewer@test.local".to_owned(),
+                    display_name: "Viewer".to_owned(),
+                    joined_at: now,
+                },
             );
         }
 
@@ -1499,7 +2054,13 @@ mod tests {
             );
             guard.memberships.insert(
                 (workspace_id, user_id),
-                MemoryMembership { role: "editor".to_owned(), status: "active".to_owned() },
+                MemoryMembership {
+                    role: "editor".to_owned(),
+                    status: "active".to_owned(),
+                    email: "editor@test.local".to_owned(),
+                    display_name: "Editor".to_owned(),
+                    joined_at: now,
+                },
             );
         }
 
@@ -1756,5 +2317,360 @@ mod tests {
         let updated_body: WorkspaceEnvelope = read_json(successful_patch).await;
         assert_eq!(updated_body.workspace.name, "Docs Updated");
         assert_ne!(updated_body.workspace.etag, create_body.workspace.etag);
+    }
+
+    // ── Member management ────────────────────────────────────────────
+
+    fn setup_workspace_with_members() -> (
+        axum::Router,
+        Arc<JwtAccessTokenService>,
+        Uuid,
+        Uuid,
+        Uuid,
+        Arc<RwLock<MemoryWorkspaceStore>>,
+    ) {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let owner_id = Uuid::new_v4();
+        let member_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let mut mem_store = MemoryWorkspaceStore::default();
+        mem_store.workspaces.insert(
+            workspace_id,
+            MemoryWorkspace {
+                id: workspace_id,
+                slug: "team".to_owned(),
+                name: "Team".to_owned(),
+                created_at: now,
+                updated_at: now,
+                deleted_at: None,
+            },
+        );
+        mem_store.memberships.insert(
+            (workspace_id, owner_id),
+            MemoryMembership {
+                role: "owner".to_owned(),
+                status: "active".to_owned(),
+                email: "owner@test.local".to_owned(),
+                display_name: "Owner".to_owned(),
+                joined_at: now,
+            },
+        );
+        mem_store.memberships.insert(
+            (workspace_id, member_id),
+            MemoryMembership {
+                role: "editor".to_owned(),
+                status: "active".to_owned(),
+                email: "editor@test.local".to_owned(),
+                display_name: "Editor User".to_owned(),
+                joined_at: now,
+            },
+        );
+
+        let store = Arc::new(RwLock::new(mem_store));
+        let router = build_router_with_store(
+            WorkspaceStore::Memory(store.clone()),
+            Arc::clone(&jwt_service),
+        );
+        (router, jwt_service, owner_id, member_id, workspace_id, store)
+    }
+
+    #[tokio::test]
+    async fn list_members_returns_workspace_members() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/workspaces/{workspace_id}/members"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("list members request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: MembersPageEnvelope = read_json(response).await;
+        assert_eq!(body.items.len(), 2);
+        assert!(body.items.iter().any(|m| m.role == "owner"));
+        assert!(body.items.iter().any(|m| m.role == "editor"));
+    }
+
+    #[tokio::test]
+    async fn update_member_role_with_if_match() {
+        let (router, jwt_service, owner_id, member_id, workspace_id, store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let etag = {
+            let guard = store.read().await;
+            let member = guard.memberships.get(&(workspace_id, member_id)).unwrap();
+            super::member_etag(member_id, member.joined_at)
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{member_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", &etag)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "role": "viewer" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("update member request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: MemberEnvelope = read_json(response).await;
+        assert_eq!(body.member.role, "viewer");
+        assert_eq!(body.member.user_id, member_id);
+    }
+
+    #[tokio::test]
+    async fn update_member_rejects_stale_etag() {
+        let (router, jwt_service, owner_id, member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{member_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "\"stale\"")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "role": "viewer" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("update member request should return response");
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    }
+
+    #[tokio::test]
+    async fn update_member_rejects_self_modification() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{owner_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "role": "editor" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("update member request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_member_validates_role_values() {
+        let (router, jwt_service, owner_id, member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{member_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "role": "admin" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("update member request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn delete_member_removes_from_workspace() {
+        let (router, jwt_service, owner_id, member_id, workspace_id, store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let etag = {
+            let guard = store.read().await;
+            let member = guard.memberships.get(&(workspace_id, member_id)).unwrap();
+            super::member_etag(member_id, member.joined_at)
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{member_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", &etag)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("delete member request should return response");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let guard = store.read().await;
+        assert!(guard.memberships.get(&(workspace_id, member_id)).is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_member_rejects_owner_removal() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let other_owner_id = Uuid::new_v4();
+        // This test tries to delete self, which should fail with self-modification check
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{owner_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("delete member request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let _ = other_owner_id;
+    }
+
+    #[tokio::test]
+    async fn delete_member_rejects_self_removal() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{owner_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("delete member request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_member_returns_not_found() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+        let fake_id = Uuid::new_v4();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{fake_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("delete member request should return response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn list_members_requires_auth() {
+        let (router, _jwt_service, _owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/workspaces/{workspace_id}/members"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("list members request should return response");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn update_member_status_to_suspended() {
+        let (router, jwt_service, owner_id, member_id, workspace_id, store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let etag = {
+            let guard = store.read().await;
+            let member = guard.memberships.get(&(workspace_id, member_id)).unwrap();
+            super::member_etag(member_id, member.joined_at)
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/members/{member_id}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", &etag)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "status": "suspended" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("update member request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: MemberEnvelope = read_json(response).await;
+        assert_eq!(body.member.status, "suspended");
+        assert_eq!(body.member.role, "editor"); // role unchanged
     }
 }
