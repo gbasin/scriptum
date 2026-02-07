@@ -3,14 +3,16 @@
 // Calls an LLM (Claude Haiku) with a diff summary to produce concise
 // conventional commit messages. Respects the workspace redaction policy:
 // - Disabled: no AI calls, returns an error.
-// - Redacted: sends file names and change types only (no diff content).
+// - Redacted: sends sanitized diff content with sensitive values removed.
 // - Full: sends the complete diff for richer messages.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::OnceLock;
 
+use regex::Regex;
 use super::triggers::{ChangeType, ChangedFile};
 
 /// System prompt instructing the LLM to generate conventional commit messages.
@@ -98,14 +100,67 @@ pub fn build_prompt(
             prompt.push_str(diff_summary);
         }
         RedactionPolicy::Redacted => {
-            prompt.push_str(
-                "(Diff content redacted by policy. Generate message from file names only.)\n",
-            );
+            prompt.push_str("Diff (redacted):\n");
+            prompt.push_str(&redact_sensitive_content(diff_summary));
         }
         RedactionPolicy::Disabled => {}
     }
 
     prompt
+}
+
+fn sensitive_patterns() -> &'static [Regex] {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    PATTERNS
+        .get_or_init(|| {
+            vec![
+                // key = value style assignments.
+                Regex::new(
+                    r#"(?im)\b(api[_-]?key|secret|token|password|passwd|credential|client[_-]?secret|access[_-]?key|private[_-]?key)\b(\s*[:=]\s*)(['"]?)[^'"\s]+(['"]?)"#,
+                )
+                .expect("assignment redaction pattern should compile"),
+                // AWS-style access keys.
+                Regex::new(r"(?i)\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+                    .expect("aws key redaction pattern should compile"),
+                // GitHub PATs.
+                Regex::new(r"(?i)\bghp_[A-Za-z0-9]{30,}\b")
+                    .expect("github pat redaction pattern should compile"),
+                // Common API key prefixes.
+                Regex::new(r"(?i)\bsk-(?:live|test)-[A-Za-z0-9]{16,}\b")
+                    .expect("api key prefix redaction pattern should compile"),
+                // JWT-like bearer tokens.
+                Regex::new(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+                    .expect("jwt redaction pattern should compile"),
+                // PEM private keys.
+                Regex::new(r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----")
+                    .expect("pem redaction pattern should compile"),
+            ]
+        })
+        .as_slice()
+}
+
+fn redact_sensitive_content(diff_summary: &str) -> String {
+    const REDACTED_VALUE: &str = "[REDACTED]";
+    let mut redacted = diff_summary.to_string();
+
+    for pattern in sensitive_patterns() {
+        redacted = if pattern.as_str().contains("api[_-]?key|secret|token|password") {
+            pattern
+                .replace_all(&redacted, "${1}${2}${3}[REDACTED]${4}")
+                .into_owned()
+        } else if pattern.as_str().contains("PRIVATE KEY") {
+            pattern
+                .replace_all(
+                    &redacted,
+                    "-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----",
+                )
+                .into_owned()
+        } else {
+            pattern.replace_all(&redacted, REDACTED_VALUE).into_owned()
+        };
+    }
+
+    redacted
 }
 
 /// Generate an AI-assisted commit message.
@@ -130,6 +185,37 @@ pub async fn generate_ai_commit_message(
     }
 
     Ok(enforce_first_line_limit(&trimmed, 72))
+}
+
+/// Generate a deterministic fallback commit message when AI generation fails.
+///
+/// Format: `Update {n} file(s): {paths}`
+pub fn fallback_commit_message(changed_files: &[ChangedFile]) -> String {
+    let mut paths = changed_files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+    paths.sort_unstable();
+    paths.dedup();
+
+    let path_list = if paths.is_empty() { String::from("(none)") } else { paths.join(", ") };
+    format!("Update {} file(s): {path_list}", paths.len())
+}
+
+/// Generate a commit message with deterministic fallback.
+///
+/// Returns AI output when available; otherwise falls back to a stable
+/// path-based message to keep commits non-empty and predictable.
+pub async fn generate_commit_message_with_fallback(
+    client: &dyn AiCommitClient,
+    diff_summary: &str,
+    changed_files: &[ChangedFile],
+    policy: RedactionPolicy,
+) -> String {
+    match generate_ai_commit_message(client, diff_summary, changed_files, policy).await {
+        Ok(message) => message,
+        Err(_) => fallback_commit_message(changed_files),
+    }
 }
 
 /// Truncate the first line of a commit message to `max_len` characters,
@@ -310,6 +396,46 @@ mod tests {
         assert_eq!(msg, "feat: add new feature");
     }
 
+    #[tokio::test]
+    async fn fallback_wrapper_uses_ai_message_when_available() {
+        let client = MockClient::ok("docs: refresh README");
+        let files = test_files();
+
+        let message =
+            generate_commit_message_with_fallback(&client, "diff", &files, RedactionPolicy::Full)
+                .await;
+
+        assert_eq!(message, "docs: refresh README");
+    }
+
+    #[tokio::test]
+    async fn fallback_wrapper_uses_structured_fallback_on_ai_error() {
+        let client = MockClient::err(AiCommitError::ClientError("timeout".into()));
+        let files = vec![
+            ChangedFile {
+                path: "docs/b.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Modified,
+            },
+            ChangedFile {
+                path: "docs/a.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Added,
+            },
+            ChangedFile {
+                path: "docs/a.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Deleted,
+            },
+        ];
+
+        let message =
+            generate_commit_message_with_fallback(&client, "diff", &files, RedactionPolicy::Full)
+                .await;
+
+        assert_eq!(message, "Update 2 file(s): docs/a.md, docs/b.md");
+    }
+
     // ── enforce_first_line_limit ──────────────────────────────────────
 
     #[test]
@@ -382,5 +508,34 @@ mod tests {
         }];
         let prompt = build_prompt("", &files, RedactionPolicy::Full);
         assert!(prompt.contains("D old.md"));
+    }
+
+    #[test]
+    fn fallback_message_handles_empty_file_list() {
+        let message = fallback_commit_message(&[]);
+        assert_eq!(message, "Update 0 file(s): (none)");
+    }
+
+    #[test]
+    fn fallback_message_is_sorted_and_deduplicated() {
+        let files = vec![
+            ChangedFile {
+                path: "docs/z.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Modified,
+            },
+            ChangedFile {
+                path: "docs/a.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Added,
+            },
+            ChangedFile {
+                path: "docs/z.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Deleted,
+            },
+        ];
+        let message = fallback_commit_message(&files);
+        assert_eq!(message, "Update 2 file(s): docs/a.md, docs/z.md");
     }
 }
