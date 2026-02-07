@@ -11,15 +11,12 @@ import { registerWorkspaceResource } from "./resources/workspace";
 import {
   type AgentNameResolver,
   makeResourceResult,
-  makeToolResult,
-  PASSTHROUGH_TOOL_INPUT_SCHEMA,
   parseResourceVariable,
   resolveWorkspaceForDocId,
-  type ToolPayload,
-  toToolPayload,
 } from "./shared";
 import { registerPassthroughTools } from "./tools/passthrough";
 import { registerStatusTool } from "./tools/status";
+import { registerSubscribeTool } from "./tools/subscribe";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
 const SERVER_INFO: Implementation = {
@@ -105,69 +102,8 @@ function registerToolHandlers(
   resolveAgentName: AgentNameResolver,
 ): void {
   registerStatusTool(server, daemonClient, resolveAgentName);
-
-  server.registerTool(
-    "scriptum_subscribe",
-    {
-      description:
-        "Polling subscribe helper. Calls daemon agent.status, compares change token, and reports whether it changed.",
-      inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
-    },
-    async (toolArgs) => {
-      const subscribeParams = toToolPayload(toolArgs);
-      const previousChangeToken = extractPreviousChangeToken(subscribeParams);
-      const statusPayload = await daemonClient.request("agent.status", {
-        ...stripSubscribeTokenParams(subscribeParams),
-        agent_name: resolveAgentName(),
-      });
-      const currentChangeToken = extractChangeToken(statusPayload);
-
-      return makeToolResult({
-        changed:
-          previousChangeToken === null
-            ? true
-            : currentChangeToken !== previousChangeToken,
-        change_token: currentChangeToken,
-        status: statusPayload,
-      });
-    },
-  );
-
+  registerSubscribeTool(server, daemonClient, resolveAgentName);
   registerPassthroughTools(server, daemonClient);
-}
-
-function extractPreviousChangeToken(payload: ToolPayload): string | null {
-  const direct = payload.change_token;
-  if (typeof direct === "string" && direct.length > 0) {
-    return direct;
-  }
-
-  const alias = payload.last_change_token;
-  if (typeof alias === "string" && alias.length > 0) {
-    return alias;
-  }
-
-  return null;
-}
-
-function stripSubscribeTokenParams(payload: ToolPayload): ToolPayload {
-  const { change_token, last_change_token, ...rest } = payload;
-  void change_token;
-  void last_change_token;
-  return rest;
-}
-
-function extractChangeToken(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-
-  const value = (payload as Record<string, unknown>).change_token;
-  if (typeof value !== "string" || value.length === 0) {
-    return null;
-  }
-
-  return value;
 }
 
 function registerResourceHandlers(
