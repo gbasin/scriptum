@@ -1,6 +1,7 @@
+import { Popover } from "@base-ui-components/react/popover";
 import type { CommentMessage, CommentThread } from "@scriptum/shared";
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { type CreateCommentInput, createComment } from "../../lib/api-client";
 import controls from "../../styles/Controls.module.css";
 import styles from "./CommentPopover.module.css";
@@ -67,17 +68,10 @@ export function CommentPopover({
   const [threadState, setThreadState] = useState<ThreadWithMessages | null>(
     activeThread,
   );
-  const marginButtonRef = useRef<HTMLButtonElement | null>(null);
-  const popoverRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setThreadState(activeThread);
   }, [activeThread]);
-
-  useEffect(() => {
-    marginButtonRef.current?.style.setProperty("top", `${anchorTopPx}px`);
-    popoverRef.current?.style.setProperty("top", `${anchorTopPx + 32}px`);
-  }, [anchorTopPx, isOpen]);
 
   if (!selection) {
     return null;
@@ -119,16 +113,19 @@ export function CommentPopover({
   };
 
   return (
-    <>
-      <button
+    <Popover.Root
+      modal="trap-focus"
+      onOpenChange={(open) => setOpen(open)}
+      open={isOpen}
+    >
+      <Popover.Trigger
         aria-label={isResolved ? "Resolved comment thread" : "Add comment"}
         className={clsx(
           styles.marginButton,
           isResolved ? styles.marginButtonResolved : styles.marginButtonOpen,
         )}
         data-testid="comment-margin-button"
-        onClick={() => setOpen((current) => !current)}
-        ref={marginButtonRef}
+        style={{ top: `${anchorTopPx}px` }}
         type="button"
       >
         {isResolved ? (
@@ -140,15 +137,15 @@ export function CommentPopover({
         ) : (
           "Comment"
         )}
-      </button>
+      </Popover.Trigger>
 
-      {isOpen ? (
-        <section
-          aria-label="Comment popover"
-          className={styles.popover}
-          data-testid="comment-popover"
-          ref={popoverRef}
-        >
+      <Popover.Portal>
+        <Popover.Positioner align="end" side="bottom" sideOffset={8}>
+          <Popover.Popup
+            aria-label="Comment popover"
+            className={styles.popover}
+            data-testid="comment-popover"
+          >
           <p
             className={styles.selectionPreview}
             data-testid="comment-selection-preview"
@@ -207,28 +204,27 @@ export function CommentPopover({
             </p>
           ) : null}
 
-          <div className={styles.actions}>
-            <button
-              className={clsx(controls.buttonBase, controls.buttonSecondary)}
-              onClick={() => setOpen(false)}
-              type="button"
-            >
-              Close
-            </button>
-            {!threadState ? (
-              <button
-                className={clsx(controls.buttonBase, controls.buttonPrimary)}
-                data-testid="comment-submit"
-                disabled={pending || pendingBody.trim().length === 0}
-                onClick={() => void submitComment()}
-                type="button"
+            <div className={styles.actions}>
+              <Popover.Close
+                className={clsx(controls.buttonBase, controls.buttonSecondary)}
               >
-                Add comment
-              </button>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-    </>
+                Close
+              </Popover.Close>
+              {!threadState ? (
+                <button
+                  className={clsx(controls.buttonBase, controls.buttonPrimary)}
+                  data-testid="comment-submit"
+                  disabled={pending || pendingBody.trim().length === 0}
+                  onClick={() => void submitComment()}
+                  type="button"
+                >
+                  Add comment
+                </button>
+              ) : null}
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }

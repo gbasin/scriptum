@@ -1,3 +1,4 @@
+import { Menu } from "@base-ui-components/react/menu";
 import type { Document, Workspace } from "@scriptum/shared";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -319,79 +320,89 @@ export function CommandPalette({
       className={styles.section}
       data-testid="command-palette-section"
     >
-      <button
-        aria-expanded={isOpen}
-        aria-label="Open command palette"
-        className={styles.trigger}
-        data-testid="command-palette-trigger"
-        onClick={() => setIsOpen((previous) => !previous)}
-        type="button"
+      <Menu.Root
+        onOpenChange={(open) => {
+          if (!open) {
+            closePalette();
+          }
+        }}
+        open={isOpen}
       >
-        <span>Search files, commands, recent docs</span>
-        <span aria-hidden="true" className={styles.triggerShortcut}>
-          Cmd+K
-        </span>
-      </button>
-
-      {isOpen && (
-        <div
-          aria-label="Command palette"
-          className={styles.overlay}
-          data-testid="command-palette"
-          onMouseDown={closePalette}
+        <Menu.Trigger
+          aria-expanded={isOpen}
+          aria-label="Open command palette"
+          className={styles.trigger}
+          data-testid="command-palette-trigger"
+          onClick={() => setIsOpen((previous) => !previous)}
+          type="button"
         >
-          <div className={styles.panel} onMouseDown={(event) => event.stopPropagation()}>
-            <label
-              className={styles.panelLabel}
-              htmlFor="command-palette-input"
+          <span>Search files, commands, recent docs</span>
+          <span aria-hidden="true" className={styles.triggerShortcut}>
+            Cmd+K
+          </span>
+        </Menu.Trigger>
+
+        {isOpen ? (
+          <Menu.Portal>
+            <Menu.Backdrop
+              aria-label="Command palette"
+              className={styles.overlay}
+              data-testid="command-palette"
+              onMouseDown={closePalette}
             >
-              Command Palette
-            </label>
-            <input
-              autoFocus
-              className={styles.panelInput}
-              data-testid="command-palette-input"
-              id="command-palette-input"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Type to search"
-              type="text"
-              value={query}
-            />
-            <ul
-              className={styles.results}
-              data-testid="command-palette-results"
-              role="listbox"
-            >
-              {filteredItems.length === 0 && (
-                <li className={styles.empty} data-testid="command-palette-empty">
-                  No matches found.
-                </li>
-              )}
-              {filteredItems.map((item, index) => (
-                <li key={item.id} role="option">
-                  <button
-                    aria-selected={index === activeIndex}
-                    className={clsx(
-                      styles.itemButton,
-                      index === activeIndex && styles.itemButtonActive,
-                    )}
-                    data-testid={`command-palette-item-${item.id}`}
-                    onClick={() => runItem(item)}
-                    type="button"
+              <Menu.Positioner>
+                <Menu.Popup
+                  className={styles.panel}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <label className={styles.panelLabel} htmlFor="command-palette-input">
+                    Command Palette
+                  </label>
+                  <input
+                    autoFocus
+                    className={styles.panelInput}
+                    data-testid="command-palette-input"
+                    id="command-palette-input"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Type to search"
+                    type="text"
+                    value={query}
+                  />
+                  <ul
+                    className={styles.results}
+                    data-testid="command-palette-results"
+                    role="listbox"
                   >
-                    <div className={styles.itemTitle}>
-                      {item.title}
-                    </div>
-                    <div className={styles.itemSubtitle}>
-                      {kindLabel(item.kind)} | {item.subtitle}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
+                    {filteredItems.length === 0 ? (
+                      <li className={styles.empty} data-testid="command-palette-empty">
+                        No matches found.
+                      </li>
+                    ) : null}
+                    {filteredItems.map((item, index) => (
+                      <li key={item.id} role="option">
+                        <Menu.Item
+                          aria-selected={index === activeIndex}
+                          className={clsx(
+                            styles.itemButton,
+                            index === activeIndex && styles.itemButtonActive,
+                          )}
+                          data-testid={`command-palette-item-${item.id}`}
+                          onClick={() => runItem(item)}
+                        >
+                          <div className={styles.itemTitle}>{item.title}</div>
+                          <div className={styles.itemSubtitle}>
+                            {kindLabel(item.kind)} | {item.subtitle}
+                          </div>
+                        </Menu.Item>
+                      </li>
+                    ))}
+                  </ul>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Backdrop>
+          </Menu.Portal>
+        ) : null}
+      </Menu.Root>
     </section>
   );
 }

@@ -164,9 +164,7 @@ describe("CommandPalette", () => {
         }),
       );
     });
-    expect(
-      container.querySelector('[data-testid="command-palette"]'),
-    ).not.toBeNull();
+    expect(document.querySelector('[data-testid="command-palette"]')).not.toBeNull();
 
     act(() => {
       window.dispatchEvent(
@@ -177,14 +175,14 @@ describe("CommandPalette", () => {
     const createItemSelector =
       '[data-testid="command-palette-item-command:create-workspace"]';
 
-    let createItem = container.querySelector(createItemSelector);
+    let createItem = document.querySelector(createItemSelector);
     if (createItem?.getAttribute("aria-selected") !== "true") {
       act(() => {
         window.dispatchEvent(
           new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
         );
       });
-      createItem = container.querySelector(createItemSelector);
+      createItem = document.querySelector(createItemSelector);
     }
 
     if (createItem?.getAttribute("aria-selected") !== "true") {
@@ -193,7 +191,7 @@ describe("CommandPalette", () => {
           new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
         );
       });
-      createItem = container.querySelector(createItemSelector);
+      createItem = document.querySelector(createItemSelector);
     }
 
     expect(createItem?.getAttribute("aria-selected")).toBe("true");
@@ -211,9 +209,7 @@ describe("CommandPalette", () => {
     });
 
     expect(onCreateWorkspace).toHaveBeenCalledTimes(1);
-    expect(
-      container.querySelector('[data-testid="command-palette"]'),
-    ).toBeNull();
+    expect(document.querySelector('[data-testid="command-palette"]')).toBeNull();
 
     act(() => {
       root.unmount();

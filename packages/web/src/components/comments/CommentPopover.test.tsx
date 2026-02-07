@@ -106,14 +106,11 @@ describe("CommentPopover", () => {
       button?.click();
     });
 
-    const popover = harness.container.querySelector(
-      '[data-testid="comment-popover"]',
-    );
+    const popover = document.querySelector('[data-testid="comment-popover"]');
     expect(popover).not.toBeNull();
     expect(
-      harness.container.querySelector(
-        '[data-testid="comment-selection-preview"]',
-      )?.textContent,
+      document.querySelector('[data-testid="comment-selection-preview"]')
+        ?.textContent,
     ).toContain("Inline selection");
 
     harness.unmount();
@@ -172,7 +169,7 @@ describe("CommentPopover", () => {
       button?.click();
     });
 
-    const input = harness.container.querySelector(
+    const input = document.querySelector(
       '[data-testid="comment-input"]',
     ) as HTMLTextAreaElement | null;
     expect(input).not.toBeNull();
@@ -188,7 +185,7 @@ describe("CommentPopover", () => {
       }
     });
 
-    const submit = harness.container.querySelector(
+    const submit = document.querySelector(
       '[data-testid="comment-submit"]',
     ) as HTMLButtonElement | null;
     expect(submit).not.toBeNull();
@@ -209,7 +206,7 @@ describe("CommentPopover", () => {
     });
     expect(onThreadChange).toHaveBeenCalledTimes(1);
     expect(
-      harness.container.querySelector('[data-testid="thread-list"]'),
+      document.querySelector('[data-testid="thread-list"]'),
     ).not.toBeNull();
 
     harness.unmount();

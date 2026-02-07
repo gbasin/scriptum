@@ -1,3 +1,4 @@
+import { AlertDialog } from "@base-ui-components/react/alert-dialog";
 import type { Document, Workspace } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
@@ -474,25 +475,6 @@ export function Layout() {
     };
   }, [renameBacklinkToast]);
 
-  useEffect(() => {
-    if (!pendingDeleteDocument || typeof window === "undefined") {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      event.preventDefault();
-      setPendingDeleteDocument(null);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [pendingDeleteDocument]);
-
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
     const now = new Date().toISOString();
@@ -865,32 +847,38 @@ export function Layout() {
           Show Outline
         </button>
       )}
-      {pendingDeleteDocument ? (
-        <div
-          className={styles.deleteOverlay}
-          data-testid="delete-document-overlay"
-        >
-          <section
+      <AlertDialog.Root
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelDeleteDocument();
+          }
+        }}
+        open={Boolean(pendingDeleteDocument)}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Backdrop
+            className={styles.deleteOverlay}
+            data-testid="delete-document-overlay"
+          />
+          <AlertDialog.Popup
             aria-label="Delete document confirmation"
-            aria-modal="true"
             className={styles.deleteDialog}
             data-testid="delete-document-dialog"
-            role="alertdialog"
           >
-            <h2 className={styles.deleteDialogTitle}>Delete document?</h2>
-            <p className={styles.deleteDialogDescription}>
-              Permanently delete <strong>{pendingDeleteDocument.path}</strong>?
+            <AlertDialog.Title className={styles.deleteDialogTitle}>
+              Delete document?
+            </AlertDialog.Title>
+            <AlertDialog.Description className={styles.deleteDialogDescription}>
+              Permanently delete <strong>{pendingDeleteDocument?.path}</strong>?
               This cannot be undone.
-            </p>
+            </AlertDialog.Description>
             <div className={styles.deleteDialogActions}>
-              <button
+              <AlertDialog.Close
                 className={styles.secondaryButton}
                 data-testid="delete-document-cancel"
-                onClick={handleCancelDeleteDocument}
-                type="button"
               >
                 Cancel
-              </button>
+              </AlertDialog.Close>
               <button
                 className={styles.dangerButton}
                 data-testid="delete-document-confirm"
@@ -900,9 +888,9 @@ export function Layout() {
                 Delete
               </button>
             </div>
-          </section>
-        </div>
-      ) : null}
+          </AlertDialog.Popup>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   );
 }
