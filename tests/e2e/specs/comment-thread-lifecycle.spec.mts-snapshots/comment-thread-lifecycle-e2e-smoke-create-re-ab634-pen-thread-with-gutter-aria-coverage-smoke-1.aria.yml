@@ -1,0 +1,6 @@
+- region "Comment popover":
+  - paragraph: elect se
+  - text: ""
+  - textbox "Comment"
+  - button "Cancel"
+  - button "Add comment"

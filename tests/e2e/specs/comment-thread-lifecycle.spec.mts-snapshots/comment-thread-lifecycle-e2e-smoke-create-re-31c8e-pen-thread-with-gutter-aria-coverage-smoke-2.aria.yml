@@ -1,0 +1,17 @@
+- region "Comment threads":
+  - heading "Comments" [level=2]
+  - list:
+    - listitem:
+      - strong: Open
+      - text: /\(\d+-\d+\)/
+      - button "Resolve"
+      - article:
+        - paragraph:
+          - strong: You
+          - time: /\d+-\d+-01T00:\d+:\d+\.000Z/
+        - paragraph: Thread start from E2E
+      - article:
+        - paragraph:
+          - strong: You
+          - time: /\d+-\d+-01T00:\d+:\d+\.000Z/
+        - paragraph: Reply from E2E
