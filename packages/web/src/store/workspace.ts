@@ -98,7 +98,7 @@ function asIntegerInRange(
   return value >= min && value <= max ? value : null;
 }
 
-function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
+export function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
   return {
     general: {
       workspaceName,

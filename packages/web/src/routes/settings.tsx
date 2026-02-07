@@ -2,7 +2,7 @@ import type { WorkspaceConfig } from "@scriptum/shared";
 import clsx from "clsx";
 import { useMemo, useState } from "react";
 import controls from "../styles/Controls.module.css";
-import { useWorkspaceStore } from "../store/workspace";
+import { defaultWorkspaceConfig, useWorkspaceStore } from "../store/workspace";
 import styles from "./settings.module.css";
 
 type SettingsTab =
@@ -24,41 +24,6 @@ const SETTINGS_TABS: SettingsTabDefinition[] = [
   { id: "permissions", label: "Permissions" },
   { id: "appearance", label: "Appearance" },
 ];
-
-export function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
-  return {
-    general: {
-      workspaceName,
-      defaultNewDocumentFolder: "notes",
-      openLastDocumentOnLaunch: true,
-    },
-    gitSync: {
-      enabled: true,
-      autoCommitIntervalSeconds: 30,
-      commitMessageTemplate: "docs: sync workspace edits",
-    },
-    agents: {
-      allowAgentEdits: true,
-      requireSectionLease: true,
-      defaultAgentName: "mcp-agent",
-    },
-    permissions: {
-      defaultRole: "editor",
-      allowExternalInvites: false,
-      allowShareLinks: true,
-    },
-    appearance: {
-      theme: "system",
-      density: "comfortable",
-      fontSize: 15,
-    },
-    editor: {
-      fontFamily: "mono",
-      tabSize: 2,
-      lineNumbers: true,
-    },
-  };
-}
 
 function asPositiveInt(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
