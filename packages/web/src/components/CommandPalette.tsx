@@ -36,6 +36,8 @@ export interface CommandPaletteProps {
   onCreateDocument?: () => void;
   onCreateWorkspace: () => void;
   onOpenSearchPanel?: () => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   openDocumentIds: string[];
   workspaces: Workspace[];
 }
@@ -241,13 +243,26 @@ export function CommandPalette({
   onCreateDocument = () => undefined,
   onCreateWorkspace,
   onOpenSearchPanel = () => undefined,
+  open,
+  onOpenChange,
   openDocumentIds,
   workspaces,
 }: CommandPaletteProps) {
   const navigate = useNavigate();
-  const [isOpen, setIsOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
+  const isOpen = open ?? uncontrolledOpen;
+
+  const setIsOpen = useCallback(
+    (nextOpen: boolean) => {
+      onOpenChange?.(nextOpen);
+      if (open === undefined) {
+        setUncontrolledOpen(nextOpen);
+      }
+    },
+    [onOpenChange, open],
+  );
 
   const items = useMemo(
     () =>
@@ -299,7 +314,7 @@ export function CommandPalette({
 
       if (isPaletteShortcut) {
         event.preventDefault();
-        setIsOpen((previous) => !previous);
+        setIsOpen(!isOpen);
         return;
       }
 
@@ -340,7 +355,7 @@ export function CommandPalette({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeIndex, closePalette, filteredItems, isOpen, runItem]);
+  }, [activeIndex, closePalette, filteredItems, isOpen, runItem, setIsOpen]);
 
   return (
     <section
@@ -361,7 +376,7 @@ export function CommandPalette({
           aria-label="Open command palette"
           className={styles.trigger}
           data-testid="command-palette-trigger"
-          onClick={() => setIsOpen((previous) => !previous)}
+          onClick={() => setIsOpen(!isOpen)}
           type="button"
         >
           <span>Search files, commands, recent docs</span>

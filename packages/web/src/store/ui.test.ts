@@ -7,7 +7,7 @@ describe("ui store", () => {
 
     expect(store.getState().sidebarOpen).toBe(true);
     expect(store.getState().sidebarPanel).toBe("files");
-    expect(store.getState().rightPanelOpen).toBe(false);
+    expect(store.getState().rightPanelOpen).toBe(true);
     expect(store.getState().rightPanelTab).toBe("outline");
     expect(store.getState().commandPaletteOpen).toBe(false);
     expect(store.getState().activeModal).toBeNull();
@@ -28,10 +28,10 @@ describe("ui store", () => {
     const store = createUiStore();
 
     store.getState().toggleRightPanel();
-    expect(store.getState().rightPanelOpen).toBe(true);
+    expect(store.getState().rightPanelOpen).toBe(false);
 
     store.getState().toggleRightPanel();
-    expect(store.getState().rightPanelOpen).toBe(false);
+    expect(store.getState().rightPanelOpen).toBe(true);
 
     store.getState().setRightPanelTab("comments");
     expect(store.getState().rightPanelTab).toBe("comments");
@@ -72,7 +72,7 @@ describe("ui store", () => {
 
     expect(store.getState().sidebarOpen).toBe(true);
     expect(store.getState().sidebarPanel).toBe("files");
-    expect(store.getState().rightPanelOpen).toBe(false);
+    expect(store.getState().rightPanelOpen).toBe(true);
     expect(store.getState().rightPanelTab).toBe("outline");
     expect(store.getState().commandPaletteOpen).toBe(false);
     expect(store.getState().activeModal).toBeNull();

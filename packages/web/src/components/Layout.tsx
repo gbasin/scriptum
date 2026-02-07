@@ -2,8 +2,15 @@ import { AlertDialog } from "@base-ui-components/react/alert-dialog";
 import type { Document, Workspace } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
+import {
+  buildIncomingBacklinks,
+  type IncomingBacklink,
+  rewriteWikiReferencesForRename,
+  type RenameBacklinkRewriteResult,
+} from "../lib/wiki-links";
 import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore } from "../store/presence";
+import { useUiStore } from "../store/ui";
 import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
 import styles from "./Layout.module.css";
@@ -22,30 +29,8 @@ import {
   TagsList,
 } from "./sidebar/TagsList";
 import { WorkspaceDropdown } from "./sidebar/WorkspaceDropdown";
-
-interface ParsedWikiLink {
-  raw: string;
-  target: string;
-}
-
-interface ParsedWikiLinkParts {
-  alias: string | null;
-  heading: string | null;
-  target: string;
-}
-
-export interface RenameBacklinkRewriteResult {
-  rewrittenDocuments: Document[];
-  updatedDocuments: number;
-  updatedLinks: number;
-}
-
-export interface IncomingBacklink {
-  sourceDocumentId: string;
-  sourcePath: string;
-  sourceTitle: string;
-  snippet: string;
-}
+export { buildIncomingBacklinks, rewriteWikiReferencesForRename };
+export type { IncomingBacklink, RenameBacklinkRewriteResult };
 
 export function isNewDocumentShortcut(event: KeyboardEvent): boolean {
   return (
@@ -61,247 +46,11 @@ function titleFromPath(path: string): string {
   return segments[segments.length - 1] ?? path;
 }
 
-function normalizeBacklinkTarget(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function baseName(path: string): string {
-  const segments = path.split("/").filter(Boolean);
-  return segments[segments.length - 1] ?? path;
-}
-
-function baseNameWithoutExtension(path: string): string {
-  return baseName(path).replace(/\.[^.]+$/, "");
-}
-
-function parseWikiLinkParts(rawInner: string): ParsedWikiLinkParts | null {
-  const trimmed = rawInner.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const [targetWithHeadingRaw, aliasRaw] = trimmed.split("|", 2);
-  const [targetRaw, headingRaw] = targetWithHeadingRaw.split("#", 2);
-  const target = targetRaw.trim();
-  if (!target) {
-    return null;
-  }
-
-  const heading = headingRaw?.trim() || null;
-  const alias = aliasRaw?.trim() || null;
-  return { alias, heading, target };
-}
-
-function extractWikiLinks(markdown: string): ParsedWikiLink[] {
-  const links: ParsedWikiLink[] = [];
-  const pattern = /\[\[([^[\]]+)\]\]/g;
-  let match: RegExpExecArray | null = pattern.exec(markdown);
-
-  while (match) {
-    const parsed = parseWikiLinkParts(match[1] ?? "");
-    if (parsed) {
-      const normalizedTarget = normalizeBacklinkTarget(parsed.target);
-      if (normalizedTarget.length > 0) {
-        links.push({
-          raw: match[0],
-          target: normalizedTarget,
-        });
-      }
-    }
-    match = pattern.exec(markdown);
-  }
-
-  return links;
-}
-
-function targetAliases(
-  document: Pick<Document, "path" | "title">,
-): Set<string> {
-  const aliases = new Set<string>();
-  const pathNormalized = normalizeBacklinkTarget(document.path);
-  const pathBaseName = normalizeBacklinkTarget(baseName(document.path));
-  const pathBaseNameWithoutExtension = normalizeBacklinkTarget(
-    baseNameWithoutExtension(document.path),
-  );
-  const titleNormalized = normalizeBacklinkTarget(document.title);
-
-  if (pathNormalized.length > 0) {
-    aliases.add(pathNormalized);
-  }
-  if (pathBaseName.length > 0) {
-    aliases.add(pathBaseName);
-  }
-  if (pathBaseNameWithoutExtension.length > 0) {
-    aliases.add(pathBaseNameWithoutExtension);
-  }
-  if (titleNormalized.length > 0) {
-    aliases.add(titleNormalized);
-  }
-
-  return aliases;
-}
-
-function replacementTargetForRename(
-  originalTarget: string,
-  oldDocument: Pick<Document, "path" | "title">,
-  nextPath: string,
-): string {
-  const normalizedOriginalTarget = normalizeBacklinkTarget(originalTarget);
-  const normalizedOldPath = normalizeBacklinkTarget(oldDocument.path);
-  const normalizedOldBaseName = normalizeBacklinkTarget(
-    baseName(oldDocument.path),
-  );
-  const normalizedOldBaseNameWithoutExtension = normalizeBacklinkTarget(
-    baseNameWithoutExtension(oldDocument.path),
-  );
-  const normalizedOldTitle = normalizeBacklinkTarget(oldDocument.title);
-
-  if (normalizedOriginalTarget === normalizedOldPath) {
-    return nextPath;
-  }
-  if (normalizedOriginalTarget === normalizedOldBaseName) {
-    return baseName(nextPath);
-  }
-  if (
-    normalizedOriginalTarget === normalizedOldBaseNameWithoutExtension ||
-    normalizedOriginalTarget === normalizedOldTitle
-  ) {
-    return baseNameWithoutExtension(nextPath);
-  }
-
-  return nextPath;
-}
-
-export function rewriteWikiReferencesForRename(
-  workspaceDocuments: readonly Document[],
-  renamedDocument: Pick<Document, "id" | "path" | "title">,
-  nextPath: string,
-): RenameBacklinkRewriteResult {
-  const trimmedNextPath = nextPath.trim();
-  if (!trimmedNextPath) {
-    return {
-      rewrittenDocuments: [],
-      updatedDocuments: 0,
-      updatedLinks: 0,
-    };
-  }
-
-  const oldAliases = targetAliases(renamedDocument);
-  if (oldAliases.size === 0) {
-    return {
-      rewrittenDocuments: [],
-      updatedDocuments: 0,
-      updatedLinks: 0,
-    };
-  }
-
-  const rewrittenDocuments: Document[] = [];
-  let updatedLinks = 0;
-
-  for (const document of workspaceDocuments) {
-    if (
-      document.id === renamedDocument.id ||
-      typeof document.bodyMd !== "string"
-    ) {
-      continue;
-    }
-
-    let documentUpdatedLinks = 0;
-    const rewrittenBody = document.bodyMd.replace(
-      /\[\[([^[\]]+)\]\]/g,
-      (rawMatch, rawInner: string) => {
-        const parsed = parseWikiLinkParts(rawInner);
-        if (!parsed) {
-          return rawMatch;
-        }
-
-        const normalizedTarget = normalizeBacklinkTarget(parsed.target);
-        if (!oldAliases.has(normalizedTarget)) {
-          return rawMatch;
-        }
-
-        const replacementTarget = replacementTargetForRename(
-          parsed.target,
-          renamedDocument,
-          trimmedNextPath,
-        );
-        let replacementInner = replacementTarget;
-        if (parsed.heading) {
-          replacementInner = `${replacementInner}#${parsed.heading}`;
-        }
-        if (parsed.alias) {
-          replacementInner = `${replacementInner}|${parsed.alias}`;
-        }
-        documentUpdatedLinks += 1;
-        return `[[${replacementInner}]]`;
-      },
-    );
-
-    if (documentUpdatedLinks > 0) {
-      updatedLinks += documentUpdatedLinks;
-      rewrittenDocuments.push({
-        ...document,
-        bodyMd: rewrittenBody,
-      });
-    }
-  }
-
-  return {
-    rewrittenDocuments,
-    updatedDocuments: rewrittenDocuments.length,
-    updatedLinks,
-  };
-}
-
 export function formatRenameBacklinkToast(
   updatedLinks: number,
   updatedDocuments: number,
 ): string {
   return `Updated ${updatedLinks} links across ${updatedDocuments} documents.`;
-}
-
-export function buildIncomingBacklinks(
-  documents: readonly Document[],
-  activeDocumentId: string | null,
-): IncomingBacklink[] {
-  if (!activeDocumentId) {
-    return [];
-  }
-
-  const activeDocument = documents.find(
-    (document) => document.id === activeDocumentId,
-  );
-  if (!activeDocument) {
-    return [];
-  }
-  const aliases = targetAliases(activeDocument);
-  const backlinks: IncomingBacklink[] = [];
-
-  for (const document of documents) {
-    if (
-      document.id === activeDocument.id ||
-      typeof document.bodyMd !== "string"
-    ) {
-      continue;
-    }
-    const link = extractWikiLinks(document.bodyMd).find((candidate) =>
-      aliases.has(candidate.target),
-    );
-    if (!link) {
-      continue;
-    }
-
-    backlinks.push({
-      sourceDocumentId: document.id,
-      sourcePath: document.path,
-      sourceTitle: document.title,
-      snippet: link.raw,
-    });
-  }
-
-  return backlinks.sort((left, right) =>
-    left.sourcePath.localeCompare(right.sourcePath),
-  );
 }
 
 export function Layout() {
@@ -326,6 +75,14 @@ export function Layout() {
   const upsertDocument = useDocumentsStore((state) => state.upsertDocument);
   const openDocumentIds = useDocumentsStore((state) => state.openDocumentIds);
   const remotePeers = usePresenceStore((state) => state.remotePeers);
+  const sidebarPanel = useUiStore((state) => state.sidebarPanel);
+  const setSidebarPanel = useUiStore((state) => state.setSidebarPanel);
+  const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
+  const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
+  const setRightPanelTab = useUiStore((state) => state.setRightPanelTab);
+  const commandPaletteOpen = useUiStore((state) => state.commandPaletteOpen);
+  const openCommandPalette = useUiStore((state) => state.openCommandPalette);
+  const closeCommandPalette = useUiStore((state) => state.closeCommandPalette);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [pendingRenameDocumentId, setPendingRenameDocumentId] = useState<
     string | null
@@ -333,8 +90,6 @@ export function Layout() {
   const [renameBacklinkToast, setRenameBacklinkToast] = useState<string | null>(
     null,
   );
-  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
-  const [outlinePanelOpen, setOutlinePanelOpen] = useState(true);
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
   const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(
@@ -372,6 +127,7 @@ export function Layout() {
   );
   const showPanelSkeletons =
     activeWorkspaceId !== null && workspaceDocuments.length === 0;
+  const searchPanelOpen = sidebarPanel === "search";
   const showOutlineSkeleton = showPanelSkeletons || outlineContainer === null;
 
   const createDocumentInActiveWorkspace = (
@@ -451,7 +207,7 @@ export function Layout() {
         return;
       }
       event.preventDefault();
-      setSearchPanelOpen(true);
+      setSidebarPanel("search");
     };
 
     if (typeof window === "undefined") {
@@ -459,7 +215,7 @@ export function Layout() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createUntitledDocument]);
+  }, [createUntitledDocument, setSidebarPanel]);
 
   useEffect(() => {
     if (!renameBacklinkToast) {
@@ -505,7 +261,7 @@ export function Layout() {
 
   const handleSearchResultSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
-    setSearchPanelOpen(false);
+    setSidebarPanel("files");
   };
 
   const updateExistingDocument = (
@@ -708,7 +464,11 @@ export function Layout() {
           documents={documents}
           onCreateDocument={createUntitledDocument}
           onCreateWorkspace={handleCreateWorkspace}
-          onOpenSearchPanel={() => setSearchPanelOpen(true)}
+          onOpenSearchPanel={() => setSidebarPanel("search")}
+          onOpenChange={(open) =>
+            open ? openCommandPalette() : closeCommandPalette()
+          }
+          open={commandPaletteOpen}
           openDocumentIds={openDocumentIds}
           workspaces={workspaces}
         />
@@ -729,7 +489,7 @@ export function Layout() {
         {searchPanelOpen ? (
           <SearchPanel
             loading={showPanelSkeletons}
-            onClose={() => setSearchPanelOpen(false)}
+            onClose={() => setSidebarPanel("files")}
             onResultSelect={(result) =>
               handleSearchResultSelect(result.documentId)
             }
@@ -775,7 +535,7 @@ export function Layout() {
       >
         <Outlet />
       </main>
-      {outlinePanelOpen ? (
+      {rightPanelOpen ? (
         <aside
           aria-label="Document outline panel"
           className={styles.outlinePanel}
@@ -786,7 +546,7 @@ export function Layout() {
             <button
               className={styles.secondaryButton}
               data-testid="outline-panel-toggle"
-              onClick={() => setOutlinePanelOpen(false)}
+              onClick={toggleRightPanel}
               type="button"
             >
               Hide
@@ -854,7 +614,7 @@ export function Layout() {
           aria-label="Show document outline panel"
           className={styles.showOutlineButton}
           data-testid="outline-panel-toggle"
-          onClick={() => setOutlinePanelOpen(true)}
+          onClick={() => setRightPanelTab("outline")}
           type="button"
         >
           Show Outline

@@ -29,7 +29,7 @@ export type UiStore = UseBoundStore<StoreApi<UiStoreState>>;
 const INITIAL_SNAPSHOT: UiSnapshot = {
   sidebarOpen: true,
   sidebarPanel: "files",
-  rightPanelOpen: false,
+  rightPanelOpen: true,
   rightPanelTab: "outline",
   commandPaletteOpen: false,
   activeModal: null,

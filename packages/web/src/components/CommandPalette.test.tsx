@@ -284,4 +284,42 @@ describe("CommandPalette", () => {
       root.unmount();
     });
   });
+
+  it("supports controlled open state via onOpenChange", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const onOpenChange = vi.fn<(open: boolean) => void>();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <CommandPalette
+            activeWorkspaceId="ws-1"
+            documents={[]}
+            onCreateWorkspace={() => undefined}
+            onOpenChange={onOpenChange}
+            open={false}
+            openDocumentIds={[]}
+            workspaces={[makeWorkspace("ws-1", "Alpha")]}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const trigger = container.querySelector(
+      '[data-testid="command-palette-trigger"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      trigger?.click();
+    });
+
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(document.querySelector('[data-testid="command-palette"]')).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });

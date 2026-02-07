@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDocumentsStore } from "../store/documents";
+import { useUiStore } from "../store/ui";
 import { useWorkspaceStore } from "../store/workspace";
 import {
   buildIncomingBacklinks,
@@ -51,6 +52,7 @@ function makeDocument(
 beforeEach(() => {
   useWorkspaceStore.getState().reset();
   useDocumentsStore.getState().reset();
+  useUiStore.getState().reset();
 
   const workspace = makeWorkspace();
   useWorkspaceStore.getState().upsertWorkspace(workspace);
