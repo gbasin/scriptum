@@ -20,14 +20,15 @@ function renderAt(path: string): string {
 describe("AppRoutes", () => {
   it("renders index route", () => {
     const html = renderAt("/");
-    expect(html).toContain("Workspace Selector");
+    expect(html).toContain("Sign in with GitHub");
   });
 
   it("renders workspace route in app layout", () => {
     const html = renderAt("/workspace/demo");
     expect(html).toContain("Sidebar");
     expect(html).toContain("Workspace:");
-    expect(html).toContain("demo</section>");
+    expect(html).toContain("demo");
+    expect(html).toContain("Create your first document");
   });
 
   it("renders document route in app layout", () => {
