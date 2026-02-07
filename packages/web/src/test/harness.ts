@@ -38,6 +38,7 @@ export interface ScriptumTestState {
   gitStatus: GitStatus;
   commentThreads: unknown[];
   reconciliationEntries: ReconciliationInlineEntry[];
+  shareLinksEnabled: boolean;
 }
 
 export interface ScriptumTestApi {
@@ -51,6 +52,7 @@ export interface ScriptumTestApi {
   setReconnectProgress(progress: ReconnectProgress | null): void;
   setCommentThreads(threads: unknown[]): void;
   setReconciliationEntries(entries: ReconciliationInlineEntry[]): void;
+  setShareLinksEnabled(enabled: boolean): void;
   getState(): ScriptumTestState;
   reset(): void;
   subscribe(listener: (state: ScriptumTestState) => void): () => void;
@@ -73,6 +75,7 @@ const DEFAULT_STATE: ScriptumTestState = {
   gitStatus: { dirty: false, ahead: 0, behind: 0 },
   commentThreads: [],
   reconciliationEntries: [],
+  shareLinksEnabled: false,
 };
 
 const FIXTURES: Record<string, Partial<ScriptumTestState>> = {
@@ -166,6 +169,8 @@ function withDefaults(
     reconciliationEntries:
       initialState?.reconciliationEntries ??
       DEFAULT_STATE.reconciliationEntries,
+    shareLinksEnabled:
+      initialState?.shareLinksEnabled ?? DEFAULT_STATE.shareLinksEnabled,
   };
   return clone(merged);
 }
@@ -238,6 +243,11 @@ export function createScriptumTestApi(
 
     setReconciliationEntries(entries: ReconciliationInlineEntry[]) {
       state.reconciliationEntries = clone(entries);
+      emit();
+    },
+
+    setShareLinksEnabled(enabled: boolean) {
+      state.shareLinksEnabled = Boolean(enabled);
       emit();
     },
 

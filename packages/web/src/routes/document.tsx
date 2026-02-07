@@ -35,6 +35,17 @@ import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
+import {
+  buildShareLinkUrl,
+  createShareLinkRecord,
+  expirationIsoFromOption,
+  parseShareLinkMaxUses,
+  sharePermissionLabel,
+  type ShareLinkExpirationOption,
+  type ShareLinkPermission,
+  type ShareLinkTargetType,
+  storeShareLinkRecord,
+} from "./share-links";
 
 const DEFAULT_DAEMON_WS_BASE_URL =
   (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ??
@@ -62,6 +73,7 @@ const DEFAULT_TEST_STATE: ScriptumTestState = {
   gitStatus: { dirty: false, ahead: 0, behind: 0 },
   commentThreads: [],
   reconciliationEntries: [],
+  shareLinksEnabled: false,
 };
 
 interface UnknownRecord {
@@ -748,6 +760,15 @@ export function DocumentRoute() {
     useState<ActiveTextSelection | null>(null);
   const [isCommentPopoverOpen, setCommentPopoverOpen] = useState(false);
   const [pendingCommentBody, setPendingCommentBody] = useState("");
+  const [isShareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareTargetType, setShareTargetType] =
+    useState<ShareLinkTargetType>("document");
+  const [sharePermission, setSharePermission] =
+    useState<ShareLinkPermission>("view");
+  const [shareExpirationOption, setShareExpirationOption] =
+    useState<ShareLinkExpirationOption>("none");
+  const [shareMaxUsesInput, setShareMaxUsesInput] = useState("3");
+  const [generatedShareUrl, setGeneratedShareUrl] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageBody, setEditingMessageBody] = useState("");
   const [dropUploadProgress, setDropUploadProgress] =
@@ -891,6 +912,14 @@ export function DocumentRoute() {
   const reconnectProgress = fixtureModeEnabled
     ? fixtureState.reconnectProgress
     : null;
+  const shareLinksEnabled = fixtureModeEnabled && fixtureState.shareLinksEnabled;
+
+  useEffect(() => {
+    if (documentId) {
+      return;
+    }
+    setShareTargetType("workspace");
+  }, [documentId]);
 
   useEffect(() => {
     const api = window.__SCRIPTUM_TEST__;
@@ -1331,6 +1360,40 @@ export function DocumentRoute() {
     setThreadStatus(threadId, "open");
   };
 
+  const openShareDialog = () => {
+    setGeneratedShareUrl("");
+    setShareDialogOpen(true);
+  };
+
+  const closeShareDialog = () => {
+    setShareDialogOpen(false);
+  };
+
+  const generateShareLink = () => {
+    if (!workspaceId || typeof window === "undefined") {
+      return;
+    }
+
+    const resolvedTargetType: ShareLinkTargetType =
+      shareTargetType === "document" && documentId ? "document" : "workspace";
+    const resolvedTargetId =
+      resolvedTargetType === "document"
+        ? (documentId ?? workspaceId)
+        : workspaceId;
+    const token = makeClientId("share");
+    const record = createShareLinkRecord({
+      token,
+      targetType: resolvedTargetType,
+      targetId: resolvedTargetId,
+      permission: sharePermission,
+      expiresAt: expirationIsoFromOption(shareExpirationOption),
+      maxUses: parseShareLinkMaxUses(shareMaxUsesInput),
+    });
+
+    storeShareLinkRecord(record);
+    setGeneratedShareUrl(buildShareLinkUrl(record.token, window.location.origin));
+  };
+
   const selectTab = (nextDocumentId: string) => {
     if (!workspaceId) {
       return;
@@ -1408,6 +1471,135 @@ export function DocumentRoute() {
       />
       <Breadcrumb path={currentDocumentPath} workspaceLabel={workspaceLabel} />
       <OfflineBanner status={syncState} reconnectProgress={reconnectProgress} />
+
+      {shareLinksEnabled ? (
+        <section aria-label="Share links" data-testid="share-links-panel">
+          <h2>Share Links</h2>
+          <button
+            data-testid="share-link-open"
+            onClick={openShareDialog}
+            type="button"
+          >
+            Share
+          </button>
+
+          {isShareDialogOpen ? (
+            <section
+              aria-label="Share link dialog"
+              data-testid="share-link-dialog"
+              style={{
+                background: "#ffffff",
+                border: "1px solid #d1d5db",
+                borderRadius: "0.5rem",
+                marginTop: "0.5rem",
+                maxWidth: "26rem",
+                padding: "0.75rem",
+              }}
+            >
+              <label htmlFor="share-link-target">Target</label>
+              <select
+                data-testid="share-link-target"
+                id="share-link-target"
+                onChange={(event) =>
+                  setShareTargetType(
+                    event.target.value === "workspace" ? "workspace" : "document",
+                  )
+                }
+                value={shareTargetType}
+              >
+                <option value="workspace">Workspace</option>
+                <option disabled={!documentId} value="document">
+                  Document
+                </option>
+              </select>
+
+              <label htmlFor="share-link-permission">Permission</label>
+              <select
+                data-testid="share-link-permission"
+                id="share-link-permission"
+                onChange={(event) =>
+                  setSharePermission(
+                    event.target.value === "edit" ? "edit" : "view",
+                  )
+                }
+                value={sharePermission}
+              >
+                <option value="view">Viewer</option>
+                <option value="edit">Editor</option>
+              </select>
+
+              <label htmlFor="share-link-expiration">Expiration</label>
+              <select
+                data-testid="share-link-expiration"
+                id="share-link-expiration"
+                onChange={(event) =>
+                  setShareExpirationOption(
+                    event.target.value === "24h"
+                      ? "24h"
+                      : event.target.value === "7d"
+                        ? "7d"
+                        : "none",
+                  )
+                }
+                value={shareExpirationOption}
+              >
+                <option value="none">Never</option>
+                <option value="24h">24 hours</option>
+                <option value="7d">7 days</option>
+              </select>
+
+              <label htmlFor="share-link-max-uses">Max uses</label>
+              <input
+                data-testid="share-link-max-uses"
+                id="share-link-max-uses"
+                min={1}
+                onChange={(event) => setShareMaxUsesInput(event.target.value)}
+                type="number"
+                value={shareMaxUsesInput}
+              />
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  justifyContent: "flex-end",
+                  marginTop: "0.5rem",
+                }}
+              >
+                <button
+                  data-testid="share-link-close"
+                  onClick={closeShareDialog}
+                  type="button"
+                >
+                  Close
+                </button>
+                <button
+                  data-testid="share-link-generate"
+                  onClick={generateShareLink}
+                  type="button"
+                >
+                  Generate link
+                </button>
+              </div>
+
+              {generatedShareUrl ? (
+                <div style={{ marginTop: "0.5rem" }}>
+                  <p data-testid="share-link-summary">
+                    Link grants {sharePermissionLabel(sharePermission)} access
+                    to{" "}
+                    {shareTargetType === "workspace" ? "workspace" : "document"}.
+                  </p>
+                  <input
+                    data-testid="share-link-url"
+                    readOnly
+                    value={generatedShareUrl}
+                  />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+        </section>
+      ) : null}
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>

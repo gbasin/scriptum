@@ -44,6 +44,7 @@ describe("createScriptumTestApi", () => {
         },
       },
     ]);
+    api.setShareLinksEnabled(true);
 
     const state = api.getState();
     expect(state.docContent).toBe("# Updated");
@@ -64,6 +65,7 @@ describe("createScriptumTestApi", () => {
     });
     expect(state.reconciliationEntries).toHaveLength(1);
     expect(state.reconciliationEntries[0]?.id).toBe("recon-1");
+    expect(state.shareLinksEnabled).toBe(true);
   });
 
   it("loads named fixtures and notifies subscribers", () => {

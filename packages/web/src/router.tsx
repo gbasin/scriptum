@@ -4,6 +4,7 @@ import { RequireAuth } from "./components/RequireAuth";
 import { AuthCallbackRoute } from "./routes/auth-callback";
 import { DocumentRoute } from "./routes/document";
 import { IndexRoute } from "./routes/index";
+import { ShareRedeemRoute } from "./routes/share";
 import { SettingsRoute } from "./routes/settings";
 import { WorkspaceRoute } from "./routes/workspace";
 
@@ -34,6 +35,11 @@ export const appRoutes: RouteObject[] = [
     id: "auth-callback",
     path: "/auth-callback",
     element: <AuthCallbackRoute />,
+  },
+  {
+    id: "share-redeem",
+    path: "/share/:shareToken",
+    element: <ShareRedeemRoute />,
   },
 ];
 
