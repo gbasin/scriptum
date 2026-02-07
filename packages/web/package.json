@@ -13,16 +13,17 @@
     "test:ui:smoke": "playwright test -c playwright.smoke.config.ts"
   },
   "dependencies": {
+    "@base-ui-components/react": "latest",
     "@codemirror/lang-markdown": "latest",
     "@codemirror/state": "latest",
     "@codemirror/view": "latest",
     "@scriptum/editor": "workspace:*",
     "@scriptum/shared": "workspace:*",
+    "clsx": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router": "latest",
     "react-router-dom": "latest",
-    "tailwindcss": "latest",
     "y-websocket": "latest",
     "yjs": "latest",
     "zustand": "latest"

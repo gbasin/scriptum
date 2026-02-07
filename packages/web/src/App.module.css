@@ -1,0 +1,5 @@
+.appShell {
+  min-height: 100vh;
+  background: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+}
