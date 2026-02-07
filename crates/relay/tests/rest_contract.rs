@@ -6,6 +6,7 @@ const DOCUMENTS_SOURCE: &str = include_str!("../src/api/documents.rs");
 const COMMENTS_SOURCE: &str = include_str!("../src/api/comments.rs");
 const SEARCH_SOURCE: &str = include_str!("../src/api/search.rs");
 const WS_SOURCE: &str = include_str!("../src/ws/mod.rs");
+const WS_HANDLER_SOURCE: &str = include_str!("../src/ws/handler.rs");
 
 #[test]
 fn rest_contract_declares_part3_endpoint_matrix() {
@@ -37,9 +38,16 @@ fn rest_contract_declares_part3_endpoint_matrix() {
         "/v1/ws/{session_id}",
     ];
 
-    let contract_surface =
-        [API_MOD_SOURCE, AUTH_SOURCE, DOCUMENTS_SOURCE, COMMENTS_SOURCE, SEARCH_SOURCE, WS_SOURCE]
-            .join("\n");
+    let contract_surface = [
+        API_MOD_SOURCE,
+        AUTH_SOURCE,
+        DOCUMENTS_SOURCE,
+        COMMENTS_SOURCE,
+        SEARCH_SOURCE,
+        WS_SOURCE,
+        WS_HANDLER_SOURCE,
+    ]
+    .join("\n");
 
     let mut missing = BTreeSet::new();
     for path in expected_paths {
@@ -139,11 +147,11 @@ fn rest_contract_declares_expected_http_method_bindings() {
         ),
         (SEARCH_SOURCE, "/v1/workspaces/{id}/search", &["get(search_documents)"][..]),
         (
-            WS_SOURCE,
+            WS_HANDLER_SOURCE,
             "/v1/workspaces/{workspace_id}/sync-sessions",
             &["post(create_sync_session)"][..],
         ),
-        (WS_SOURCE, "/v1/ws/{session_id}", &["get(ws_upgrade)"][..]),
+        (WS_HANDLER_SOURCE, "/v1/ws/{session_id}", &["get(ws_upgrade)"][..]),
     ];
 
     for (source, endpoint, required_tokens) in expectations {

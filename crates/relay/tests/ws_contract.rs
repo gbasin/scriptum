@@ -2,14 +2,14 @@ use scriptum_common::protocol::ws::WsMessage;
 use serde_json::Value;
 use uuid::Uuid;
 
-const RELAY_WS_SOURCE: &str = include_str!("../src/ws/mod.rs");
+const RELAY_WS_SESSION_SOURCE: &str = include_str!("../src/ws/session.rs");
 const RELAY_PROTOCOL_SOURCE: &str = include_str!("../src/protocol.rs");
 
 #[test]
 fn websocket_contract_heartbeat_and_timeout_match_spec() {
-    let heartbeat_interval_ms = parse_u64_const(RELAY_WS_SOURCE, "HEARTBEAT_INTERVAL_MS");
-    let heartbeat_timeout_ms = parse_u64_const(RELAY_WS_SOURCE, "HEARTBEAT_TIMEOUT_MS");
-    let max_frame_bytes = parse_u64_const(RELAY_WS_SOURCE, "MAX_FRAME_BYTES");
+    let heartbeat_interval_ms = parse_u64_const(RELAY_WS_SESSION_SOURCE, "HEARTBEAT_INTERVAL_MS");
+    let heartbeat_timeout_ms = parse_u64_const(RELAY_WS_SESSION_SOURCE, "HEARTBEAT_TIMEOUT_MS");
+    let max_frame_bytes = parse_u64_const(RELAY_WS_SESSION_SOURCE, "MAX_FRAME_BYTES");
 
     assert_eq!(heartbeat_interval_ms, 15_000);
     assert_eq!(heartbeat_timeout_ms, 10_000);
