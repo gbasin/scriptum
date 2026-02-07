@@ -15,7 +15,7 @@ use axum::{
     http::{header::IF_MATCH, HeaderMap, StatusCode},
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -122,9 +122,61 @@ pub struct UpdateDocumentTagsRequest {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AclOverride {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub doc_id: Uuid,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub role: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct AclOverrideRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    subject_type: String,
+    subject_id: String,
+    role: String,
+    expires_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<AclOverrideRow> for AclOverride {
+    fn from(row: AclOverrideRow) -> Self {
+        Self {
+            id: row.id,
+            workspace_id: row.workspace_id,
+            doc_id: row.doc_id,
+            subject_type: row.subject_type,
+            subject_id: row.subject_id,
+            role: row.role,
+            expires_at: row.expires_at,
+            created_at: row.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateAclOverrideRequest {
+    pub subject_type: String,
+    pub subject_id: String,
+    pub role: String,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Serialize)]
 struct DocumentEnvelope {
     document: Document,
+}
+
+#[derive(Serialize)]
+struct AclOverrideEnvelope {
+    acl_override: AclOverride,
 }
 
 #[derive(Serialize)]
@@ -150,6 +202,7 @@ enum DocumentStore {
 #[derive(Default)]
 struct MemoryDocumentStore {
     documents: HashMap<Uuid, MemoryDocument>,
+    acl_overrides: HashMap<Uuid, MemoryAclOverride>,
 }
 
 #[derive(Clone)]
@@ -167,6 +220,18 @@ struct MemoryDocument {
     archived_at: Option<DateTime<Utc>>,
     deleted_at: Option<DateTime<Utc>>,
     tags: HashSet<String>,
+}
+
+#[derive(Clone)]
+struct MemoryAclOverride {
+    id: Uuid,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    subject_type: String,
+    subject_id: String,
+    role: String,
+    expires_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
 }
 
 // ── Error ──────────────────────────────────────────────────────────
@@ -240,6 +305,11 @@ fn build_router_with_store(
             get(get_document).patch(update_document).delete(delete_document),
         )
         .route("/v1/workspaces/{ws_id}/documents/{doc_id}/tags", post(update_document_tags))
+        .route("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides", post(create_acl_override))
+        .route(
+            "/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides/{override_id}",
+            delete(delete_acl_override),
+        )
         .with_state(state)
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
 }
@@ -328,6 +398,27 @@ async fn update_document_tags(
     Ok(Json(DocumentEnvelope { document }))
 }
 
+async fn create_acl_override(
+    State(state): State<DocApiState>,
+    Extension(_user): Extension<AuthenticatedUser>,
+    Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<CreateAclOverrideRequest>,
+) -> Result<(StatusCode, Json<AclOverrideEnvelope>), DocApiError> {
+    validate_acl_override_request(&payload)?;
+
+    let acl_override = state.store.create_acl_override(ws_id, doc_id, payload).await?;
+    Ok((StatusCode::CREATED, Json(AclOverrideEnvelope { acl_override })))
+}
+
+async fn delete_acl_override(
+    State(state): State<DocApiState>,
+    Extension(_user): Extension<AuthenticatedUser>,
+    Path((ws_id, doc_id, override_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<StatusCode, DocApiError> {
+    state.store.delete_acl_override(ws_id, doc_id, override_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── Store implementation ───────────────────────────────────────────
 
 impl DocumentStore {
@@ -404,6 +495,38 @@ impl DocumentStore {
         match self {
             Self::Postgres(pool) => update_tags_pg(pool, workspace_id, doc_id, op, tags).await,
             Self::Memory(store) => update_tags_mem(store, workspace_id, doc_id, op, tags).await,
+        }
+    }
+
+    async fn create_acl_override(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        payload: CreateAclOverrideRequest,
+    ) -> Result<AclOverride, DocApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                create_acl_override_pg(pool, workspace_id, doc_id, payload).await
+            }
+            Self::Memory(store) => {
+                create_acl_override_mem(store, workspace_id, doc_id, payload).await
+            }
+        }
+    }
+
+    async fn delete_acl_override(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        override_id: Uuid,
+    ) -> Result<(), DocApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                delete_acl_override_pg(pool, workspace_id, doc_id, override_id).await
+            }
+            Self::Memory(store) => {
+                delete_acl_override_mem(store, workspace_id, doc_id, override_id).await
+            }
         }
     }
 }
@@ -708,6 +831,77 @@ async fn update_tags_pg(
     Ok(row.into())
 }
 
+async fn create_acl_override_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    payload: CreateAclOverrideRequest,
+) -> Result<AclOverride, DocApiError> {
+    let doc_exists = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT 1
+        FROM documents
+        WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(doc_id)
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .is_some();
+
+    if !doc_exists {
+        return Err(DocApiError::NotFound);
+    }
+
+    let row = sqlx::query_as::<_, AclOverrideRow>(
+        r#"
+        INSERT INTO acl_overrides (workspace_id, doc_id, subject_type, subject_id, role, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, workspace_id, doc_id, subject_type, subject_id, role, expires_at, created_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(doc_id)
+    .bind(payload.subject_type)
+    .bind(payload.subject_id)
+    .bind(payload.role)
+    .bind(payload.expires_at)
+    .fetch_one(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(row.into())
+}
+
+async fn delete_acl_override_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    override_id: Uuid,
+) -> Result<(), DocApiError> {
+    let deleted = sqlx::query(
+        r#"
+        DELETE FROM acl_overrides
+        WHERE id = $1 AND workspace_id = $2 AND doc_id = $3
+        "#,
+    )
+    .bind(override_id)
+    .bind(workspace_id)
+    .bind(doc_id)
+    .execute(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .rows_affected();
+
+    if deleted == 0 {
+        return Err(DocApiError::NotFound);
+    }
+
+    Ok(())
+}
+
 // ── Memory implementations (for testing) ───────────────────────────
 
 async fn create_mem(
@@ -892,6 +1086,63 @@ async fn update_tags_mem(
     Ok(mem_to_document(doc))
 }
 
+async fn create_acl_override_mem(
+    store: &RwLock<MemoryDocumentStore>,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    payload: CreateAclOverrideRequest,
+) -> Result<AclOverride, DocApiError> {
+    let mut store = store.write().await;
+    let doc_exists = store.documents.get(&doc_id).is_some_and(|document| {
+        document.workspace_id == workspace_id && document.deleted_at.is_none()
+    });
+    if !doc_exists {
+        return Err(DocApiError::NotFound);
+    }
+
+    let now = Utc::now();
+    let override_id = Uuid::new_v4();
+    let acl_override = MemoryAclOverride {
+        id: override_id,
+        workspace_id,
+        doc_id,
+        subject_type: payload.subject_type,
+        subject_id: payload.subject_id,
+        role: payload.role,
+        expires_at: payload.expires_at,
+        created_at: now,
+    };
+    store.acl_overrides.insert(override_id, acl_override.clone());
+    Ok(AclOverride {
+        id: acl_override.id,
+        workspace_id: acl_override.workspace_id,
+        doc_id: acl_override.doc_id,
+        subject_type: acl_override.subject_type,
+        subject_id: acl_override.subject_id,
+        role: acl_override.role,
+        expires_at: acl_override.expires_at,
+        created_at: acl_override.created_at,
+    })
+}
+
+async fn delete_acl_override_mem(
+    store: &RwLock<MemoryDocumentStore>,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    override_id: Uuid,
+) -> Result<(), DocApiError> {
+    let mut store = store.write().await;
+    let Some(existing) = store.acl_overrides.get(&override_id) else {
+        return Err(DocApiError::NotFound);
+    };
+    if existing.workspace_id != workspace_id || existing.doc_id != doc_id {
+        return Err(DocApiError::NotFound);
+    }
+
+    store.acl_overrides.remove(&override_id);
+    Ok(())
+}
+
 fn mem_to_document(doc: &MemoryDocument) -> Document {
     Document {
         id: doc.id,
@@ -988,6 +1239,31 @@ fn normalize_tag_names(raw_tags: &[String]) -> Result<Vec<String>, DocApiError> 
     }
 
     Ok(out)
+}
+
+fn validate_acl_override_request(payload: &CreateAclOverrideRequest) -> Result<(), DocApiError> {
+    if payload.subject_type != "user"
+        && payload.subject_type != "agent"
+        && payload.subject_type != "share_link"
+    {
+        return Err(DocApiError::bad_request(
+            "subject_type must be one of: user, agent, share_link",
+        ));
+    }
+
+    if payload.subject_id.trim().is_empty() {
+        return Err(DocApiError::bad_request("subject_id must not be empty"));
+    }
+
+    if payload.role != "editor" && payload.role != "viewer" {
+        return Err(DocApiError::bad_request("role must be one of: editor, viewer"));
+    }
+
+    if payload.expires_at.is_some_and(|value| value <= Utc::now()) {
+        return Err(DocApiError::bad_request("expires_at must be in the future"));
+    }
+
+    Ok(())
 }
 
 fn extract_if_match(headers: &HeaderMap) -> Result<&str, DocApiError> {
@@ -1412,6 +1688,125 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_and_delete_acl_override() {
+        let app = test_router();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "acl.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        let create_override_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "agent",
+                    "subject_id": "cursor",
+                    "role": "editor"
+                }),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_override_resp.status(), StatusCode::CREATED);
+        let create_override_body = body_json(create_override_resp).await;
+        assert_eq!(create_override_body["acl_override"]["subject_type"], "agent");
+        assert_eq!(create_override_body["acl_override"]["subject_id"], "cursor");
+        assert_eq!(create_override_body["acl_override"]["role"], "editor");
+        let override_id = create_override_body["acl_override"]["id"].as_str().unwrap();
+
+        let delete_override_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!(
+                        "/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides/{override_id}"
+                    ))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_override_resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn create_acl_override_rejects_invalid_role() {
+        let app = test_router();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "acl.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        let resp = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "user",
+                    "subject_id": "user-1",
+                    "role": "owner"
+                }),
+                &token,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_acl_override_returns_not_found_for_missing_document() {
+        let app = test_router();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let missing_doc_id = Uuid::new_v4();
+        let resp = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{missing_doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "agent",
+                    "subject_id": "cursor",
+                    "role": "viewer"
+                }),
+                &token,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
