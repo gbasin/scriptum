@@ -1,5 +1,6 @@
 pub mod comments;
 pub mod documents;
+pub mod search;
 
 use std::{collections::HashMap, env, sync::Arc};
 
@@ -86,6 +87,7 @@ struct MemoryWorkspaceStore {
     workspaces: HashMap<Uuid, MemoryWorkspace>,
     memberships: HashMap<(Uuid, Uuid), MemoryMembership>,
     share_links: HashMap<Uuid, MemoryShareLink>,
+    invites: HashMap<Uuid, MemoryInvite>,
 }
 
 #[derive(Clone)]
@@ -277,6 +279,92 @@ struct MemberCursor {
     user_id: Uuid,
 }
 
+#[derive(Deserialize)]
+struct CreateInviteRequest {
+    email: String,
+    role: String,
+    expires_in_hours: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct InviteEnvelope {
+    invite: Invite,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Invite {
+    id: Uuid,
+    workspace_id: Uuid,
+    email: String,
+    role: String,
+    expires_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Clone)]
+struct InviteRecord {
+    id: Uuid,
+    workspace_id: Uuid,
+    email: String,
+    role: String,
+    token_hash: Vec<u8>,
+    expires_at: DateTime<Utc>,
+    accepted_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+impl InviteRecord {
+    fn into_invite(self) -> Invite {
+        Invite {
+            id: self.id,
+            workspace_id: self.workspace_id,
+            email: self.email,
+            role: self.role,
+            expires_at: self.expires_at,
+            created_at: self.created_at,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct InviteRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    email: String,
+    role: String,
+    token_hash: Vec<u8>,
+    expires_at: DateTime<Utc>,
+    accepted_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<InviteRow> for InviteRecord {
+    fn from(value: InviteRow) -> Self {
+        Self {
+            id: value.id,
+            workspace_id: value.workspace_id,
+            email: value.email,
+            role: value.role,
+            token_hash: value.token_hash,
+            expires_at: value.expires_at,
+            accepted_at: value.accepted_at,
+            created_at: value.created_at,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MemoryInvite {
+    id: Uuid,
+    workspace_id: Uuid,
+    email: String,
+    role: String,
+    token_hash: Vec<u8>,
+    expires_at: DateTime<Utc>,
+    accepted_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
 #[derive(Clone)]
 struct WorkspaceCursor {
     created_at: DateTime<Utc>,
@@ -451,7 +539,8 @@ pub async fn build_router_from_env(jwt_service: Arc<JwtAccessTokenService>) -> R
         .context("relay PostgreSQL health check failed for workspace API")?;
 
     Ok(build_router_with_store(WorkspaceStore::Postgres(pool.clone()), Arc::clone(&jwt_service))
-        .merge(comments::router(pool, jwt_service)))
+        .merge(comments::router(pool.clone(), Arc::clone(&jwt_service)))
+        .merge(search::router(pool, jwt_service)))
 }
 
 fn build_router_with_store(
@@ -492,6 +581,14 @@ fn build_router_with_store(
             "/v1/workspaces/{workspace_id}/members/{member_id}",
             delete(delete_member).route_layer(members_delete_owner_layer),
         )
+        .route(
+            "/v1/workspaces/{workspace_id}/invites",
+            post(create_invite).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_workspace_owner_role,
+            )),
+        )
+        .route("/v1/invites/{token}/accept", post(accept_invite))
         .with_state(state)
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
 }
@@ -646,6 +743,46 @@ async fn delete_member(
     state.store.delete_member(workspace_id, member_id, if_match).await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+const DEFAULT_INVITE_EXPIRY_HOURS: u32 = 72;
+const MAX_INVITE_EXPIRY_HOURS: u32 = 720; // 30 days
+
+async fn create_invite(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(workspace_id): Path<Uuid>,
+    Json(payload): Json<CreateInviteRequest>,
+) -> Result<(StatusCode, Json<InviteEnvelope>), ApiError> {
+    validate_invite_request(&payload)?;
+
+    let expiry_hours = payload.expires_in_hours.unwrap_or(DEFAULT_INVITE_EXPIRY_HOURS);
+    let expires_at = Utc::now() + chrono::Duration::hours(i64::from(expiry_hours));
+
+    let token = generate_share_link_token();
+    let token_hash = hash_share_link_token(&token);
+
+    let record = state
+        .store
+        .create_invite(workspace_id, user.user_id, payload, token_hash, expires_at)
+        .await?;
+
+    let invite = record.into_invite();
+    let envelope = InviteEnvelope { invite };
+
+    Ok((StatusCode::CREATED, Json(envelope)))
+}
+
+async fn accept_invite(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(token): Path<String>,
+) -> Result<Json<InviteEnvelope>, ApiError> {
+    let token_hash = hash_share_link_token(&token);
+
+    let record = state.store.accept_invite(token_hash, user.user_id).await?;
+
+    Ok(Json(InviteEnvelope { invite: record.into_invite() }))
 }
 
 async fn require_workspace_viewer_role(
@@ -859,6 +996,44 @@ impl WorkspaceStore {
             Self::Memory(store) => {
                 delete_member_memory(store, workspace_id, member_id, if_match).await
             }
+        }
+    }
+
+    async fn create_invite(
+        &self,
+        workspace_id: Uuid,
+        invited_by: Uuid,
+        payload: CreateInviteRequest,
+        token_hash: Vec<u8>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<InviteRecord, ApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                create_invite_pg(pool, workspace_id, invited_by, payload, token_hash, expires_at)
+                    .await
+            }
+            Self::Memory(store) => {
+                create_invite_memory(
+                    store,
+                    workspace_id,
+                    invited_by,
+                    payload,
+                    token_hash,
+                    expires_at,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn accept_invite(
+        &self,
+        token_hash: Vec<u8>,
+        user_id: Uuid,
+    ) -> Result<InviteRecord, ApiError> {
+        match self {
+            Self::Postgres(pool) => accept_invite_pg(pool, token_hash, user_id).await,
+            Self::Memory(store) => accept_invite_memory(store, token_hash, user_id).await,
         }
     }
 }
@@ -1504,10 +1679,7 @@ async fn update_member_pg(
     }
 
     if current_record.role == "owner" && payload.role.as_deref().is_some_and(|r| r != "owner") {
-        return Err(ApiError::bad_request(
-            "VALIDATION_ERROR",
-            "cannot demote the last owner",
-        ));
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot demote the last owner"));
     }
 
     let row = sqlx::query_as::<_, MemberRow>(
@@ -1568,10 +1740,7 @@ async fn delete_member_pg(
     }
 
     if current_record.role == "owner" {
-        return Err(ApiError::bad_request(
-            "VALIDATION_ERROR",
-            "cannot remove a workspace owner",
-        ));
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot remove a workspace owner"));
     }
 
     sqlx::query("DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2")
@@ -1642,10 +1811,7 @@ async fn update_member_memory(
     }
 
     if member.role == "owner" && payload.role.as_deref().is_some_and(|r| r != "owner") {
-        return Err(ApiError::bad_request(
-            "VALIDATION_ERROR",
-            "cannot demote the last owner",
-        ));
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot demote the last owner"));
     }
 
     let member = state.memberships.get_mut(&(workspace_id, member_id)).unwrap();
@@ -1684,14 +1850,202 @@ async fn delete_member_memory(
     }
 
     if member.role == "owner" {
-        return Err(ApiError::bad_request(
-            "VALIDATION_ERROR",
-            "cannot remove a workspace owner",
-        ));
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot remove a workspace owner"));
     }
 
     state.memberships.remove(&(workspace_id, member_id));
     Ok(())
+}
+
+// ── Invite implementations ──────────────────────────────────────────
+
+async fn create_invite_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    invited_by: Uuid,
+    payload: CreateInviteRequest,
+    token_hash: Vec<u8>,
+    expires_at: DateTime<Utc>,
+) -> Result<InviteRecord, ApiError> {
+    let row = sqlx::query_as::<_, InviteRow>(
+        r#"
+        INSERT INTO workspace_invites (workspace_id, email, role, token_hash, invited_by, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, workspace_id, email, role, token_hash, expires_at, accepted_at, created_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(payload.email)
+    .bind(payload.role)
+    .bind(token_hash)
+    .bind(invited_by)
+    .bind(expires_at)
+    .fetch_one(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(row.into())
+}
+
+async fn accept_invite_pg(
+    pool: &PgPool,
+    token_hash: Vec<u8>,
+    user_id: Uuid,
+) -> Result<InviteRecord, ApiError> {
+    let mut tx = pool.begin().await.map_err(|e| ApiError::internal(e.into()))?;
+
+    let invite = sqlx::query_as::<_, InviteRow>(
+        r#"
+        SELECT id, workspace_id, email, role, token_hash, expires_at, accepted_at, created_at
+        FROM workspace_invites
+        WHERE token_hash = $1
+        "#,
+    )
+    .bind(&token_hash)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or_else(|| ApiError::not_found("INVITE_NOT_FOUND", "invite not found or already used"))?;
+
+    if invite.accepted_at.is_some() {
+        return Err(ApiError::bad_request(
+            "INVITE_ALREADY_ACCEPTED",
+            "this invite has already been accepted",
+        ));
+    }
+    if invite.expires_at < Utc::now() {
+        return Err(ApiError::bad_request("INVITE_EXPIRED", "this invite has expired"));
+    }
+
+    // Mark invite as accepted.
+    sqlx::query("UPDATE workspace_invites SET accepted_at = now() WHERE id = $1")
+        .bind(invite.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+    // Add user to workspace with invited role.
+    sqlx::query(
+        r#"
+        INSERT INTO workspace_members (workspace_id, user_id, role, status)
+        VALUES ($1, $2, $3, 'active')
+        ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+            role = EXCLUDED.role,
+            status = 'active'
+        "#,
+    )
+    .bind(invite.workspace_id)
+    .bind(user_id)
+    .bind(&invite.role)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    tx.commit().await.map_err(|e| ApiError::internal(e.into()))?;
+
+    Ok(InviteRecord {
+        id: invite.id,
+        workspace_id: invite.workspace_id,
+        email: invite.email,
+        role: invite.role,
+        token_hash: invite.token_hash,
+        expires_at: invite.expires_at,
+        accepted_at: Some(Utc::now()),
+        created_at: invite.created_at,
+    })
+}
+
+async fn create_invite_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    workspace_id: Uuid,
+    _invited_by: Uuid,
+    payload: CreateInviteRequest,
+    token_hash: Vec<u8>,
+    expires_at: DateTime<Utc>,
+) -> Result<InviteRecord, ApiError> {
+    let mut state = store.write().await;
+
+    let Some(workspace) = state.workspaces.get(&workspace_id) else {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    };
+    if workspace.deleted_at.is_some() {
+        return Err(ApiError::not_found("WORKSPACE_NOT_FOUND", "workspace does not exist"));
+    }
+
+    let invite_id = Uuid::new_v4();
+    let now = Utc::now();
+    let invite = MemoryInvite {
+        id: invite_id,
+        workspace_id,
+        email: payload.email,
+        role: payload.role,
+        token_hash: token_hash.clone(),
+        expires_at,
+        accepted_at: None,
+        created_at: now,
+    };
+    state.invites.insert(invite_id, invite.clone());
+
+    Ok(InviteRecord {
+        id: invite.id,
+        workspace_id: invite.workspace_id,
+        email: invite.email,
+        role: invite.role,
+        token_hash: invite.token_hash,
+        expires_at: invite.expires_at,
+        accepted_at: None,
+        created_at: invite.created_at,
+    })
+}
+
+async fn accept_invite_memory(
+    store: &Arc<RwLock<MemoryWorkspaceStore>>,
+    token_hash: Vec<u8>,
+    user_id: Uuid,
+) -> Result<InviteRecord, ApiError> {
+    let mut state = store.write().await;
+
+    let invite =
+        state.invites.values().find(|inv| inv.token_hash == token_hash).cloned().ok_or_else(
+            || ApiError::not_found("INVITE_NOT_FOUND", "invite not found or already used"),
+        )?;
+
+    if invite.accepted_at.is_some() {
+        return Err(ApiError::bad_request(
+            "INVITE_ALREADY_ACCEPTED",
+            "this invite has already been accepted",
+        ));
+    }
+    if invite.expires_at < Utc::now() {
+        return Err(ApiError::bad_request("INVITE_EXPIRED", "this invite has expired"));
+    }
+
+    // Mark as accepted.
+    let now = Utc::now();
+    state.invites.get_mut(&invite.id).unwrap().accepted_at = Some(now);
+
+    // Add user as workspace member.
+    state.memberships.insert(
+        (invite.workspace_id, user_id),
+        MemoryMembership {
+            role: invite.role.clone(),
+            status: "active".to_owned(),
+            email: invite.email.clone(),
+            display_name: format!("User {}", &user_id.to_string()[..8]),
+            joined_at: now,
+        },
+    );
+
+    Ok(InviteRecord {
+        id: invite.id,
+        workspace_id: invite.workspace_id,
+        email: invite.email,
+        role: invite.role,
+        token_hash: invite.token_hash,
+        expires_at: invite.expires_at,
+        accepted_at: Some(now),
+        created_at: invite.created_at,
+    })
 }
 
 fn paginate_records(items: &mut Vec<WorkspaceRecord>, limit: usize) -> WorkspacePage {
@@ -1716,9 +2070,7 @@ fn paginate_member_records(items: &mut Vec<MemberRecord>, limit: usize) -> Membe
     }
 
     let next_cursor = if has_more {
-        items
-            .last()
-            .map(|record| encode_member_cursor(record.joined_at, record.user_id))
+        items.last().map(|record| encode_member_cursor(record.joined_at, record.user_id))
     } else {
         None
     };
@@ -1764,6 +2116,33 @@ fn validate_member_update(payload: &UpdateMemberRequest) -> Result<(), ApiError>
             return Err(ApiError::bad_request(
                 "VALIDATION_ERROR",
                 "status must be one of: active, invited, suspended",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_invite_request(payload: &CreateInviteRequest) -> Result<(), ApiError> {
+    if payload.email.trim().is_empty() || !payload.email.contains('@') {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "a valid email address is required",
+        ));
+    }
+    if payload.role != "editor" && payload.role != "viewer" {
+        return Err(ApiError::bad_request(
+            "VALIDATION_ERROR",
+            "invite role must be one of: editor, viewer",
+        ));
+    }
+    if let Some(hours) = payload.expires_in_hours {
+        if hours == 0 || hours > MAX_INVITE_EXPIRY_HOURS {
+            return Err(ApiError::bad_request(
+                "VALIDATION_ERROR",
+                format!(
+                    "expires_in_hours must be between 1 and {MAX_INVITE_EXPIRY_HOURS}"
+                ),
             ));
         }
     }
@@ -1909,9 +2288,10 @@ fn map_sqlx_error(error: sqlx::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_router_with_store, CreateWorkspaceRequest, MemberEnvelope, MembersPageEnvelope,
-        MemoryMembership, MemoryWorkspace, MemoryWorkspaceStore, ShareLinkEnvelope,
-        WorkspaceEnvelope, WorkspaceStore, WorkspacesPageEnvelope,
+        build_router_with_store, CreateWorkspaceRequest, InviteEnvelope, MemberEnvelope,
+        MembersPageEnvelope, MemoryInvite, MemoryMembership, MemoryWorkspace,
+        MemoryWorkspaceStore, ShareLinkEnvelope, WorkspaceEnvelope, WorkspaceStore,
+        WorkspacesPageEnvelope,
     };
     use crate::auth::jwt::JwtAccessTokenService;
     use axum::{
@@ -2419,9 +2799,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{member_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{member_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", &etag)
                     .header("content-type", "application/json")
@@ -2447,9 +2825,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{member_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{member_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "\"stale\"")
                     .header("content-type", "application/json")
@@ -2472,9 +2848,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{owner_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{owner_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "*")
                     .header("content-type", "application/json")
@@ -2497,9 +2871,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{member_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{member_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "*")
                     .header("content-type", "application/json")
@@ -2528,9 +2900,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::DELETE)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{member_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{member_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", &etag)
                     .body(Body::empty())
@@ -2557,9 +2927,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::DELETE)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{owner_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{owner_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "*")
                     .body(Body::empty())
@@ -2582,9 +2950,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::DELETE)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{owner_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{owner_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "*")
                     .body(Body::empty())
@@ -2607,9 +2973,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::DELETE)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{fake_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{fake_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "*")
                     .body(Body::empty())
@@ -2656,9 +3020,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!(
-                        "/v1/workspaces/{workspace_id}/members/{member_id}"
-                    ))
+                    .uri(format!("/v1/workspaces/{workspace_id}/members/{member_id}"))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", &etag)
                     .header("content-type", "application/json")
@@ -2672,5 +3034,331 @@ mod tests {
         let body: MemberEnvelope = read_json(response).await;
         assert_eq!(body.member.status, "suspended");
         assert_eq!(body.member.role, "editor"); // role unchanged
+    }
+
+    // ── Invite management ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn create_invite_returns_invite_envelope() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/invites"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "email": "invitee@example.com",
+                            "role": "editor"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: InviteEnvelope = read_json(response).await;
+        assert_eq!(body.invite.email, "invitee@example.com");
+        assert_eq!(body.invite.role, "editor");
+        assert_eq!(body.invite.workspace_id, workspace_id);
+    }
+
+    #[tokio::test]
+    async fn create_invite_rejects_owner_role() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/invites"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "email": "invitee@example.com",
+                            "role": "owner"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_invite_rejects_invalid_email() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/invites"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "email": "not-an-email",
+                            "role": "editor"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_invite_requires_owner_role() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let editor_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let now = Utc::now();
+        let store = Arc::new(RwLock::new(MemoryWorkspaceStore::default()));
+
+        {
+            let mut guard = store.write().await;
+            guard.workspaces.insert(
+                workspace_id,
+                MemoryWorkspace {
+                    id: workspace_id,
+                    slug: "invite-rbac".to_owned(),
+                    name: "Invite RBAC".to_owned(),
+                    created_at: now,
+                    updated_at: now,
+                    deleted_at: None,
+                },
+            );
+            guard.memberships.insert(
+                (workspace_id, editor_id),
+                MemoryMembership {
+                    role: "editor".to_owned(),
+                    status: "active".to_owned(),
+                    email: "editor@test.local".to_owned(),
+                    display_name: "Editor".to_owned(),
+                    joined_at: now,
+                },
+            );
+        }
+
+        let router =
+            build_router_with_store(WorkspaceStore::Memory(store), Arc::clone(&jwt_service));
+        let token = bearer_token(&jwt_service, editor_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/invites"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "email": "invitee@example.com",
+                            "role": "viewer"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn accept_invite_creates_membership() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, store) =
+            setup_workspace_with_members();
+
+        // Manually insert an invite with a known token hash.
+        let raw_token = "test-invite-token-abc123";
+        let token_hash = Sha256::digest(raw_token.as_bytes()).to_vec();
+        let invite_id = Uuid::new_v4();
+        let now = Utc::now();
+        {
+            let mut guard = store.write().await;
+            guard.invites.insert(
+                invite_id,
+                MemoryInvite {
+                    id: invite_id,
+                    workspace_id,
+                    email: "new-user@example.com".to_owned(),
+                    role: "viewer".to_owned(),
+                    token_hash,
+                    expires_at: now + chrono::Duration::hours(72),
+                    accepted_at: None,
+                    created_at: now,
+                },
+            );
+        }
+
+        let acceptor_id = Uuid::new_v4();
+        let token = bearer_token(&jwt_service, acceptor_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/invites/{raw_token}/accept"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("accept invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: InviteEnvelope = read_json(response).await;
+        assert_eq!(body.invite.workspace_id, workspace_id);
+        assert_eq!(body.invite.role, "viewer");
+
+        // Verify membership was created.
+        let guard = store.read().await;
+        let membership = guard
+            .memberships
+            .get(&(workspace_id, acceptor_id))
+            .expect("membership should exist");
+        assert_eq!(membership.role, "viewer");
+        assert_eq!(membership.status, "active");
+    }
+
+    #[tokio::test]
+    async fn accept_expired_invite_fails() {
+        let (_router, jwt_service, owner_id, _member_id, workspace_id, store) =
+            setup_workspace_with_members();
+
+        let raw_token = "expired-invite-token";
+        let token_hash = Sha256::digest(raw_token.as_bytes()).to_vec();
+        let invite_id = Uuid::new_v4();
+        let now = Utc::now();
+        {
+            let mut guard = store.write().await;
+            guard.invites.insert(
+                invite_id,
+                MemoryInvite {
+                    id: invite_id,
+                    workspace_id,
+                    email: "expired@example.com".to_owned(),
+                    role: "editor".to_owned(),
+                    token_hash,
+                    expires_at: now - chrono::Duration::hours(1),
+                    accepted_at: None,
+                    created_at: now - chrono::Duration::hours(73),
+                },
+            );
+        }
+
+        let router = build_router_with_store(
+            WorkspaceStore::Memory(store),
+            Arc::clone(&jwt_service),
+        );
+        let acceptor_id = Uuid::new_v4();
+        let token = bearer_token(&jwt_service, acceptor_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/invites/{raw_token}/accept"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("accept invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn accept_already_accepted_invite_fails() {
+        let (_router, jwt_service, owner_id, _member_id, workspace_id, store) =
+            setup_workspace_with_members();
+
+        let raw_token = "already-accepted-token";
+        let token_hash = Sha256::digest(raw_token.as_bytes()).to_vec();
+        let invite_id = Uuid::new_v4();
+        let now = Utc::now();
+        {
+            let mut guard = store.write().await;
+            guard.invites.insert(
+                invite_id,
+                MemoryInvite {
+                    id: invite_id,
+                    workspace_id,
+                    email: "accepted@example.com".to_owned(),
+                    role: "editor".to_owned(),
+                    token_hash,
+                    expires_at: now + chrono::Duration::hours(72),
+                    accepted_at: Some(now - chrono::Duration::hours(1)),
+                    created_at: now - chrono::Duration::hours(24),
+                },
+            );
+        }
+
+        let router = build_router_with_store(
+            WorkspaceStore::Memory(store),
+            Arc::clone(&jwt_service),
+        );
+        let acceptor_id = Uuid::new_v4();
+        let token = bearer_token(&jwt_service, acceptor_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/invites/{raw_token}/accept"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("accept invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn accept_invalid_token_returns_not_found() {
+        let (router, jwt_service, _owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let acceptor_id = Uuid::new_v4();
+        let token = bearer_token(&jwt_service, acceptor_id, workspace_id);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/invites/nonexistent-token/accept")
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("accept invite request should return response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

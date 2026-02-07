@@ -7,9 +7,16 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
 use axum::{
     extract::{Json, State},
-    http::{header::RETRY_AFTER, HeaderValue, StatusCode},
+    http::{
+        header::{AUTHORIZATION, RETRY_AFTER},
+        HeaderMap, HeaderValue, StatusCode,
+    },
     response::{IntoResponse, Response},
     routing::post,
     Router,
@@ -39,6 +46,8 @@ const DEFAULT_GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_to
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS: i64 = 15 * 60;
 const DEFAULT_REFRESH_TOKEN_TTL_DAYS: i64 = 30;
 const REFRESH_TOKEN_BYTES: usize = 32;
+const MIN_PASSWORD_LEN: usize = 8;
+const MAX_PASSWORD_LEN: usize = 256;
 
 /// Information returned by GitHub after code exchange.
 #[derive(Debug, Clone)]
@@ -147,6 +156,62 @@ impl RefreshTokenStore {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PasswordUser {
+    id: Uuid,
+    email: String,
+    display_name: String,
+    password_hash: String,
+}
+
+#[derive(Debug, Default)]
+struct PasswordUserStore {
+    users_by_email: RwLock<HashMap<String, PasswordUser>>,
+}
+
+impl PasswordUserStore {
+    async fn create(
+        &self,
+        email: String,
+        display_name: String,
+        password_hash: String,
+    ) -> Result<PasswordUser, RelayError> {
+        let mut guard = self.users_by_email.write().await;
+        if guard.contains_key(&email) {
+            return Err(RelayError::new(
+                ErrorCode::ValidationFailed,
+                "an account with this email already exists",
+            ));
+        }
+
+        let user =
+            PasswordUser { id: Uuid::new_v4(), email: email.clone(), display_name, password_hash };
+        guard.insert(email, user.clone());
+        Ok(user)
+    }
+
+    async fn find_by_email(&self, email: &str) -> Option<PasswordUser> {
+        self.users_by_email.read().await.get(email).cloned()
+    }
+
+    async fn find_by_user_id(&self, user_id: Uuid) -> Option<PasswordUser> {
+        self.users_by_email.read().await.values().find(|user| user.id == user_id).cloned()
+    }
+
+    async fn update_password_hash(
+        &self,
+        user_id: Uuid,
+        new_password_hash: String,
+    ) -> Result<(), RelayError> {
+        let mut guard = self.users_by_email.write().await;
+        let user = guard.values_mut().find(|user| user.id == user_id).ok_or_else(|| {
+            RelayError::new(ErrorCode::AuthInvalidToken, "authenticated user account not found")
+        })?;
+        user.password_hash = new_password_hash;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct OAuthState {
     flow_store: Arc<OAuthFlowStore>,
@@ -159,6 +224,7 @@ pub struct OAuthState {
     flow_ttl: Duration,
     github_exchange: Arc<dyn GithubExchange>,
     refresh_store: Arc<RefreshTokenStore>,
+    password_store: Arc<PasswordUserStore>,
     jwt_secret: String,
 }
 
@@ -251,6 +317,7 @@ impl OAuthState {
             flow_ttl: Duration::minutes(flow_ttl_minutes),
             github_exchange: Arc::new(StubGithubExchange),
             refresh_store: Arc::new(RefreshTokenStore::default()),
+            password_store: Arc::new(PasswordUserStore::default()),
             jwt_secret,
         }
     }
@@ -287,6 +354,7 @@ impl OAuthState {
             flow_ttl: Duration::minutes(DEFAULT_FLOW_TTL_MINUTES),
             github_exchange,
             refresh_store: Arc::new(RefreshTokenStore::default()),
+            password_store: Arc::new(PasswordUserStore::default()),
             jwt_secret: "scriptum_test_jwt_secret_that_is_definitely_long_enough".to_string(),
         }
     }
@@ -301,6 +369,9 @@ pub fn router(state: OAuthState) -> Router {
     Router::new()
         .route("/v1/auth/oauth/github/start", post(start_github_oauth))
         .route("/v1/auth/oauth/github/callback", post(callback_github_oauth))
+        .route("/v1/auth/password/register", post(register_password_user))
+        .route("/v1/auth/password/login", post(login_password_user))
+        .route("/v1/auth/password/change", post(change_password))
         .route("/v1/auth/token/refresh", post(handle_token_refresh))
         .route("/v1/auth/logout", post(handle_logout))
         .with_state(state)
@@ -590,6 +661,196 @@ fn prune_old_requests(requests: &mut VecDeque<Instant>, now: Instant, window: St
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct PasswordRegisterRequest {
+    email: String,
+    display_name: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PasswordLoginRequest {
+    email: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PasswordChangeRequest {
+    current_password: String,
+    new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthSessionResponse {
+    access_token: String,
+    access_expires_at: DateTime<Utc>,
+    refresh_token: String,
+    refresh_expires_at: DateTime<Utc>,
+    user: OAuthUser,
+}
+
+async fn register_password_user(
+    State(state): State<OAuthState>,
+    Json(payload): Json<PasswordRegisterRequest>,
+) -> Result<Json<AuthSessionResponse>, RelayError> {
+    let email = normalize_email(&payload.email)?;
+    let display_name = payload.display_name.trim().to_string();
+    if display_name.is_empty() {
+        return Err(RelayError::new(ErrorCode::ValidationFailed, "display_name must not be empty"));
+    }
+
+    validate_password(&payload.password)?;
+    let password_hash = hash_password(&payload.password)?;
+    let user =
+        state.password_store.create(email, display_name, password_hash).await.map(|record| {
+            OAuthUser { id: record.id, email: record.email, display_name: record.display_name }
+        })?;
+
+    Ok(Json(issue_auth_session(&state, user).await?))
+}
+
+async fn login_password_user(
+    State(state): State<OAuthState>,
+    Json(payload): Json<PasswordLoginRequest>,
+) -> Result<Json<AuthSessionResponse>, RelayError> {
+    let email = normalize_email(&payload.email)?;
+    let user =
+        state.password_store.find_by_email(&email).await.ok_or_else(|| {
+            RelayError::new(ErrorCode::AuthInvalidToken, "invalid email or password")
+        })?;
+
+    if !verify_password(&payload.password, &user.password_hash) {
+        return Err(RelayError::new(ErrorCode::AuthInvalidToken, "invalid email or password"));
+    }
+
+    let user = OAuthUser { id: user.id, email: user.email, display_name: user.display_name };
+    Ok(Json(issue_auth_session(&state, user).await?))
+}
+
+async fn change_password(
+    State(state): State<OAuthState>,
+    headers: HeaderMap,
+    Json(payload): Json<PasswordChangeRequest>,
+) -> Result<StatusCode, RelayError> {
+    let user_id = extract_user_id_from_bearer(&state, &headers)?;
+    let user = state.password_store.find_by_user_id(user_id).await.ok_or_else(|| {
+        RelayError::new(ErrorCode::AuthInvalidToken, "authenticated user account not found")
+    })?;
+
+    if !verify_password(&payload.current_password, &user.password_hash) {
+        return Err(RelayError::new(ErrorCode::AuthInvalidToken, "current password is invalid"));
+    }
+
+    validate_password(&payload.new_password)?;
+    if verify_password(&payload.new_password, &user.password_hash) {
+        return Err(RelayError::new(
+            ErrorCode::ValidationFailed,
+            "new password must differ from current password",
+        ));
+    }
+
+    let new_hash = hash_password(&payload.new_password)?;
+    state.password_store.update_password_hash(user_id, new_hash).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn issue_auth_session(
+    state: &OAuthState,
+    user: OAuthUser,
+) -> Result<AuthSessionResponse, RelayError> {
+    let now = Utc::now();
+    let access_expires_at = now + Duration::seconds(DEFAULT_ACCESS_TOKEN_TTL_SECONDS);
+    let jwt_service = crate::auth::jwt::JwtAccessTokenService::new(&state.jwt_secret)
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+    let access_token = jwt_service
+        .issue_workspace_token(user.id, Uuid::nil())
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+
+    let refresh_expires_at = now + Duration::days(DEFAULT_REFRESH_TOKEN_TTL_DAYS);
+    let (refresh_token, refresh_hash) = generate_refresh_token();
+    let session_id = Uuid::new_v4();
+    let family_id = Uuid::new_v4();
+    state
+        .refresh_store
+        .insert(session_id, user.id, refresh_hash, family_id, refresh_expires_at)
+        .await;
+
+    Ok(AuthSessionResponse {
+        access_token,
+        access_expires_at,
+        refresh_token,
+        refresh_expires_at,
+        user,
+    })
+}
+
+fn extract_user_id_from_bearer(
+    state: &OAuthState,
+    headers: &HeaderMap,
+) -> Result<Uuid, RelayError> {
+    let token = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(extract_bearer_token)
+        .ok_or_else(|| RelayError::new(ErrorCode::AuthInvalidToken, "missing bearer token"))?;
+
+    let jwt_service = crate::auth::jwt::JwtAccessTokenService::new(&state.jwt_secret)
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
+    let access = jwt_service
+        .validate_workspace_token(token)
+        .map_err(|_| RelayError::new(ErrorCode::AuthInvalidToken, "invalid bearer token"))?;
+    Ok(access.user_id)
+}
+
+fn extract_bearer_token(value: &str) -> Option<&str> {
+    let (scheme, token) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return None;
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token)
+}
+
+fn normalize_email(raw_email: &str) -> Result<String, RelayError> {
+    let email = raw_email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return Err(RelayError::new(ErrorCode::ValidationFailed, "email must be a valid address"));
+    }
+    Ok(email)
+}
+
+fn validate_password(password: &str) -> Result<(), RelayError> {
+    let len = password.chars().count();
+    if len < MIN_PASSWORD_LEN || len > MAX_PASSWORD_LEN {
+        return Err(RelayError::new(
+            ErrorCode::ValidationFailed,
+            format!(
+                "password must be between {MIN_PASSWORD_LEN} and {MAX_PASSWORD_LEN} characters"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn hash_password(password: &str) -> Result<String, RelayError> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))
+}
+
+fn verify_password(password: &str, password_hash: &str) -> bool {
+    let parsed_hash = match PasswordHash::new(password_hash) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+    Argon2::default().verify_password(password.as_bytes(), &parsed_hash).is_ok()
+}
+
 // ─── OAuth Callback ────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -600,15 +861,6 @@ struct OAuthGithubCallbackRequest {
     code_verifier: String,
     #[allow(dead_code)]
     device_name: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct OAuthGithubCallbackResponse {
-    access_token: String,
-    access_expires_at: DateTime<Utc>,
-    refresh_token: String,
-    refresh_expires_at: DateTime<Utc>,
-    user: OAuthUser,
 }
 
 impl IntoResponse for OAuthCallbackError {
@@ -632,7 +884,7 @@ impl From<RelayError> for OAuthCallbackError {
 async fn callback_github_oauth(
     State(state): State<OAuthState>,
     Json(payload): Json<OAuthGithubCallbackRequest>,
-) -> Result<Json<OAuthGithubCallbackResponse>, OAuthCallbackError> {
+) -> Result<Json<AuthSessionResponse>, OAuthCallbackError> {
     // 1. Consume the flow (one-time use)
     let flow =
         state.flow_store.take(payload.flow_id).await.ok_or_else(|| {
@@ -668,33 +920,7 @@ async fn callback_github_oauth(
         display_name: github_user.display_name,
     };
 
-    // 7. Generate JWT access token (15 min)
-    let now = Utc::now();
-    let access_expires_at = now + Duration::seconds(DEFAULT_ACCESS_TOKEN_TTL_SECONDS);
-    let jwt_service = crate::auth::jwt::JwtAccessTokenService::new(&state.jwt_secret)
-        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
-    // Use a placeholder workspace ID for auth-level tokens
-    let access_token = jwt_service
-        .issue_workspace_token(user.id, Uuid::nil())
-        .map_err(|_| RelayError::from_code(ErrorCode::InternalError))?;
-
-    // 8. Generate opaque refresh token (30 day, rotating)
-    let refresh_expires_at = now + Duration::days(DEFAULT_REFRESH_TOKEN_TTL_DAYS);
-    let (refresh_token, refresh_hash) = generate_refresh_token();
-    let session_id = Uuid::new_v4();
-    let family_id = Uuid::new_v4();
-    state
-        .refresh_store
-        .insert(session_id, user.id, refresh_hash, family_id, refresh_expires_at)
-        .await;
-
-    Ok(Json(OAuthGithubCallbackResponse {
-        access_token,
-        access_expires_at,
-        refresh_token,
-        refresh_expires_at,
-        user,
-    }))
+    Ok(Json(issue_auth_session(&state, user).await?))
 }
 
 /// Verify PKCE S256: SHA256(code_verifier) base64url-encoded must equal code_challenge.
@@ -822,7 +1048,7 @@ mod tests {
 
     use axum::{
         body::{to_bytes, Body},
-        http::{Method, Request, StatusCode},
+        http::{header::AUTHORIZATION, Method, Request, StatusCode},
     };
     use serde_json::{json, Value};
     use tower::ServiceExt;
@@ -1029,6 +1255,35 @@ mod tests {
             .expect("request should build")
     }
 
+    fn password_register_request(payload: Value) -> Request<Body> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/auth/password/register")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("request should build")
+    }
+
+    fn password_login_request(payload: Value) -> Request<Body> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/auth/password/login")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("request should build")
+    }
+
+    fn password_change_request(payload: Value, token: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/auth/password/change")
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(payload.to_string())).expect("request should build")
+    }
+
     async fn seed_flow(flow_store: &OAuthFlowStore, code_challenge: &str) -> Uuid {
         let flow_id = Uuid::new_v4();
         flow_store
@@ -1157,6 +1412,140 @@ mod tests {
         assert_eq!(second.status(), StatusCode::UNAUTHORIZED);
     }
 
+    #[tokio::test]
+    async fn password_register_and_login_issue_session_tokens() {
+        let (app, _) = test_router(10);
+        let register = app
+            .clone()
+            .oneshot(password_register_request(json!({
+                "email": "TeSt+auth@example.com",
+                "display_name": "Password User",
+                "password": "Sup3rSecurePass!"
+            })))
+            .await
+            .expect("register request should return");
+        assert_eq!(register.status(), StatusCode::OK);
+
+        let body = to_bytes(register.into_body(), usize::MAX).await.expect("body should read");
+        let parsed: Value = serde_json::from_slice(&body).expect("body should be valid json");
+        assert!(parsed["access_token"].as_str().is_some_and(|value| !value.is_empty()));
+        assert!(parsed["refresh_token"].as_str().is_some_and(|value| !value.is_empty()));
+        assert_eq!(parsed["user"]["email"], "test+auth@example.com");
+
+        let wrong_login = app
+            .clone()
+            .oneshot(password_login_request(json!({
+                "email": "test+auth@example.com",
+                "password": "wrong-password"
+            })))
+            .await
+            .expect("login request should return");
+        assert_eq!(wrong_login.status(), StatusCode::UNAUTHORIZED);
+
+        let login = app
+            .oneshot(password_login_request(json!({
+                "email": "test+auth@example.com",
+                "password": "Sup3rSecurePass!"
+            })))
+            .await
+            .expect("login request should return");
+        assert_eq!(login.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn password_register_rejects_duplicate_email() {
+        let (app, _) = test_router(10);
+        let payload = json!({
+            "email": "duplicate@example.com",
+            "display_name": "Dupe",
+            "password": "Sup3rSecurePass!"
+        });
+
+        let first = app
+            .clone()
+            .oneshot(password_register_request(payload.clone()))
+            .await
+            .expect("first register should return");
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .oneshot(password_register_request(payload))
+            .await
+            .expect("second register should return");
+        assert_eq!(second.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn password_change_requires_bearer_token() {
+        let (app, _) = test_router(10);
+        let response = app
+            .oneshot(password_change_request(
+                json!({
+                    "current_password": "Sup3rSecurePass!",
+                    "new_password": "N3werSecurePass!"
+                }),
+                None,
+            ))
+            .await
+            .expect("change-password request should return");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn password_change_updates_credentials() {
+        let (app, _) = test_router(10);
+        let register = app
+            .clone()
+            .oneshot(password_register_request(json!({
+                "email": "changeme@example.com",
+                "display_name": "Change Me",
+                "password": "Sup3rSecurePass!"
+            })))
+            .await
+            .expect("register request should return");
+        assert_eq!(register.status(), StatusCode::OK);
+        let register_body =
+            to_bytes(register.into_body(), usize::MAX).await.expect("register body should read");
+        let register_json: Value =
+            serde_json::from_slice(&register_body).expect("register body should be json");
+        let access_token = register_json["access_token"]
+            .as_str()
+            .expect("access token should be present")
+            .to_string();
+
+        let change = app
+            .clone()
+            .oneshot(password_change_request(
+                json!({
+                    "current_password": "Sup3rSecurePass!",
+                    "new_password": "N3werSecurePass!"
+                }),
+                Some(&access_token),
+            ))
+            .await
+            .expect("change-password request should return");
+        assert_eq!(change.status(), StatusCode::NO_CONTENT);
+
+        let old_login = app
+            .clone()
+            .oneshot(password_login_request(json!({
+                "email": "changeme@example.com",
+                "password": "Sup3rSecurePass!"
+            })))
+            .await
+            .expect("old-password login should return");
+        assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+
+        let new_login = app
+            .oneshot(password_login_request(json!({
+                "email": "changeme@example.com",
+                "password": "N3werSecurePass!"
+            })))
+            .await
+            .expect("new-password login should return");
+        assert_eq!(new_login.status(), StatusCode::OK);
+    }
+
     #[test]
     fn pkce_verification_works_for_valid_pair() {
         let (verifier, challenge) = make_pkce_pair();
@@ -1231,17 +1620,16 @@ mod tests {
         let family_id = Uuid::new_v4();
         let raw_token = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
 
-        let response = app
-            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
-            .await
-            .unwrap();
+        let response =
+            app.oneshot(refresh_request(json!({ "refresh_token": raw_token }))).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let parsed: Value = serde_json::from_slice(&body).unwrap();
 
         assert!(parsed["access_token"].as_str().is_some_and(|t| !t.is_empty()));
-        let new_refresh = parsed["refresh_token"].as_str().expect("refresh_token should be present");
+        let new_refresh =
+            parsed["refresh_token"].as_str().expect("refresh_token should be present");
         assert!(!new_refresh.is_empty());
         assert_ne!(new_refresh, raw_token, "rotated token should differ from old");
         assert!(parsed["access_expires_at"].as_str().is_some());
@@ -1277,10 +1665,8 @@ mod tests {
         assert_eq!(parsed["error"]["code"], "AUTH_TOKEN_REVOKED");
 
         // token_b (same family) should also be revoked now.
-        let third = app
-            .oneshot(refresh_request(json!({ "refresh_token": token_b })))
-            .await
-            .unwrap();
+        let third =
+            app.oneshot(refresh_request(json!({ "refresh_token": token_b }))).await.unwrap();
         assert_eq!(third.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1292,10 +1678,8 @@ mod tests {
         // Seed with negative TTL so it's already expired.
         let raw_token = seed_refresh(&store, user_id, family_id, Duration::seconds(-1)).await;
 
-        let response = app
-            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
-            .await
-            .unwrap();
+        let response =
+            app.oneshot(refresh_request(json!({ "refresh_token": raw_token }))).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -1333,10 +1717,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
         // Token should no longer work for refresh (revoked → reuse detection).
-        let refresh_attempt = app
-            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
-            .await
-            .unwrap();
+        let refresh_attempt =
+            app.oneshot(refresh_request(json!({ "refresh_token": raw_token }))).await.unwrap();
         assert_eq!(refresh_attempt.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1344,10 +1726,8 @@ mod tests {
     async fn logout_rejects_unknown_token() {
         let (app, _) = test_refresh_router_with_store();
 
-        let response = app
-            .oneshot(logout_request(json!({ "refresh_token": "unknown-token" })))
-            .await
-            .unwrap();
+        let response =
+            app.oneshot(logout_request(json!({ "refresh_token": "unknown-token" }))).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
