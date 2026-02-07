@@ -4,46 +4,27 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
-import { CallToolRequestParamsSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createDaemonClient, type DaemonClient } from "./daemon-client";
+import {
+  PASSTHROUGH_TOOL_INPUT_SCHEMA,
+  listWorkspaces,
+  makeResourceResult,
+  makeToolResult,
+  parseResourceVariable,
+  resolveWorkspaceForDocId,
+  toToolPayload,
+  type AgentListResponse,
+  type AgentNameResolver,
+  type ToolDefinition,
+  type ToolPayload,
+} from "./shared";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
 const SERVER_INFO: Implementation = {
   name: "scriptum-mcp-server",
   version: "0.0.0",
 };
-const PASSTHROUGH_TOOL_INPUT_SCHEMA =
-  CallToolRequestParamsSchema.shape.arguments;
-
-interface ToolDefinition {
-  readonly description: string;
-  readonly name: string;
-  readonly rpcMethod: string;
-}
-
-interface WorkspaceSummary {
-  readonly workspace_id: string;
-  readonly name: string;
-  readonly root_path: string;
-}
-
-interface WorkspaceListResponse {
-  readonly items?: WorkspaceSummary[];
-}
-
-interface DocTreeEntry {
-  readonly doc_id: string;
-}
-
-interface DocTreeResponse {
-  readonly items?: DocTreeEntry[];
-}
-
-interface AgentListResponse {
-  readonly items?: unknown[];
-}
 
 const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
@@ -174,9 +155,6 @@ export function resolveAgentNameFromClientInfo(
   return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_AGENT_NAME;
 }
 
-type AgentNameResolver = () => string;
-type ToolPayload = Record<string, unknown>;
-
 function registerToolHandlers(
   server: McpServer,
   daemonClient: DaemonClient,
@@ -247,13 +225,6 @@ function registerToolHandlers(
   }
 }
 
-function toToolPayload(value: unknown): ToolPayload {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-  return value as ToolPayload;
-}
-
 function extractPreviousChangeToken(payload: ToolPayload): string | null {
   const direct = payload.change_token;
   if (typeof direct === "string" && direct.length > 0) {
@@ -286,17 +257,6 @@ function extractChangeToken(payload: unknown): string | null {
   }
 
   return value;
-}
-
-function makeToolResult(payload: unknown) {
-  const text = JSON.stringify(payload ?? null);
-  return {
-    content: [{ type: "text" as const, text }],
-    structuredContent:
-      payload != null && typeof payload === "object" && !Array.isArray(payload)
-        ? (payload as Record<string, unknown>)
-        : undefined,
-  };
 }
 
 function registerResourceHandlers(
@@ -403,65 +363,4 @@ function registerResourceHandlers(
       return makeResourceResult(uri, payload);
     },
   );
-}
-
-async function listWorkspaces(
-  daemonClient: DaemonClient,
-): Promise<WorkspaceSummary[]> {
-  const response = await daemonClient.request<WorkspaceListResponse>(
-    "workspace.list",
-    {},
-  );
-  return response.items ?? [];
-}
-
-async function resolveWorkspaceForDocId(
-  daemonClient: DaemonClient,
-  docId: string,
-): Promise<WorkspaceSummary | undefined> {
-  const workspaces = await listWorkspaces(daemonClient);
-  for (const workspace of workspaces) {
-    const tree = await daemonClient.request<DocTreeResponse>("doc.tree", {
-      workspace_id: workspace.workspace_id,
-    });
-    const items = tree.items ?? [];
-    if (items.some((item) => item.doc_id === docId)) {
-      return workspace;
-    }
-  }
-
-  return undefined;
-}
-
-function parseResourceVariable(variables: Variables, key: string): string {
-  const value = variables[key];
-  const raw =
-    typeof value === "string"
-      ? value
-      : Array.isArray(value)
-        ? value[0]
-        : undefined;
-  if (!raw) {
-    throw new Error(`resource URI is missing required variable: ${key}`);
-  }
-
-  const normalized = raw.trim();
-  if (!normalized) {
-    throw new Error(`resource URI variable ${key} must not be empty`);
-  }
-
-  return normalized;
-}
-
-function makeResourceResult(uri: URL, payload: unknown) {
-  const normalizedPayload = payload ?? null;
-  return {
-    contents: [
-      {
-        uri: uri.toString(),
-        mimeType: "application/json",
-        text: JSON.stringify(normalizedPayload),
-      },
-    ],
-  };
 }
