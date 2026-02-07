@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
 import { createDaemonClient, type DaemonClient } from "./daemon-client";
+import { registerWorkspaceResource } from "./resources/workspace";
 import {
   PASSTHROUGH_TOOL_INPUT_SCHEMA,
   listWorkspaces,
@@ -264,19 +265,7 @@ function registerResourceHandlers(
   daemonClient: DaemonClient,
   resolveAgentName: AgentNameResolver,
 ): void {
-  server.registerResource(
-    "scriptum-workspace",
-    "scriptum://workspace",
-    {
-      title: "Scriptum Workspaces",
-      description: "List workspaces from daemon workspace.list.",
-      mimeType: "application/json",
-    },
-    async (uri) => {
-      const payload = await daemonClient.request("workspace.list", {});
-      return makeResourceResult(uri, payload);
-    },
-  );
+  registerWorkspaceResource(server, daemonClient);
 
   server.registerResource(
     "scriptum-agents",
