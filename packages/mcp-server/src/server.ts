@@ -6,16 +6,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
 import { createDaemonClient, type DaemonClient } from "./daemon-client";
+import { registerAgentsResource } from "./resources/agents";
 import { registerWorkspaceResource } from "./resources/workspace";
 import {
   PASSTHROUGH_TOOL_INPUT_SCHEMA,
-  listWorkspaces,
   makeResourceResult,
   makeToolResult,
   parseResourceVariable,
   resolveWorkspaceForDocId,
   toToolPayload,
-  type AgentListResponse,
   type AgentNameResolver,
   type ToolDefinition,
   type ToolPayload,
@@ -266,45 +265,7 @@ function registerResourceHandlers(
   resolveAgentName: AgentNameResolver,
 ): void {
   registerWorkspaceResource(server, daemonClient);
-
-  server.registerResource(
-    "scriptum-agents",
-    "scriptum://agents",
-    {
-      title: "Scriptum Agents",
-      description: "List active agents grouped by workspace.",
-      mimeType: "application/json",
-    },
-    async (uri) => {
-      const workspaces = await listWorkspaces(daemonClient);
-      const workspacesWithAgents = [];
-      for (const workspace of workspaces) {
-        const agentList = await daemonClient.request<AgentListResponse>(
-          "agent.list",
-          {
-            workspace_id: workspace.workspace_id,
-          },
-        );
-        workspacesWithAgents.push({
-          workspace_id: workspace.workspace_id,
-          name: workspace.name,
-          root_path: workspace.root_path,
-          agents: agentList.items ?? [],
-        });
-      }
-
-      const payload = {
-        connected_agent: resolveAgentName(),
-        workspaces: workspacesWithAgents,
-        total_agents: workspacesWithAgents.reduce(
-          (total, workspace) => total + workspace.agents.length,
-          0,
-        ),
-      };
-
-      return makeResourceResult(uri, payload);
-    },
-  );
+  registerAgentsResource(server, daemonClient, resolveAgentName);
 
   server.registerResource(
     "scriptum-doc-sections",
