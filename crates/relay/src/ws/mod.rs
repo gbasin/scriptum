@@ -621,8 +621,13 @@ async fn handle_hello_message(
         .validate_session_token(session_id, &session_token, resume_token.as_deref())
         .await
     {
-        SessionTokenValidation::Valid { resume_accepted } => {
-            Ok(WsMessage::HelloAck { server_time: Utc::now().to_rfc3339(), resume_accepted })
+        SessionTokenValidation::Valid { resume_accepted, resume_token, resume_expires_at } => {
+            Ok(WsMessage::HelloAck {
+                server_time: Utc::now().to_rfc3339(),
+                resume_accepted,
+                resume_token,
+                resume_expires_at: resume_expires_at.to_rfc3339(),
+            })
         }
         SessionTokenValidation::Invalid => Err(WsMessage::Error {
             code: "SYNC_TOKEN_INVALID".to_string(),
@@ -856,9 +861,9 @@ async fn handle_awareness_update(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SessionTokenValidation {
-    Valid { resume_accepted: bool },
+    Valid { resume_accepted: bool, resume_token: String, resume_expires_at: chrono::DateTime<Utc> },
     Invalid,
     Expired,
 }
@@ -1073,7 +1078,8 @@ impl SyncSessionStore {
         session_token: &str,
         resume_token: Option<&str>,
     ) -> SessionTokenValidation {
-        let Some(session) = self.sessions.read().await.get(&session_id).cloned() else {
+        let mut guard = self.sessions.write().await;
+        let Some(session) = guard.get_mut(&session_id) else {
             return SessionTokenValidation::Invalid;
         };
 
@@ -1085,12 +1091,21 @@ impl SyncSessionStore {
             return SessionTokenValidation::Expired;
         }
 
+        let now = Utc::now();
         let resume_accepted = match resume_token {
-            Some(token) if token == session.resume_token => Utc::now() <= session.resume_expires_at,
+            Some(token) if token == session.resume_token => now <= session.resume_expires_at,
             _ => false,
         };
+        let next_resume_token = Uuid::new_v4().to_string();
+        let next_resume_expires_at = now + Duration::minutes(RESUME_TOKEN_TTL_MINUTES);
+        session.resume_token = next_resume_token.clone();
+        session.resume_expires_at = next_resume_expires_at;
 
-        SessionTokenValidation::Valid { resume_accepted }
+        SessionTokenValidation::Valid {
+            resume_accepted,
+            resume_token: next_resume_token,
+            resume_expires_at: next_resume_expires_at,
+        }
     }
 
     async fn mark_connected(&self, session_id: Uuid) -> bool {
@@ -1707,7 +1722,16 @@ mod tests {
             handle_hello_message(&store, session_id, session_token, Some(resume_token)).await;
 
         match result {
-            Ok(WsMessage::HelloAck { resume_accepted, .. }) => assert!(resume_accepted),
+            Ok(WsMessage::HelloAck {
+                resume_accepted, resume_token, resume_expires_at, ..
+            }) => {
+                assert!(resume_accepted);
+                assert!(!resume_token.is_empty());
+                let expires_at = chrono::DateTime::parse_from_rfc3339(&resume_expires_at)
+                    .expect("resume expiry should be RFC3339");
+                let now = Utc::now();
+                assert!(expires_at.with_timezone(&Utc) > now);
+            }
             other => panic!("expected hello ack, got {other:?}"),
         }
     }
@@ -1740,6 +1764,130 @@ mod tests {
 
         match result {
             Ok(WsMessage::HelloAck { resume_accepted, .. }) => assert!(!resume_accepted),
+            other => panic!("expected hello ack, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn hello_ack_rotates_resume_token_and_enforces_single_use() {
+        let store = SyncSessionStore::default();
+        let session_id = Uuid::new_v4();
+        let session_token = Uuid::new_v4().to_string();
+        let initial_resume_token = Uuid::new_v4().to_string();
+        store
+            .create_session(
+                session_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                session_token.clone(),
+                initial_resume_token.clone(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+
+        let first = handle_hello_message(
+            &store,
+            session_id,
+            session_token.clone(),
+            Some(initial_resume_token.clone()),
+        )
+        .await
+        .expect("first hello should succeed");
+        let first_resume_token = match first {
+            WsMessage::HelloAck { resume_accepted, resume_token, .. } => {
+                assert!(resume_accepted);
+                assert_ne!(resume_token, initial_resume_token);
+                resume_token
+            }
+            other => panic!("expected hello ack, got {other:?}"),
+        };
+
+        let second = handle_hello_message(
+            &store,
+            session_id,
+            session_token.clone(),
+            Some(first_resume_token.clone()),
+        )
+        .await
+        .expect("hello should still succeed");
+        match second {
+            WsMessage::HelloAck { resume_accepted, resume_token, .. } => {
+                assert!(resume_accepted);
+                assert_ne!(resume_token, first_resume_token);
+            }
+            other => panic!("expected hello ack, got {other:?}"),
+        }
+
+        let reused = handle_hello_message(
+            &store,
+            session_id,
+            session_token,
+            Some(first_resume_token),
+        )
+        .await
+        .expect("reused token hello should still succeed");
+        match reused {
+            WsMessage::HelloAck { resume_accepted, .. } => assert!(!resume_accepted),
+            other => panic!("expected hello ack, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_token_is_bound_to_session_context() {
+        let store = SyncSessionStore::default();
+        let workspace_a = Uuid::new_v4();
+        let workspace_b = Uuid::new_v4();
+        let client_a = Uuid::new_v4();
+        let client_b = Uuid::new_v4();
+        let device_a = Uuid::new_v4();
+        let device_b = Uuid::new_v4();
+
+        let session_a = Uuid::new_v4();
+        let session_a_token = Uuid::new_v4().to_string();
+        let session_a_resume_token = Uuid::new_v4().to_string();
+        store
+            .create_session(
+                session_a,
+                workspace_a,
+                client_a,
+                device_a,
+                session_a_token.clone(),
+                session_a_resume_token.clone(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+
+        let session_b = Uuid::new_v4();
+        let session_b_token = Uuid::new_v4().to_string();
+        store
+            .create_session(
+                session_b,
+                workspace_b,
+                client_b,
+                device_b,
+                session_b_token.clone(),
+                Uuid::new_v4().to_string(),
+                Utc::now() + Duration::minutes(15),
+                Utc::now() + Duration::minutes(10),
+            )
+            .await;
+
+        let result =
+            handle_hello_message(&store, session_b, session_b_token, Some(session_a_resume_token))
+                .await;
+        match result {
+            Ok(WsMessage::HelloAck { resume_accepted, .. }) => assert!(!resume_accepted),
+            other => panic!("expected hello ack, got {other:?}"),
+        }
+
+        let valid = handle_hello_message(&store, session_a, session_a_token, None)
+            .await
+            .expect("session A should still validate");
+        match valid {
+            WsMessage::HelloAck { .. } => {}
             other => panic!("expected hello ack, got {other:?}"),
         }
     }

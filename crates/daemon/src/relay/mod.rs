@@ -207,8 +207,8 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
         }
 
         // Step 4: Wait for HelloAck.
-        match self.transport.recv() {
-            Ok(Some(WsMessage::HelloAck { resume_accepted, .. })) => {
+        let hello_resume_token = match self.transport.recv() {
+            Ok(Some(WsMessage::HelloAck { resume_accepted, resume_token, .. })) => {
                 if !resume_accepted {
                     // Session wasn't resumed — need to resubscribe.
                     self.subscribed_docs.clear();
@@ -218,6 +218,7 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
                     resume_accepted,
                     "relay connection established"
                 );
+                resume_token
             }
             Ok(Some(WsMessage::Error { code, message, .. })) => {
                 self.transport.close();
@@ -250,10 +251,10 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
                     reason: format!("error during handshake: {e}"),
                 });
             }
-        }
+        };
 
         self.session_token = Some(session.session_token);
-        self.resume_token = Some(session.resume_token);
+        self.resume_token = Some(hello_resume_token);
         self.state = ConnectionState::Connected;
         self.consecutive_failures = 0;
 
@@ -473,15 +474,25 @@ mod tests {
         }
     }
 
+    fn hello_ack(resume_accepted: bool) -> WsMessage {
+        hello_ack_with_token(resume_accepted, "resume-tok-next")
+    }
+
+    fn hello_ack_with_token(resume_accepted: bool, resume_token: &str) -> WsMessage {
+        WsMessage::HelloAck {
+            server_time: "2026-01-01T00:00:00Z".to_string(),
+            resume_accepted,
+            resume_token: resume_token.to_string(),
+            resume_expires_at: "2026-01-01T00:10:00Z".to_string(),
+        }
+    }
+
     // ── Connection lifecycle ────────────────────────────────────────
 
     #[test]
     fn connect_happy_path() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "2026-01-01T00:00:00Z".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
         assert_eq!(mgr.state(), ConnectionState::Disconnected);
@@ -497,10 +508,7 @@ mod tests {
         let expected_token = session.session_token.clone();
 
         let mut transport = MockTransport::with_session(session);
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "2026-01-01T00:00:00Z".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
         mgr.connect().expect("connect");
@@ -512,6 +520,21 @@ mod tests {
             }
             _ => panic!("first message should be Hello"),
         }
+    }
+
+    #[test]
+    fn connect_updates_resume_token_from_hello_ack() {
+        let mut transport = MockTransport::with_session(test_session());
+        transport.queue_recv(hello_ack_with_token(false, "resume-from-hello-ack"));
+
+        let mut mgr = RelayConnectionManager::new(test_config(), transport);
+        mgr.connect().expect("connect should succeed");
+
+        assert_eq!(
+            mgr.resume_token.as_deref(),
+            Some("resume-from-hello-ack"),
+            "client should store rotated resume token from hello_ack",
+        );
     }
 
     #[test]
@@ -571,10 +594,7 @@ mod tests {
     #[test]
     fn resume_accepted_preserves_subscriptions() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: true,
-        });
+        transport.queue_recv(hello_ack(true));
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
         // Pre-populate subscriptions as if we were previously connected.
@@ -589,10 +609,7 @@ mod tests {
     #[test]
     fn resume_not_accepted_clears_subscriptions() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
         mgr.subscribed_docs.insert(Uuid::new_v4());
@@ -606,10 +623,7 @@ mod tests {
     #[test]
     fn subscribe_sends_message_and_tracks_doc() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
         mgr.connect().expect("connect");
@@ -634,10 +648,7 @@ mod tests {
     #[test]
     fn send_update_sends_yjs_message() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
 
         let config = test_config();
         let client_id = config.client_id;
@@ -680,10 +691,7 @@ mod tests {
     fn recv_snapshot_event() {
         let doc_id = Uuid::new_v4();
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
         transport.queue_recv(WsMessage::Snapshot {
             doc_id,
             snapshot_seq: 5,
@@ -707,10 +715,7 @@ mod tests {
         let upd_id = Uuid::new_v4();
 
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
         transport.queue_recv(WsMessage::YjsUpdate {
             doc_id,
             client_id,
@@ -741,10 +746,7 @@ mod tests {
         let upd_id = Uuid::new_v4();
 
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
         transport.queue_recv(WsMessage::Ack {
             doc_id,
             client_update_id: upd_id,
@@ -765,10 +767,7 @@ mod tests {
     #[test]
     fn recv_error_event() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
         transport.queue_recv(WsMessage::Error {
             code: "SYNC_BASE_SERVER_SEQ_MISMATCH".to_string(),
             message: "stale".to_string(),
@@ -793,10 +792,7 @@ mod tests {
     #[test]
     fn recv_connection_close_sets_disconnected() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
         transport.queue_close();
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
@@ -863,10 +859,7 @@ mod tests {
         // Now make it succeed.
         mgr.transport.session_error = None;
         mgr.transport.session_info = Some(test_session());
-        mgr.transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        mgr.transport.queue_recv(hello_ack(false));
         mgr.connect().unwrap();
 
         assert_eq!(mgr.consecutive_failures, 0);
@@ -896,10 +889,7 @@ mod tests {
     #[test]
     fn disconnect_closes_transport_and_sets_state() {
         let mut transport = MockTransport::with_session(test_session());
-        transport.queue_recv(WsMessage::HelloAck {
-            server_time: "now".to_string(),
-            resume_accepted: false,
-        });
+        transport.queue_recv(hello_ack(false));
 
         let mut mgr = RelayConnectionManager::new(test_config(), transport);
         mgr.connect().expect("connect");
