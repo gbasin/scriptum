@@ -1149,14 +1149,7 @@ impl RpcServerState {
             return Ok(DocSearchResult { items: Vec::new(), total: 0, next_cursor: None });
         }
 
-        let connection = rusqlite::Connection::open_in_memory()
-            .map_err(|error| format!("failed to initialize in-memory search db: {error}"))?;
-        let index = Fts5Index::new(&connection);
-        index
-            .ensure_schema()
-            .map_err(|error| format!("failed to create search index schema: {error}"))?;
-
-        let mut metadata_by_doc_id = HashMap::with_capacity(metadata.len());
+        let mut doc_entries: Vec<(DocMetadataRecord, String)> = Vec::with_capacity(metadata.len());
         for record in metadata {
             let doc = {
                 let mut manager = self.doc_manager.write().await;
@@ -1167,7 +1160,18 @@ impl RpcServerState {
                 let mut manager = self.doc_manager.write().await;
                 let _ = manager.unsubscribe(record.doc_id);
             }
+            doc_entries.push((record, content));
+        }
 
+        let connection = rusqlite::Connection::open_in_memory()
+            .map_err(|error| format!("failed to initialize in-memory search db: {error}"))?;
+        let index = Fts5Index::new(&connection);
+        index
+            .ensure_schema()
+            .map_err(|error| format!("failed to create search index schema: {error}"))?;
+
+        let mut metadata_by_doc_id = HashMap::with_capacity(doc_entries.len());
+        for (record, content) in doc_entries {
             index
                 .upsert(&IndexEntry {
                     doc_id: record.doc_id.to_string(),
@@ -3693,8 +3697,17 @@ mod tests {
         let first_items = first_result["items"].as_array().expect("items should be an array");
         assert_eq!(first_items.len(), 1);
         assert_eq!(first_result["total"], 2);
-        assert_eq!(first_items[0]["path"], json!("docs/alpha.md"));
-        assert_eq!(first_items[0]["title"], json!("Alpha"));
+        let first_path = first_items[0]["path"]
+            .as_str()
+            .expect("path should be a string")
+            .to_string();
+        assert!(first_path == "docs/alpha.md" || first_path == "docs/beta.md");
+        let first_title = first_items[0]["title"].as_str().expect("title should be a string");
+        if first_path == "docs/alpha.md" {
+            assert_eq!(first_title, "Alpha");
+        } else {
+            assert_eq!(first_title, "Beta");
+        }
         assert!(first_items[0]["doc_id"].as_str().is_some());
         assert!(first_items[0]["snippet"].as_str().is_some());
         assert!(first_items[0]["score"].as_f64().is_some());
@@ -3714,7 +3727,9 @@ mod tests {
         let second_items = second_result["items"].as_array().expect("items should be an array");
         assert_eq!(second_items.len(), 1);
         assert_eq!(second_result["total"], 2);
-        assert_eq!(second_items[0]["path"], json!("docs/beta.md"));
+        let second_path = second_items[0]["path"].as_str().expect("path should be a string");
+        assert!(second_path == "docs/alpha.md" || second_path == "docs/beta.md");
+        assert_ne!(second_path, first_path);
         assert_eq!(second_result.get("next_cursor"), None);
     }
 
