@@ -4,9 +4,12 @@ import type { WorkspaceDensity, WorkspaceTheme } from "@scriptum/shared";
 import { describe, expect, it } from "vitest";
 import {
   applyAppearanceSettings,
+  configureDaemonGitSyncPolling,
+  GIT_SYNC_POLLING_EVENT,
   applyResolvedTheme,
   resolveThemePreference,
   startAppearanceSync,
+  startGitSyncPollingSync,
   startThemeSync,
   type ThemeStore,
 } from "./theme";
@@ -93,6 +96,7 @@ function createThemeStore(
   initialTheme: WorkspaceTheme | undefined,
   initialDensity: WorkspaceDensity | undefined = "comfortable",
   initialFontSize = 15,
+  initialGitSyncIntervalSeconds = 30,
 ) {
   let state: {
     activeWorkspace: {
@@ -101,6 +105,9 @@ function createThemeStore(
           theme?: WorkspaceTheme;
           density?: WorkspaceDensity;
           fontSize?: number;
+        };
+        gitSync: {
+          autoCommitIntervalSeconds?: number;
         };
       };
     };
@@ -111,6 +118,9 @@ function createThemeStore(
           theme: initialTheme,
           density: initialDensity,
           fontSize: initialFontSize,
+        },
+        gitSync: {
+          autoCommitIntervalSeconds: initialGitSyncIntervalSeconds,
         },
       },
     },
@@ -146,6 +156,11 @@ function createThemeStore(
             density: previous.activeWorkspace.config.appearance.density,
             fontSize: previous.activeWorkspace.config.appearance.fontSize,
           },
+          gitSync: {
+            autoCommitIntervalSeconds:
+              previous.activeWorkspace.config.gitSync
+                .autoCommitIntervalSeconds,
+          },
         },
       },
     };
@@ -167,6 +182,11 @@ function createThemeStore(
             density,
             fontSize,
           },
+          gitSync: {
+            autoCommitIntervalSeconds:
+              previous.activeWorkspace.config.gitSync
+                .autoCommitIntervalSeconds,
+          },
         },
       },
     };
@@ -175,7 +195,28 @@ function createThemeStore(
     }
   };
 
-  return { setAppearance, setTheme, store };
+  const setGitSyncInterval = (seconds: number | undefined) => {
+    const previous = state;
+    state = {
+      activeWorkspace: {
+        config: {
+          appearance: {
+            theme: previous.activeWorkspace.config.appearance.theme,
+            density: previous.activeWorkspace.config.appearance.density,
+            fontSize: previous.activeWorkspace.config.appearance.fontSize,
+          },
+          gitSync: {
+            autoCommitIntervalSeconds: seconds,
+          },
+        },
+      },
+    };
+    for (const listener of listeners) {
+      listener(state, previous);
+    }
+  };
+
+  return { setAppearance, setGitSyncInterval, setTheme, store };
 }
 
 describe("startThemeSync", () => {
@@ -237,5 +278,76 @@ describe("startAppearanceSync", () => {
     expect(root.style.getPropertyValue("--font-size-base")).toBe("15px");
 
     stop();
+  });
+});
+
+describe("configureDaemonGitSyncPolling", () => {
+  it("invokes daemon bridge and emits polling event", () => {
+    const calls: number[] = [];
+    const target = window as Window & typeof globalThis;
+    const listeners: number[] = [];
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ intervalSeconds: number }>).detail;
+      listeners.push(detail.intervalSeconds);
+    };
+    target.addEventListener(GIT_SYNC_POLLING_EVENT, handler);
+
+    (
+      target as unknown as {
+        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+      }
+    ).__SCRIPTUM_DAEMON__ = {
+      setGitSyncPollIntervalSeconds: (seconds) => {
+        calls.push(seconds);
+      },
+    };
+
+    configureDaemonGitSyncPolling(42, { target });
+    expect(calls).toEqual([42]);
+    expect(listeners).toEqual([42]);
+
+    target.removeEventListener(GIT_SYNC_POLLING_EVENT, handler);
+    delete (
+      target as unknown as {
+        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+      }
+    ).__SCRIPTUM_DAEMON__;
+  });
+});
+
+describe("startGitSyncPollingSync", () => {
+  it("syncs workspace interval changes to daemon polling", () => {
+    const calls: number[] = [];
+    const target = window as Window & typeof globalThis;
+    (
+      target as unknown as {
+        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+      }
+    ).__SCRIPTUM_DAEMON__ = {
+      setGitSyncPollIntervalSeconds: (seconds) => {
+        calls.push(seconds);
+      },
+    };
+    const { setGitSyncInterval, store } = createThemeStore(
+      "system",
+      "comfortable",
+      15,
+      30,
+    );
+    const stop = startGitSyncPollingSync(store, { target });
+    expect(calls).toEqual([30]);
+
+    setGitSyncInterval(45);
+    expect(calls).toEqual([30, 45]);
+
+    setGitSyncInterval(45);
+    expect(calls).toEqual([30, 45]);
+
+    stop();
+    delete (
+      target as unknown as {
+        __SCRIPTUM_DAEMON__?: { setGitSyncPollIntervalSeconds?: (n: number) => void };
+      }
+    ).__SCRIPTUM_DAEMON__;
   });
 });

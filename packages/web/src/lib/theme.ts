@@ -4,6 +4,10 @@ const DEFAULT_DENSITY: WorkspaceDensity = "comfortable";
 const DEFAULT_FONT_SIZE_PX = 15;
 const MIN_FONT_SIZE_PX = 10;
 const MAX_FONT_SIZE_PX = 32;
+const DEFAULT_GIT_SYNC_INTERVAL_SECONDS = 30;
+const MIN_GIT_SYNC_INTERVAL_SECONDS = 5;
+
+export const GIT_SYNC_POLLING_EVENT = "scriptum:git-sync-polling-updated";
 
 export type ResolvedTheme = "dark" | "light";
 export type ThemePreference = WorkspaceTheme | "system";
@@ -16,6 +20,9 @@ export interface ThemeStoreState {
         density?: WorkspaceDensity;
         fontSize?: number;
         editorFontSizePx?: number;
+      };
+      gitSync?: {
+        autoCommitIntervalSeconds?: number;
       };
     };
   } | null;
@@ -35,6 +42,14 @@ export interface ThemeSyncOptions {
 
 export interface AppearanceSyncOptions {
   root?: HTMLElement;
+}
+
+export interface GitSyncPollingOptions {
+  target?: Window & typeof globalThis;
+}
+
+export interface DaemonBridge {
+  setGitSyncPollIntervalSeconds?: (seconds: number) => void;
 }
 
 export interface ResolvedAppearance {
@@ -220,6 +235,54 @@ export function startAppearanceSync(
     }
     appearance = nextAppearance;
     applyAppearanceSettings(root, appearance);
+  });
+
+  return () => {
+    unsubscribeStore();
+  };
+}
+
+function resolveGitSyncPollingIntervalSeconds(state: ThemeStoreState): number {
+  const raw = state.activeWorkspace?.config?.gitSync?.autoCommitIntervalSeconds;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return DEFAULT_GIT_SYNC_INTERVAL_SECONDS;
+  }
+  return Math.max(MIN_GIT_SYNC_INTERVAL_SECONDS, Math.floor(raw));
+}
+
+export function configureDaemonGitSyncPolling(
+  intervalSeconds: number,
+  options: GitSyncPollingOptions = {},
+): void {
+  const target =
+    options.target ?? (typeof window === "undefined" ? undefined : window);
+  if (!target) {
+    return;
+  }
+
+  const bridge = target as unknown as { __SCRIPTUM_DAEMON__?: DaemonBridge };
+  bridge.__SCRIPTUM_DAEMON__?.setGitSyncPollIntervalSeconds?.(intervalSeconds);
+  target.dispatchEvent(
+    new CustomEvent(GIT_SYNC_POLLING_EVENT, {
+      detail: { intervalSeconds },
+    }),
+  );
+}
+
+export function startGitSyncPollingSync(
+  store: ThemeStore,
+  options: GitSyncPollingOptions = {},
+): () => void {
+  let intervalSeconds = resolveGitSyncPollingIntervalSeconds(store.getState());
+  configureDaemonGitSyncPolling(intervalSeconds, options);
+
+  const unsubscribeStore = store.subscribe((state) => {
+    const nextIntervalSeconds = resolveGitSyncPollingIntervalSeconds(state);
+    if (nextIntervalSeconds === intervalSeconds) {
+      return;
+    }
+    intervalSeconds = nextIntervalSeconds;
+    configureDaemonGitSyncPolling(intervalSeconds, options);
   });
 
   return () => {
