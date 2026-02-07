@@ -1,6 +1,7 @@
 import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
-import { inlineLinkDecorations, livePreview } from "./extension.js";
+import { livePreview } from "./extension.js";
+import { inlineLinkDecorations } from "./link.js";
 
 interface InlineWidgetToken {
   kind: "image" | "link";
