@@ -4,6 +4,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
+use crate::security::{
+    ensure_owner_only_dir, ensure_owner_only_file, open_private_append,
+};
+
 const MIGRATION_V1_SQL: &str = r#"
 CREATE TABLE documents_local (
     doc_id              TEXT PRIMARY KEY,
@@ -102,10 +106,19 @@ pub struct MetaDb {
 impl MetaDb {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create meta.db parent directory `{}`", parent.display())
-            })?;
+        let uses_disk_path = !is_sqlite_memory_path(path);
+
+        if uses_disk_path {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create meta.db parent directory `{}`", parent.display())
+                })?;
+                ensure_owner_only_dir(parent)?;
+            }
+
+            open_private_append(path)
+                .with_context(|| format!("failed to touch meta.db at `{}`", path.display()))?;
+            ensure_owner_only_file(path)?;
         }
 
         let mut conn = Connection::open(path)
@@ -121,6 +134,10 @@ impl MetaDb {
 
         ensure_migration_table(&conn)?;
         apply_pending_migrations(&mut conn)?;
+
+        if uses_disk_path {
+            enforce_sqlite_permissions(path)?;
+        }
 
         Ok(Self { conn })
     }
@@ -169,6 +186,28 @@ fn apply_pending_migrations(conn: &mut Connection) -> Result<()> {
         .with_context(|| format!("failed to record migration v{version}"))?;
         tx.commit().with_context(|| format!("failed to commit migration v{version}"))?;
         current_version = *version;
+    }
+
+    Ok(())
+}
+
+fn is_sqlite_memory_path(path: &Path) -> bool {
+    path == Path::new(":memory:")
+}
+
+fn enforce_sqlite_permissions(path: &Path) -> Result<()> {
+    ensure_owner_only_file(path)?;
+
+    let path_str = path.display().to_string();
+    let wal = format!("{path_str}-wal");
+    let shm = format!("{path_str}-shm");
+    let wal_path = Path::new(&wal);
+    let shm_path = Path::new(&shm);
+    if wal_path.exists() {
+        ensure_owner_only_file(wal_path)?;
+    }
+    if shm_path.exists() {
+        ensure_owner_only_file(shm_path)?;
     }
 
     Ok(())
@@ -260,6 +299,39 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
             .expect("schema migration count query should succeed");
         assert_eq!(migration_rows, 2);
+
+        drop(db);
+        cleanup_sqlite_files(&db_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sqlite_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let db_path = unique_temp_db_path("meta-db-perms");
+        let db = MetaDb::open(&db_path).expect("meta db should open");
+        db.connection()
+            .execute(
+                "INSERT INTO outbox_updates (workspace_id, doc_id, client_update_id, payload, state, created_at) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+                rusqlite::params!["ws-1", "doc-1", "upd-1", vec![1u8, 2, 3], "pending"],
+            )
+            .expect("write should force sqlite wal sidecar creation");
+
+        let db_mode =
+            std::fs::metadata(&db_path).expect("db metadata should load").permissions().mode()
+                & 0o777;
+        assert_eq!(db_mode, 0o600);
+
+        let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
+        if wal_path.exists() {
+            let wal_mode = std::fs::metadata(&wal_path)
+                .expect("wal metadata should load")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(wal_mode, 0o600);
+        }
 
         drop(db);
         cleanup_sqlite_files(&db_path);

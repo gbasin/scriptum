@@ -9,9 +9,14 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
+pub const TRACE_ID_HEADER: &str = "x-trace-id";
 
 tokio::task_local! {
     static REQUEST_ID: String;
+}
+
+tokio::task_local! {
+    static TRACE_ID: String;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,13 +203,32 @@ where
     REQUEST_ID.scope(request_id, future).await
 }
 
+pub async fn with_trace_id_scope<F>(trace_id: String, future: F) -> F::Output
+where
+    F: Future,
+{
+    TRACE_ID.scope(trace_id, future).await
+}
+
 pub fn current_request_id() -> Option<String> {
     REQUEST_ID.try_with(Clone::clone).ok()
 }
 
+pub fn current_trace_id() -> Option<String> {
+    TRACE_ID.try_with(Clone::clone).ok()
+}
+
 pub fn request_id_from_headers_or_generate(headers: &HeaderMap) -> String {
+    id_from_headers_or_generate(headers, REQUEST_ID_HEADER)
+}
+
+pub fn trace_id_from_headers_or_generate(headers: &HeaderMap) -> String {
+    id_from_headers_or_generate(headers, TRACE_ID_HEADER)
+}
+
+fn id_from_headers_or_generate(headers: &HeaderMap, header_name: &str) -> String {
     headers
-        .get(REQUEST_ID_HEADER)
+        .get(header_name)
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
@@ -217,12 +241,26 @@ pub fn attach_request_id_header(response: &mut Response, request_id: &str) {
     }
 }
 
+pub fn attach_trace_id_header(response: &mut Response, trace_id: &str) {
+    if let Ok(header) = HeaderValue::from_str(trace_id) {
+        response.headers_mut().insert(TRACE_ID_HEADER, header);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+    use axum::{
+        body::to_bytes,
+        http::{header::HeaderName, HeaderMap, HeaderValue, StatusCode},
+        response::IntoResponse,
+    };
     use serde_json::Value;
 
-    use super::{default_code_for_status, with_request_id_scope, ErrorCode, RelayError};
+    use super::{
+        current_trace_id, default_code_for_status, request_id_from_headers_or_generate,
+        trace_id_from_headers_or_generate, with_request_id_scope, with_trace_id_scope, ErrorCode,
+        RelayError, REQUEST_ID_HEADER, TRACE_ID_HEADER,
+    };
 
     #[tokio::test]
     async fn relay_error_uses_scoped_request_id() {
@@ -304,5 +342,29 @@ mod tests {
     fn response_extensions_include_canonical_error_code() {
         let response = RelayError::from_code(ErrorCode::RateLimited).into_response();
         assert_eq!(response.extensions().get::<ErrorCode>().copied(), Some(ErrorCode::RateLimited));
+    }
+
+    #[tokio::test]
+    async fn trace_id_scope_is_exposed_to_current_context() {
+        let trace_id =
+            with_trace_id_scope("trace-scoped-123".to_owned(), async { current_trace_id() }).await;
+
+        assert_eq!(trace_id.as_deref(), Some("trace-scoped-123"));
+    }
+
+    #[test]
+    fn header_based_ids_accept_request_and_trace_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(REQUEST_ID_HEADER),
+            HeaderValue::from_static("req-header-1"),
+        );
+        headers.insert(
+            HeaderName::from_static(TRACE_ID_HEADER),
+            HeaderValue::from_static("trace-header-1"),
+        );
+
+        assert_eq!(request_id_from_headers_or_generate(&headers), "req-header-1");
+        assert_eq!(trace_id_from_headers_or_generate(&headers), "trace-header-1");
     }
 }

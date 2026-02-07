@@ -79,7 +79,10 @@ fn format_human(result: &AgentStatusResult) -> String {
     } else {
         lines.push(format!("  Active sections ({})", result.active_sections.len()));
         for s in &result.active_sections {
-            lines.push(format!("    {} > {} [{}] ({})", s.doc_path, s.heading, s.section_id, s.intent));
+            lines.push(format!(
+                "    {} > {} [{}] ({})",
+                s.doc_path, s.heading, s.section_id, s.intent
+            ));
         }
     }
 

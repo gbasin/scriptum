@@ -38,11 +38,7 @@ impl OutputFormat {
 ///
 /// - `Human`: calls `human_fn` to produce a human-readable string.
 /// - `Json`: serializes `value` as JSON.
-pub fn print_output<T, F>(
-    format: OutputFormat,
-    value: &T,
-    human_fn: F,
-) -> io::Result<()>
+pub fn print_output<T, F>(format: OutputFormat, value: &T, human_fn: F) -> io::Result<()>
 where
     T: Serialize,
     F: FnOnce(&T) -> String,
@@ -133,10 +129,8 @@ mod tests {
         }
         let info = Info { name: "alice".into() };
         let mut buf = Vec::new();
-        write_output(&mut buf, OutputFormat::Human, &info, |i| {
-            format!("Name: {}", i.name)
-        })
-        .unwrap();
+        write_output(&mut buf, OutputFormat::Human, &info, |i| format!("Name: {}", i.name))
+            .unwrap();
         assert_eq!(String::from_utf8(buf).unwrap(), "Name: alice\n");
     }
 
@@ -198,8 +192,7 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
         let mut buf = Vec::new();
-        write_output(&mut buf, OutputFormat::Human, &Empty {}, |_| String::new())
-            .unwrap();
+        write_output(&mut buf, OutputFormat::Human, &Empty {}, |_| String::new()).unwrap();
         assert_eq!(String::from_utf8(buf).unwrap(), "\n");
     }
 

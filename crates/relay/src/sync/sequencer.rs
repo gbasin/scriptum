@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use sqlx::{postgres::PgPool, Postgres, QueryBuilder};
 use tokio::sync::RwLock;
+use tracing::{info_span, Instrument};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -50,75 +51,107 @@ impl UpdateSequencer {
     }
 
     pub async fn next_server_seq(&self, workspace_id: Uuid, doc_id: Uuid) -> i64 {
-        let key = SequencerKey { workspace_id, doc_id };
-        let counter = self.counter_for_key(key).await;
-        counter.fetch_add(1, Ordering::SeqCst) + 1
+        async move {
+            let key = SequencerKey { workspace_id, doc_id };
+            let counter = self.counter_for_key(key).await;
+            counter.fetch_add(1, Ordering::SeqCst) + 1
+        }
+        .instrument(info_span!(
+            "relay.sequencer.next_server_seq",
+            workspace_id = %workspace_id,
+            doc_id = %doc_id
+        ))
+        .await
     }
 
     pub async fn seed_counter(&self, workspace_id: Uuid, doc_id: Uuid, max_server_seq: i64) {
-        let key = SequencerKey { workspace_id, doc_id };
-        let counter = self.counter_for_key(key).await;
-        let mut current = counter.load(Ordering::SeqCst);
+        async move {
+            let key = SequencerKey { workspace_id, doc_id };
+            let counter = self.counter_for_key(key).await;
+            let mut current = counter.load(Ordering::SeqCst);
 
-        while max_server_seq > current {
-            match counter.compare_exchange(
-                current,
-                max_server_seq,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => return,
-                Err(next_current) => current = next_current,
+            while max_server_seq > current {
+                match counter.compare_exchange(
+                    current,
+                    max_server_seq,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => return,
+                    Err(next_current) => current = next_current,
+                }
             }
         }
+        .instrument(info_span!(
+            "relay.sequencer.seed_counter",
+            workspace_id = %workspace_id,
+            doc_id = %doc_id,
+            max_server_seq
+        ))
+        .await
     }
 
     pub async fn sequence_update(&self, update: PendingUpdate) -> SequencedUpdate {
-        let server_seq = self.next_server_seq(update.workspace_id, update.doc_id).await;
+        async move {
+            let server_seq = self.next_server_seq(update.workspace_id, update.doc_id).await;
 
-        SequencedUpdate {
-            workspace_id: update.workspace_id,
-            doc_id: update.doc_id,
-            server_seq,
-            client_id: update.client_id,
-            client_update_id: update.client_update_id,
-            payload: update.payload,
+            SequencedUpdate {
+                workspace_id: update.workspace_id,
+                doc_id: update.doc_id,
+                server_seq,
+                client_id: update.client_id,
+                client_update_id: update.client_update_id,
+                payload: update.payload,
+            }
         }
+        .instrument(info_span!(
+            "relay.sequencer.sequence_update",
+            workspace_id = %update.workspace_id,
+            doc_id = %update.doc_id,
+            client_id = %update.client_id,
+            client_update_id = %update.client_update_id
+        ))
+        .await
     }
 
     pub async fn recover_from_max_server_seq(&self, pool: &PgPool) -> Result<()> {
-        let rows = sqlx::query_as::<_, MaxSeqRow>(
-            "
-            WITH max_update_seq AS (
-                SELECT workspace_id, doc_id, MAX(server_seq) AS max_server_seq
-                FROM yjs_update_log
+        async {
+            let rows = sqlx::query_as::<_, MaxSeqRow>(
+                "
+                WITH max_update_seq AS (
+                    SELECT workspace_id, doc_id, MAX(server_seq) AS max_server_seq
+                    FROM yjs_update_log
+                    GROUP BY workspace_id, doc_id
+                ),
+                max_snapshot_seq AS (
+                    SELECT workspace_id, doc_id, MAX(snapshot_seq) AS max_server_seq
+                    FROM yjs_snapshots
+                    GROUP BY workspace_id, doc_id
+                )
+                SELECT workspace_id, doc_id, MAX(max_server_seq) AS max_server_seq
+                FROM (
+                    SELECT workspace_id, doc_id, max_server_seq
+                    FROM max_update_seq
+                    UNION ALL
+                    SELECT workspace_id, doc_id, max_server_seq
+                    FROM max_snapshot_seq
+                ) AS combined
                 GROUP BY workspace_id, doc_id
-            ),
-            max_snapshot_seq AS (
-                SELECT workspace_id, doc_id, MAX(snapshot_seq) AS max_server_seq
-                FROM yjs_snapshots
-                GROUP BY workspace_id, doc_id
+                ",
             )
-            SELECT workspace_id, doc_id, MAX(max_server_seq) AS max_server_seq
-            FROM (
-                SELECT workspace_id, doc_id, max_server_seq
-                FROM max_update_seq
-                UNION ALL
-                SELECT workspace_id, doc_id, max_server_seq
-                FROM max_snapshot_seq
-            ) AS combined
-            GROUP BY workspace_id, doc_id
-            ",
-        )
-        .fetch_all(pool)
-        .await
-        .context("failed to query max server_seq values")?;
+            .fetch_all(pool)
+            .instrument(info_span!("relay.db.query", query = "recover_max_server_seq"))
+            .await
+            .context("failed to query max server_seq values")?;
 
-        for row in rows {
-            self.seed_counter(row.workspace_id, row.doc_id, row.max_server_seq).await;
+            for row in rows {
+                self.seed_counter(row.workspace_id, row.doc_id, row.max_server_seq).await;
+            }
+
+            Ok(())
         }
-
-        Ok(())
+        .instrument(info_span!("relay.sequencer.recover_from_max_server_seq"))
+        .await
     }
 
     pub async fn flush_batch_to_postgres(
@@ -130,36 +163,48 @@ impl UpdateSequencer {
             return Ok(());
         }
 
-        let mut builder = QueryBuilder::<Postgres>::new(
-            "
-            INSERT INTO yjs_update_log
-                (workspace_id, doc_id, server_seq, client_id, client_update_id, payload)
-            ",
-        );
+        async {
+            let mut builder = QueryBuilder::<Postgres>::new(
+                "
+                INSERT INTO yjs_update_log
+                    (workspace_id, doc_id, server_seq, client_id, client_update_id, payload)
+                ",
+            );
 
-        builder.push_values(updates, |mut row, update| {
-            row.push_bind(update.workspace_id)
-                .push_bind(update.doc_id)
-                .push_bind(update.server_seq)
-                .push_bind(update.client_id)
-                .push_bind(update.client_update_id)
-                .push_bind(update.payload.as_slice());
-        });
+            builder.push_values(updates, |mut row, update| {
+                row.push_bind(update.workspace_id)
+                    .push_bind(update.doc_id)
+                    .push_bind(update.server_seq)
+                    .push_bind(update.client_id)
+                    .push_bind(update.client_update_id)
+                    .push_bind(update.payload.as_slice());
+            });
 
-        builder.push(
-            "
-            ON CONFLICT (workspace_id, doc_id, client_id, client_update_id)
-            DO NOTHING
-            ",
-        );
+            builder.push(
+                "
+                ON CONFLICT (workspace_id, doc_id, client_id, client_update_id)
+                DO NOTHING
+                ",
+            );
 
-        builder
-            .build()
-            .execute(pool)
-            .await
-            .context("failed to flush sequenced updates to postgres")?;
+            builder
+                .build()
+                .execute(pool)
+                .instrument(info_span!(
+                    "relay.db.query",
+                    query = "flush_batch_to_postgres",
+                    update_count = updates.len()
+                ))
+                .await
+                .context("failed to flush sequenced updates to postgres")?;
 
-        Ok(())
+            Ok(())
+        }
+        .instrument(info_span!(
+            "relay.sequencer.flush_batch_to_postgres",
+            update_count = updates.len()
+        ))
+        .await
     }
 
     async fn counter_for_key(&self, key: SequencerKey) -> Arc<AtomicI64> {

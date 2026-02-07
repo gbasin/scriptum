@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::security::{ensure_owner_only_dir, ensure_owner_only_file};
+
 /// Root directory for Scriptum global state: `~/.scriptum/`.
 pub fn global_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".scriptum"))
@@ -76,25 +78,32 @@ impl GlobalConfig {
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ConfigError::Io)?;
+            ensure_owner_only_dir(parent).map_err(|error| {
+                ConfigError::Io(std::io::Error::other(error.to_string()))
+            })?;
         }
         let contents = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
         std::fs::write(path, contents).map_err(ConfigError::Io)
+            .and_then(|_| {
+                ensure_owner_only_file(path).map_err(|error| {
+                    ConfigError::Io(std::io::Error::other(error.to_string()))
+                })
+            })
     }
 }
 
 /// AI service configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
-    /// API key for AI commit message generation.
-    pub api_key: Option<String>,
+    /// API keys are stored in the OS keychain, not in config files.
     /// Model to use (e.g. `claude-haiku-4-5-20251001`).
     pub model: Option<String>,
 }
 
 impl Default for AiConfig {
     fn default() -> Self {
-        Self { api_key: None, model: None }
+        Self { model: None }
     }
 }
 
@@ -148,9 +157,17 @@ impl WorkspaceConfig {
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ConfigError::Io)?;
+            ensure_owner_only_dir(parent).map_err(|error| {
+                ConfigError::Io(std::io::Error::other(error.to_string()))
+            })?;
         }
         let contents = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
         std::fs::write(path, contents).map_err(ConfigError::Io)
+            .and_then(|_| {
+                ensure_owner_only_file(path).map_err(|error| {
+                    ConfigError::Io(std::io::Error::other(error.to_string()))
+                })
+            })
     }
 }
 
@@ -256,7 +273,7 @@ mod tests {
         assert!(cfg.relay_url.is_none());
         assert!(cfg.display_name.is_none());
         assert_eq!(cfg.editor_type, EditorTypeConfig::Human);
-        assert!(cfg.ai.api_key.is_none());
+        assert!(cfg.ai.model.is_none());
     }
 
     #[test]
@@ -268,10 +285,7 @@ mod tests {
             relay_url: Some("https://relay.example.com".into()),
             display_name: Some("Alice".into()),
             editor_type: EditorTypeConfig::Human,
-            ai: AiConfig {
-                api_key: Some("sk-test".into()),
-                model: Some("claude-haiku-4-5-20251001".into()),
-            },
+            ai: AiConfig { model: Some("claude-haiku-4-5-20251001".into()) },
         };
         cfg.save_to(&path).unwrap();
         let loaded = GlobalConfig::load_from(&path).unwrap();
@@ -286,14 +300,23 @@ display_name = "Bob"
 editor_type = "agent"
 
 [ai]
-api_key = "sk-prod"
 model = "claude-haiku-4-5-20251001"
 "#;
         let cfg: GlobalConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.relay_url.as_deref(), Some("https://relay.scriptum.dev"));
         assert_eq!(cfg.display_name.as_deref(), Some("Bob"));
         assert_eq!(cfg.editor_type, EditorTypeConfig::Agent);
-        assert_eq!(cfg.ai.api_key.as_deref(), Some("sk-prod"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("claude-haiku-4-5-20251001"));
+    }
+
+    #[test]
+    fn global_config_rejects_plaintext_api_key() {
+        let toml_str = r#"
+[ai]
+api_key = "sk-prod"
+"#;
+        let error = toml::from_str::<GlobalConfig>(toml_str).expect_err("parse should fail");
+        assert!(error.to_string().contains("unknown field `api_key`"));
     }
 
     #[test]

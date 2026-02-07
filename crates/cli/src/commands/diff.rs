@@ -83,10 +83,7 @@ fn format_human(result: &DiffResult) -> String {
     for c in &result.changes {
         lines.push(format!("{} ({})", c.doc_path, c.status));
         for h in &c.hunks {
-            lines.push(format!(
-                "  {} +{} -{}",
-                h.section_heading, h.added_lines, h.removed_lines
-            ));
+            lines.push(format!("  {} +{} -{}", h.section_heading, h.added_lines, h.removed_lines));
         }
     }
     lines.join("\n")

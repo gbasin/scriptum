@@ -6,12 +6,14 @@ import {
   commentGutterExtension,
   commentHighlightExtension,
   createCollaborationProvider,
+  dragDropUploadExtension,
   livePreviewExtension,
   nameToColor,
   remoteCursorExtension,
   setCommentGutterRanges,
   setCommentHighlightRanges,
   type CommentDecorationRange,
+  type DropUploadProgress,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -42,6 +44,8 @@ const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
 const UNKNOWN_COMMENT_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const FIXTURE_REMOTE_CLIENT_ID_BASE = 10_000;
 const MAX_TIMELINE_SNAPSHOTS = 240;
+const DROP_UPLOAD_SUCCESS_HIDE_DELAY_MS = 2_000;
+const DROP_UPLOAD_FAILURE_HIDE_DELAY_MS = 4_000;
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
   fixtureName: "default",
@@ -292,6 +296,49 @@ export function buildTimelineDiffSegments(
   }
 
   return segments;
+}
+
+function pluralizeFiles(count: number): string {
+  return count === 1 ? "file" : "files";
+}
+
+export function formatDropUploadProgress(progress: DropUploadProgress): string {
+  if (progress.phase === "completed") {
+    if (progress.failedFiles > 0) {
+      return `Uploaded ${progress.completedFiles}/${progress.totalFiles} ${pluralizeFiles(progress.totalFiles)}. ${progress.failedFiles} failed.`;
+    }
+    return `Uploaded ${progress.totalFiles} ${pluralizeFiles(progress.totalFiles)} and inserted markdown links.`;
+  }
+
+  const fileName = progress.currentFileName ?? "file";
+  return `Uploading ${progress.completedFiles + 1}/${progress.totalFiles}: ${fileName} (${progress.currentFilePercent}%)`;
+}
+
+export function uploadDroppedFileAsDataUrl(
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<{ url: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      reject(new Error(`failed to read dropped file: ${file.name}`));
+    };
+    reader.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) {
+        return;
+      }
+      onProgress((event.loaded / event.total) * 100);
+    };
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error(`failed to encode dropped file: ${file.name}`));
+        return;
+      }
+      onProgress(100);
+      resolve({ url: reader.result });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -678,6 +725,8 @@ export function DocumentRoute() {
   const [pendingCommentBody, setPendingCommentBody] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageBody, setEditingMessageBody] = useState("");
+  const [dropUploadProgress, setDropUploadProgress] =
+    useState<DropUploadProgress | null>(null);
   const activeEditors = fixtureModeEnabled
     ? fixtureState.remotePeers.length + 1
     : 1;
@@ -841,6 +890,23 @@ export function DocumentRoute() {
   ]);
 
   useEffect(() => {
+    if (!dropUploadProgress || dropUploadProgress.phase !== "completed") {
+      return;
+    }
+
+    const delay =
+      dropUploadProgress.failedFiles > 0
+        ? DROP_UPLOAD_FAILURE_HIDE_DELAY_MS
+        : DROP_UPLOAD_SUCCESS_HIDE_DELAY_MS;
+    const timeout = window.setTimeout(() => {
+      setDropUploadProgress(null);
+    }, delay);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [dropUploadProgress]);
+
+  useEffect(() => {
     if (!workspaceId || !documentId) {
       return;
     }
@@ -854,6 +920,7 @@ export function DocumentRoute() {
     }
 
     host.innerHTML = "";
+    setDropUploadProgress(null);
     const provider = createCollaborationProvider({
       connectOnCreate: false,
       room: roomId,
@@ -889,6 +956,15 @@ export function DocumentRoute() {
           commentGutterExtension(),
           provider.extension(),
           remoteCursorExtension({ awareness: provider.provider.awareness }),
+          dragDropUploadExtension({
+            onError: (_error, _file) => {
+              // Progress UI includes failure counts; no extra UI surface needed here.
+            },
+            onProgress: (progress) => {
+              setDropUploadProgress(progress);
+            },
+            uploadFile: uploadDroppedFileAsDataUrl,
+          }),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
@@ -1290,6 +1366,37 @@ export function DocumentRoute() {
         <h2>Editor</h2>
         {fixtureModeEnabled ? (
           <pre data-testid="editor-content">{fixtureState.docContent}</pre>
+        ) : null}
+
+        {dropUploadProgress ? (
+          <p
+            aria-live="polite"
+            data-testid="drop-upload-progress"
+            role="status"
+            style={{
+              background:
+                dropUploadProgress.phase === "completed" &&
+                dropUploadProgress.failedFiles > 0
+                  ? "#fee2e2"
+                  : "#dbeafe",
+              border:
+                dropUploadProgress.phase === "completed" &&
+                dropUploadProgress.failedFiles > 0
+                  ? "1px solid #fca5a5"
+                  : "1px solid #93c5fd",
+              borderRadius: "0.375rem",
+              color:
+                dropUploadProgress.phase === "completed" &&
+                dropUploadProgress.failedFiles > 0
+                  ? "#991b1b"
+                  : "#1e3a8a",
+              fontSize: "0.8rem",
+              marginBottom: "0.5rem",
+              padding: "0.375rem 0.5rem",
+            }}
+          >
+            {formatDropUploadProgress(dropUploadProgress)}
+          </p>
         ) : null}
 
         <div style={{ position: "relative" }}>

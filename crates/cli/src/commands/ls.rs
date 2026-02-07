@@ -32,9 +32,8 @@ pub struct DocEntry {
 
 pub fn run(args: LsArgs) -> anyhow::Result<()> {
     let format = OutputFormat::detect(args.json);
-    let rt = tokio::runtime::Handle::try_current()
-        .map(|h| h.block_on(call_ls()))
-        .unwrap_or_else(|_| {
+    let rt =
+        tokio::runtime::Handle::try_current().map(|h| h.block_on(call_ls())).unwrap_or_else(|_| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -72,10 +71,7 @@ fn format_human(result: &LsResult) -> String {
         } else {
             String::new()
         };
-        lines.push(format!(
-            "  {} — {} ({} sections){}",
-            d.path, d.title, d.sections, agents
-        ));
+        lines.push(format!("  {} — {} ({} sections){}", d.path, d.title, d.sections, agents));
     }
     lines.join("\n")
 }

@@ -1,4 +1,10 @@
-import type { Workspace } from "@scriptum/shared";
+import type {
+  Workspace,
+  WorkspaceConfig,
+  WorkspaceDefaultRole,
+  WorkspaceDensity,
+  WorkspaceTheme,
+} from "@scriptum/shared";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import * as Y from "yjs";
 
@@ -36,6 +42,132 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asWorkspaceTheme(value: unknown): WorkspaceTheme | null {
+  return value === "system" || value === "light" || value === "dark"
+    ? value
+    : null;
+}
+
+function asWorkspaceDensity(value: unknown): WorkspaceDensity | null {
+  return value === "comfortable" || value === "compact" ? value : null;
+}
+
+function asWorkspaceDefaultRole(value: unknown): WorkspaceDefaultRole | null {
+  return value === "viewer" || value === "editor" ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
+  return {
+    general: {
+      workspaceName,
+      defaultNewDocumentFolder: "notes",
+      openLastDocumentOnLaunch: true,
+    },
+    gitSync: {
+      enabled: true,
+      autoCommitIntervalSeconds: 30,
+      commitMessageTemplate: "docs: sync workspace edits",
+    },
+    agents: {
+      allowAgentEdits: true,
+      requireSectionLease: true,
+      defaultAgentName: "mcp-agent",
+    },
+    permissions: {
+      defaultRole: "editor",
+      allowExternalInvites: false,
+      allowShareLinks: true,
+    },
+    appearance: {
+      theme: "system",
+      density: "comfortable",
+      editorFontSizePx: 15,
+    },
+  };
+}
+
+function normalizeWorkspaceConfig(
+  value: unknown,
+  workspaceName: string
+): WorkspaceConfig | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const defaults = defaultWorkspaceConfig(workspaceName);
+  const general = asRecord(record.general);
+  const gitSync = asRecord(record.gitSync);
+  const agents = asRecord(record.agents);
+  const permissions = asRecord(record.permissions);
+  const appearance = asRecord(record.appearance);
+
+  return {
+    general: {
+      workspaceName:
+        asString(general?.workspaceName) ?? defaults.general.workspaceName,
+      defaultNewDocumentFolder:
+        asString(general?.defaultNewDocumentFolder) ??
+        defaults.general.defaultNewDocumentFolder,
+      openLastDocumentOnLaunch:
+        asBoolean(general?.openLastDocumentOnLaunch) ??
+        defaults.general.openLastDocumentOnLaunch,
+    },
+    gitSync: {
+      enabled: asBoolean(gitSync?.enabled) ?? defaults.gitSync.enabled,
+      autoCommitIntervalSeconds:
+        asNumber(gitSync?.autoCommitIntervalSeconds) ??
+        defaults.gitSync.autoCommitIntervalSeconds,
+      commitMessageTemplate:
+        asString(gitSync?.commitMessageTemplate) ??
+        defaults.gitSync.commitMessageTemplate,
+    },
+    agents: {
+      allowAgentEdits:
+        asBoolean(agents?.allowAgentEdits) ?? defaults.agents.allowAgentEdits,
+      requireSectionLease:
+        asBoolean(agents?.requireSectionLease) ??
+        defaults.agents.requireSectionLease,
+      defaultAgentName:
+        asString(agents?.defaultAgentName) ?? defaults.agents.defaultAgentName,
+    },
+    permissions: {
+      defaultRole:
+        asWorkspaceDefaultRole(permissions?.defaultRole) ??
+        defaults.permissions.defaultRole,
+      allowExternalInvites:
+        asBoolean(permissions?.allowExternalInvites) ??
+        defaults.permissions.allowExternalInvites,
+      allowShareLinks:
+        asBoolean(permissions?.allowShareLinks) ??
+        defaults.permissions.allowShareLinks,
+    },
+    appearance: {
+      theme: asWorkspaceTheme(appearance?.theme) ?? defaults.appearance.theme,
+      density:
+        asWorkspaceDensity(appearance?.density) ?? defaults.appearance.density,
+      editorFontSizePx:
+        asNumber(appearance?.editorFontSizePx) ??
+        defaults.appearance.editorFontSizePx,
+    },
+  };
+}
+
 function normalizeWorkspace(value: unknown): Workspace | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -53,6 +185,8 @@ function normalizeWorkspace(value: unknown): Workspace | null {
     return null;
   }
 
+  const config = normalizeWorkspaceConfig(workspace.config, name);
+
   return {
     id,
     slug,
@@ -61,6 +195,7 @@ function normalizeWorkspace(value: unknown): Workspace | null {
     createdAt,
     updatedAt,
     etag,
+    ...(config ? { config } : {}),
   };
 }
 
@@ -211,4 +346,3 @@ export function bindWorkspaceStoreToYjs(
     workspaceMeta.unobserve(handleWorkspaceMetaChange);
   };
 }
-

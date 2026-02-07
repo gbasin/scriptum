@@ -135,16 +135,8 @@ fn scriptum_hooks() -> Vec<(&'static str, Option<&'static str>, &'static str)> {
     vec![
         ("SessionStart", None, "scriptum:session-start"),
         ("PreCompact", None, "scriptum:pre-compact"),
-        (
-            "PreToolUse",
-            Some("Write|Edit"),
-            "scriptum:pre-tool-use",
-        ),
-        (
-            "PostToolUse",
-            Some("Write|Edit"),
-            "scriptum:post-tool-use",
-        ),
+        ("PreToolUse", Some("Write|Edit"), "scriptum:pre-tool-use"),
+        ("PostToolUse", Some("Write|Edit"), "scriptum:post-tool-use"),
         ("Stop", None, "scriptum:stop"),
     ]
 }
@@ -160,8 +152,7 @@ fn merge_hooks(settings: &mut ClaudeSettings) {
         let script_name = script_tag.strip_prefix("scriptum:").unwrap();
         let command = hook_command(hooks_rel, &format!("{script_name}.sh"));
         let entry = HookEntry { hook_type: "command".to_string(), command };
-        let group =
-            HookGroup { matcher: matcher.map(|s| s.to_string()), hooks: vec![entry] };
+        let group = HookGroup { matcher: matcher.map(|s| s.to_string()), hooks: vec![entry] };
 
         let groups = settings.hooks.entry(event.to_string()).or_default();
 
@@ -384,13 +375,9 @@ mod tests {
 
         // All 5 scripts should exist.
         let hooks_dir = root.join(".claude/hooks/scriptum");
-        for name in [
-            "session-start.sh",
-            "pre-compact.sh",
-            "pre-tool-use.sh",
-            "post-tool-use.sh",
-            "stop.sh",
-        ] {
+        for name in
+            ["session-start.sh", "pre-compact.sh", "pre-tool-use.sh", "post-tool-use.sh", "stop.sh"]
+        {
             let script = hooks_dir.join(name);
             assert!(script.exists(), "{name} should exist");
 
@@ -410,10 +397,9 @@ mod tests {
 
         install_claude_hooks(root).unwrap();
 
-        let settings: ClaudeSettings = serde_json::from_str(
-            &fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
-        )
-        .unwrap();
+        let settings: ClaudeSettings =
+            serde_json::from_str(&fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+                .unwrap();
 
         assert!(settings.hooks.contains_key("SessionStart"));
         assert!(settings.hooks.contains_key("PreCompact"));
@@ -434,18 +420,14 @@ mod tests {
         // Write existing settings.
         let claude_dir = root.join(".claude");
         fs::create_dir_all(&claude_dir).unwrap();
-        fs::write(
-            claude_dir.join("settings.json"),
-            r#"{"permissions":{"allow":["Bash(git:*)"]}}"#,
-        )
-        .unwrap();
+        fs::write(claude_dir.join("settings.json"), r#"{"permissions":{"allow":["Bash(git:*)"]}}"#)
+            .unwrap();
 
         install_claude_hooks(root).unwrap();
 
-        let settings: ClaudeSettings = serde_json::from_str(
-            &fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
-        )
-        .unwrap();
+        let settings: ClaudeSettings =
+            serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+                .unwrap();
 
         // Hooks should be added.
         assert!(settings.hooks.contains_key("SessionStart"));
@@ -462,10 +444,9 @@ mod tests {
         install_claude_hooks(root).unwrap();
         install_claude_hooks(root).unwrap();
 
-        let settings: ClaudeSettings = serde_json::from_str(
-            &fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
-        )
-        .unwrap();
+        let settings: ClaudeSettings =
+            serde_json::from_str(&fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+                .unwrap();
 
         // Should have exactly one hook group per event.
         assert_eq!(settings.hooks["SessionStart"].len(), 1);
@@ -488,10 +469,9 @@ mod tests {
 
         install_claude_hooks(root).unwrap();
 
-        let settings: ClaudeSettings = serde_json::from_str(
-            &fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
-        )
-        .unwrap();
+        let settings: ClaudeSettings =
+            serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+                .unwrap();
 
         // Should have both the existing hook and the new one.
         assert_eq!(settings.hooks["PreToolUse"].len(), 2);
@@ -510,10 +490,9 @@ mod tests {
         assert!(!hooks_dir.exists(), "hooks dir should be removed");
 
         // Settings should have no hooks.
-        let settings: ClaudeSettings = serde_json::from_str(
-            &fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
-        )
-        .unwrap();
+        let settings: ClaudeSettings =
+            serde_json::from_str(&fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+                .unwrap();
         assert!(settings.hooks.is_empty(), "hooks should be empty after removal");
     }
 
@@ -533,10 +512,9 @@ mod tests {
 
         remove_claude_hooks(root).unwrap();
 
-        let settings: ClaudeSettings = serde_json::from_str(
-            &fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
-        )
-        .unwrap();
+        let settings: ClaudeSettings =
+            serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+                .unwrap();
 
         assert_eq!(settings.hooks["PreToolUse"].len(), 1);
         assert_eq!(settings.hooks["PreToolUse"][0].hooks[0].command, "other.sh");
@@ -554,10 +532,7 @@ mod tests {
     #[test]
     fn script_content_starts_with_shebang() {
         for (name, content) in hook_scripts() {
-            assert!(
-                content.starts_with("#!/usr/bin/env bash"),
-                "{name} should have bash shebang"
-            );
+            assert!(content.starts_with("#!/usr/bin/env bash"), "{name} should have bash shebang");
         }
     }
 
@@ -584,18 +559,9 @@ mod tests {
         let script = hook_script_text("pre-tool-use.sh");
         assert!(script.contains("file_path"), "should parse file_path from JSON");
         assert!(script.contains(".md"), "should detect .md files");
-        assert!(
-            script.contains("scriptum edit"),
-            "should suggest scriptum edit for attribution"
-        );
-        assert!(
-            script.contains("scriptum conflicts"),
-            "should check for section overlaps"
-        );
-        assert!(
-            script.contains("CRDT attribution"),
-            "should mention CRDT attribution benefit"
-        );
+        assert!(script.contains("scriptum edit"), "should suggest scriptum edit for attribution");
+        assert!(script.contains("scriptum conflicts"), "should check for section overlaps");
+        assert!(script.contains("CRDT attribution"), "should mention CRDT attribution benefit");
     }
 
     #[test]
@@ -603,39 +569,18 @@ mod tests {
         let script = hook_script_text("post-tool-use.sh");
         assert!(script.contains("file_path"), "should parse file_path from JSON");
         assert!(script.contains(".md"), "should detect .md files");
-        assert!(
-            script.contains("File watcher will sync"),
-            "should confirm file watcher sync"
-        );
-        assert!(
-            script.contains("scriptum status"),
-            "should suggest verifying sync status"
-        );
-        assert!(
-            script.contains("scriptum conflicts"),
-            "should check for conflicts"
-        );
+        assert!(script.contains("File watcher will sync"), "should confirm file watcher sync");
+        assert!(script.contains("scriptum status"), "should suggest verifying sync status");
+        assert!(script.contains("scriptum conflicts"), "should check for conflicts");
     }
 
     #[test]
     fn stop_script_warns_about_unsynced_changes() {
         let script = hook_script_text("stop.sh");
-        assert!(
-            script.contains("Session End"),
-            "should show session end banner"
-        );
-        assert!(
-            script.contains("scriptum status"),
-            "should check status for pending changes"
-        );
-        assert!(
-            script.contains("unsynced"),
-            "should warn about unsynced changes"
-        );
-        assert!(
-            script.contains("scriptum conflicts"),
-            "should check for overlaps at session end"
-        );
+        assert!(script.contains("Session End"), "should show session end banner");
+        assert!(script.contains("scriptum status"), "should check status for pending changes");
+        assert!(script.contains("unsynced"), "should warn about unsynced changes");
+        assert!(script.contains("scriptum conflicts"), "should check for overlaps at session end");
     }
 
     #[test]
@@ -644,15 +589,9 @@ mod tests {
         merge_hooks(&mut settings);
 
         let session_start = &settings.hooks["SessionStart"][0];
-        assert_eq!(
-            session_start.hooks[0].command,
-            ".claude/hooks/scriptum/session-start.sh"
-        );
+        assert_eq!(session_start.hooks[0].command, ".claude/hooks/scriptum/session-start.sh");
 
         let pre_tool = &settings.hooks["PreToolUse"][0];
-        assert_eq!(
-            pre_tool.hooks[0].command,
-            ".claude/hooks/scriptum/pre-tool-use.sh"
-        );
+        assert_eq!(pre_tool.hooks[0].command, ".claude/hooks/scriptum/pre-tool-use.sh");
     }
 }

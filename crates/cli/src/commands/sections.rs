@@ -74,10 +74,7 @@ fn format_human(result: &SectionsResult) -> String {
     }
 
     // Header line.
-    lines.push(format!(
-        "  {:<12} {:<4} {:>8} {:>8}  {}",
-        "ID", "LVL", "OFFSET", "SIZE", "HEADING"
-    ));
+    lines.push(format!("  {:<12} {:<4} {:>8} {:>8}  {}", "ID", "LVL", "OFFSET", "SIZE", "HEADING"));
 
     for s in &result.sections {
         let claimed = s.claimed_by.as_deref().map(|c| format!(" [{c}]")).unwrap_or_default();

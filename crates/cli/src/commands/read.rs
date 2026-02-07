@@ -37,11 +37,7 @@ pub struct ReadResult {
 
 pub fn run(args: ReadArgs) -> anyhow::Result<()> {
     let format = OutputFormat::detect(args.json);
-    let params = ReadParams {
-        doc: args.doc,
-        section: args.section,
-        agent: args.agent,
-    };
+    let params = ReadParams { doc: args.doc, section: args.section, agent: args.agent };
     let rt = tokio::runtime::Handle::try_current()
         .map(|h| h.block_on(call_read(params.clone())))
         .unwrap_or_else(|_| {

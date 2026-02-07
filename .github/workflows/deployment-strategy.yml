@@ -1,0 +1,230 @@
+name: Deployment Strategy
+
+on:
+  workflow_dispatch:
+    inputs:
+      relay_image_tag:
+        description: Relay image tag to deploy
+        required: true
+        type: string
+      feature_flags_ready:
+        description: Feature flags validated for release
+        required: true
+        default: true
+        type: boolean
+      relay_baseline_crash_rate:
+        description: Baseline relay crash rate
+        required: true
+        default: "0.001"
+        type: string
+      relay_canary_crash_rate:
+        description: Observed crash rate at 5% canary
+        required: true
+        default: "0.001"
+        type: string
+      relay_canary_error_rate:
+        description: Observed error rate at 5% canary
+        required: true
+        default: "0.001"
+        type: string
+      relay_half_crash_rate:
+        description: Observed crash rate at 50% rollout
+        required: true
+        default: "0.001"
+        type: string
+      relay_half_error_rate:
+        description: Observed error rate at 50% rollout
+        required: true
+        default: "0.001"
+        type: string
+      desktop_baseline_crash_rate:
+        description: Baseline crash rate for desktop/CLI ring
+        required: true
+        default: "0.001"
+        type: string
+      desktop_internal_crash_rate:
+        description: Internal ring crash rate
+        required: true
+        default: "0.001"
+        type: string
+      desktop_beta_crash_rate:
+        description: Beta ring crash rate
+        required: true
+        default: "0.001"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  relay-preflight:
+    name: Relay preflight checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Feature flag gate
+        run: |
+          if [[ "${{ inputs.feature_flags_ready }}" != "true" ]]; then
+            echo "Feature flags are not ready for rollout."
+            exit 1
+          fi
+
+      - name: Additive migration gate
+        run: |
+          if grep -RInE '\bDROP[[:space:]]+(TABLE|COLUMN)\b' crates/relay/src/db/migrations/*.sql; then
+            echo "Found destructive migration statements. Rollout requires additive migration first."
+            exit 1
+          fi
+          echo "Migration check passed: additive-only changes."
+
+  relay-canary-5:
+    name: Relay rollout 5% canary (30m)
+    needs: relay-preflight
+    runs-on: ubuntu-latest
+    environment: relay-canary-5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start 5% canary rollout
+        run: |
+          echo "Deploying relay image ${RELAY_IMAGE_TAG} to 5% canary."
+          echo "Expected observation window: 30 minutes."
+        env:
+          RELAY_IMAGE_TAG: ${{ inputs.relay_image_tag }}
+
+      - name: Canary gate (error <= 1%, crash <= 2x baseline)
+        run: |
+          bash scripts/release/evaluate_relay_rollout_gate.sh \
+            --baseline-crash-rate "${BASELINE}" \
+            --current-crash-rate "${CURRENT_CRASH}" \
+            --current-error-rate "${CURRENT_ERROR}"
+        env:
+          BASELINE: ${{ inputs.relay_baseline_crash_rate }}
+          CURRENT_CRASH: ${{ inputs.relay_canary_crash_rate }}
+          CURRENT_ERROR: ${{ inputs.relay_canary_error_rate }}
+
+  relay-rollout-50:
+    name: Relay rollout 50% (60m)
+    needs: relay-canary-5
+    runs-on: ubuntu-latest
+    environment: relay-rollout-50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Promote rollout to 50%
+        run: |
+          echo "Promoting relay image ${RELAY_IMAGE_TAG} to 50%."
+          echo "Expected observation window: 60 minutes."
+        env:
+          RELAY_IMAGE_TAG: ${{ inputs.relay_image_tag }}
+
+      - name: 50% gate (error <= 1%, crash <= 2x baseline)
+        run: |
+          bash scripts/release/evaluate_relay_rollout_gate.sh \
+            --baseline-crash-rate "${BASELINE}" \
+            --current-crash-rate "${CURRENT_CRASH}" \
+            --current-error-rate "${CURRENT_ERROR}"
+        env:
+          BASELINE: ${{ inputs.relay_baseline_crash_rate }}
+          CURRENT_CRASH: ${{ inputs.relay_half_crash_rate }}
+          CURRENT_ERROR: ${{ inputs.relay_half_error_rate }}
+
+  relay-rollout-100:
+    name: Relay rollout 100%
+    needs: relay-rollout-50
+    runs-on: ubuntu-latest
+    environment: relay-rollout-100
+    steps:
+      - name: Promote rollout to 100%
+        run: |
+          echo "Promoting relay image ${RELAY_IMAGE_TAG} to 100%."
+        env:
+          RELAY_IMAGE_TAG: ${{ inputs.relay_image_tag }}
+
+  relay-rollback:
+    name: Relay auto-rollback
+    if: failure()
+    needs:
+      - relay-preflight
+      - relay-canary-5
+      - relay-rollout-50
+      - relay-rollout-100
+    runs-on: ubuntu-latest
+    environment: relay-rollback
+    steps:
+      - name: Roll back relay deployment
+        run: |
+          echo "Auto-rollback triggered due to rollout gate failure."
+          echo "Action: restore previous stable relay image and disable release feature flags."
+
+  desktop-cli-ring-internal:
+    name: Desktop/CLI ring deploy - internal
+    runs-on: ubuntu-latest
+    environment: desktop-internal
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Promote desktop/CLI build to internal ring
+        run: |
+          echo "Promoting build to internal ring."
+
+      - name: Internal ring crash gate (<= 2x baseline)
+        run: |
+          bash scripts/release/evaluate_desktop_ring_gate.sh \
+            --baseline-crash-rate "${BASELINE}" \
+            --current-crash-rate "${CURRENT_CRASH}"
+        env:
+          BASELINE: ${{ inputs.desktop_baseline_crash_rate }}
+          CURRENT_CRASH: ${{ inputs.desktop_internal_crash_rate }}
+
+  desktop-cli-ring-beta:
+    name: Desktop/CLI ring deploy - beta
+    needs: desktop-cli-ring-internal
+    runs-on: ubuntu-latest
+    environment: desktop-beta
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Promote desktop/CLI build to beta ring
+        run: |
+          echo "Promoting build to beta ring."
+
+      - name: Beta ring crash gate (<= 2x baseline)
+        run: |
+          bash scripts/release/evaluate_desktop_ring_gate.sh \
+            --baseline-crash-rate "${BASELINE}" \
+            --current-crash-rate "${CURRENT_CRASH}"
+        env:
+          BASELINE: ${{ inputs.desktop_baseline_crash_rate }}
+          CURRENT_CRASH: ${{ inputs.desktop_beta_crash_rate }}
+
+  desktop-cli-ring-ga:
+    name: Desktop/CLI ring deploy - GA
+    needs: desktop-cli-ring-beta
+    runs-on: ubuntu-latest
+    environment: desktop-ga
+    steps:
+      - name: Promote desktop/CLI build to GA ring
+        run: |
+          echo "Promoting build to GA ring."
+
+  desktop-cli-kill-switch:
+    name: Desktop/CLI kill-switch
+    if: failure()
+    needs:
+      - desktop-cli-ring-internal
+      - desktop-cli-ring-beta
+      - desktop-cli-ring-ga
+    runs-on: ubuntu-latest
+    environment: desktop-kill-switch
+    steps:
+      - name: Trigger kill-switch on crash regression
+        run: |
+          echo "Kill-switch triggered: crash rate regression exceeded 2x baseline."
+          echo "Action: halt ring promotions and keep rollout on last known-good ring."

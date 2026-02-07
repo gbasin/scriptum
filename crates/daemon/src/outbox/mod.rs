@@ -14,6 +14,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 
+use crate::security::{decrypt_at_rest, encrypt_at_rest};
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const BASE_DELAY_MS: u64 = 250;
@@ -138,6 +140,9 @@ impl<'a> OutboxQueue<'a> {
             .into());
         }
 
+        let encrypted_payload =
+            encrypt_at_rest(payload).context("failed to encrypt outbox payload at rest")?;
+
         self.conn
             .execute(
                 "INSERT INTO outbox_updates \
@@ -147,7 +152,7 @@ impl<'a> OutboxQueue<'a> {
                     workspace_id,
                     doc_id,
                     client_update_id,
-                    payload,
+                    encrypted_payload,
                     UpdateState::Pending.as_str(),
                     now.to_rfc3339(),
                 ],
@@ -274,13 +279,21 @@ fn row_to_update(row: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxUpdate> {
     let state_str: String = row.get(7)?;
     let next_retry_str: Option<String> = row.get(6)?;
     let created_str: String = row.get(8)?;
+    let encrypted_payload: Vec<u8> = row.get(4)?;
+    let payload = decrypt_at_rest(&encrypted_payload).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Blob,
+            Box::new(std::io::Error::other(error.to_string())),
+        )
+    })?;
 
     Ok(OutboxUpdate {
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         doc_id: row.get(2)?,
         client_update_id: row.get(3)?,
-        payload: row.get(4)?,
+        payload,
         retry_count: row.get(5)?,
         next_retry_at: next_retry_str.and_then(|s| s.parse::<DateTime<Utc>>().ok()),
         state: UpdateState::parse(&state_str).unwrap_or(UpdateState::Pending),
@@ -506,8 +519,33 @@ mod tests {
 
         let status = q.check_backpressure("ws-1").expect("check_backpressure");
         assert_eq!(status.pending_count, 2);
-        assert_eq!(status.pending_bytes, 7); // 3 + 4
+        assert!(
+            status.pending_bytes >= 7,
+            "encrypted payload accounting should be >= raw payload bytes"
+        );
         assert!(!status.is_over_limit);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn enqueue_persists_encrypted_payload_bytes() {
+        let (db, path) = setup();
+        let q = OutboxQueue::new(db.connection());
+        let now = Utc::now();
+
+        q.enqueue("ws-1", "doc-1", "upd-1", b"hello", now).expect("enqueue should succeed");
+
+        let stored: Vec<u8> = db
+            .connection()
+            .query_row(
+                "SELECT payload FROM outbox_updates WHERE workspace_id = 'ws-1' LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("payload row should load");
+        assert_ne!(stored, b"hello");
+        assert!(stored.len() > b"hello".len());
 
         cleanup(&path);
     }

@@ -37,8 +37,9 @@ impl ExitCode {
             }
             if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
                 return match io_err.kind() {
-                    std::io::ErrorKind::ConnectionRefused
-                    | std::io::ErrorKind::NotFound => Self::DaemonDown,
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound => {
+                        Self::DaemonDown
+                    }
                     std::io::ErrorKind::TimedOut => Self::Network,
                     _ => Self::Error,
                 };
@@ -60,8 +61,11 @@ impl ExitCode {
     /// Map an RPC error code string to an exit code.
     pub fn from_rpc_code(code: &str) -> Self {
         match code {
-            "AUTH_INVALID_TOKEN" | "AUTH_FORBIDDEN" | "AUTH_TOKEN_REVOKED"
-            | "AUTH_STATE_MISMATCH" | "AUTH_CODE_INVALID" => Self::Auth,
+            "AUTH_INVALID_TOKEN"
+            | "AUTH_FORBIDDEN"
+            | "AUTH_TOKEN_REVOKED"
+            | "AUTH_STATE_MISMATCH"
+            | "AUTH_CODE_INVALID" => Self::Auth,
 
             "EDIT_PRECONDITION_FAILED" | "DOC_PATH_CONFLICT" => Self::Conflict,
 
@@ -158,10 +162,8 @@ mod tests {
 
     #[test]
     fn from_error_rpc_in_chain() {
-        let rpc_err = RpcError {
-            code: "AUTH_FORBIDDEN".into(),
-            message: "you shall not pass".into(),
-        };
+        let rpc_err =
+            RpcError { code: "AUTH_FORBIDDEN".into(), message: "you shall not pass".into() };
         let err = anyhow::Error::new(rpc_err);
         assert_eq!(ExitCode::from_error(&err), ExitCode::Auth);
     }

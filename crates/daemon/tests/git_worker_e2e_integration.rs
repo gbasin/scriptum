@@ -3,6 +3,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::process::Command;
 
+use scriptum_daemon::git::attribution::{with_coauthor_trailers, UpdateAttribution};
 use scriptum_daemon::git::commit::{
     generate_ai_commit_message, AiCommitClient, AiCommitError, RedactionPolicy,
 };
@@ -87,7 +88,9 @@ async fn git_worker_e2e_commit_with_ai_message_and_coauthors_and_push() {
     .await
     .expect("ai message should be generated");
 
-    let final_message = with_coauthor_trailers(&ai_message, &context.agents_involved);
+    let attributions: Vec<UpdateAttribution> =
+        context.agents_involved.iter().cloned().map(UpdateAttribution::for_agent).collect();
+    let final_message = with_coauthor_trailers(&ai_message, &attributions);
 
     let worker = GitWorker::new(&repo_path);
     worker.add(&["README.md"]).expect("git add should succeed");
@@ -97,11 +100,11 @@ async fn git_worker_e2e_commit_with_ai_message_and_coauthors_and_push() {
     let commit_message = run_git_capture(&repo_path, &["log", "-1", "--pretty=%B"]);
     assert!(commit_message.contains("docs(readme): capture git worker integration flow"));
     assert!(
-        commit_message.contains("Co-authored-by: claude <claude@agents.scriptum.local>"),
+        commit_message.contains("Co-authored-by: claude <agent:claude@scriptum>"),
         "expected claude trailer, got: {commit_message}"
     );
     assert!(
-        commit_message.contains("Co-authored-by: cursor <cursor@agents.scriptum.local>"),
+        commit_message.contains("Co-authored-by: cursor <agent:cursor@scriptum>"),
         "expected cursor trailer, got: {commit_message}"
     );
 
@@ -116,23 +119,6 @@ async fn git_worker_e2e_commit_with_ai_message_and_coauthors_and_push() {
         ],
     );
     assert_eq!(local_head.trim(), remote_head.trim(), "remote should receive pushed commit");
-}
-
-fn with_coauthor_trailers(base_message: &str, agents_involved: &[String]) -> String {
-    let mut agents = agents_involved.to_vec();
-    agents.sort_unstable();
-    agents.dedup();
-
-    if agents.is_empty() {
-        return base_message.to_string();
-    }
-
-    let mut message = String::from(base_message);
-    message.push_str("\n\n");
-    for agent in agents {
-        message.push_str(&format!("Co-authored-by: {agent} <{agent}@agents.scriptum.local>\n"));
-    }
-    message
 }
 
 fn run_git(cwd: &Path, args: &[&str]) {

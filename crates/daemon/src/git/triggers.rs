@@ -20,6 +20,8 @@ pub enum TriggerEvent {
     CommentResolved { agent: String, doc_path: String, thread_id: String },
     /// Explicit checkpoint requested (via `scriptum checkpoint` CLI).
     ExplicitCheckpoint { agent: String, message: Option<String> },
+    /// Fallback trigger when there are pending changes and no semantic trigger fired.
+    IdleFallback,
 }
 
 impl TriggerEvent {
@@ -29,6 +31,7 @@ impl TriggerEvent {
             TriggerEvent::LeaseReleased { agent, .. } => agent,
             TriggerEvent::CommentResolved { agent, .. } => agent,
             TriggerEvent::ExplicitCheckpoint { agent, .. } => agent,
+            TriggerEvent::IdleFallback => "scriptum",
         }
     }
 
@@ -38,6 +41,7 @@ impl TriggerEvent {
             TriggerEvent::LeaseReleased { .. } => "lease_released",
             TriggerEvent::CommentResolved { .. } => "comment_resolved",
             TriggerEvent::ExplicitCheckpoint { .. } => "checkpoint",
+            TriggerEvent::IdleFallback => "idle_fallback",
         }
     }
 }
@@ -97,6 +101,13 @@ impl CommitContext {
                      Checkpoint by {agent}.{file_summary}"
                 )
             }
+            TriggerEvent::IdleFallback => {
+                let file_summary = self.file_summary();
+                format!(
+                    "chore: idle fallback checkpoint\n\n\
+                     Triggered by 30s idle timeout.{file_summary}"
+                )
+            }
         }
     }
 
@@ -141,13 +152,19 @@ fn path_scope(doc_path: &str) -> &str {
 pub struct TriggerConfig {
     /// Minimum time between automatic commits (debounce).
     pub min_commit_interval: Duration,
+    /// Inactivity threshold before idle fallback auto-commit can fire.
+    pub idle_fallback_timeout: Duration,
     /// Maximum number of trigger events to batch before forcing a commit.
     pub max_batch_size: usize,
 }
 
 impl Default for TriggerConfig {
     fn default() -> Self {
-        Self { min_commit_interval: Duration::from_secs(30), max_batch_size: 10 }
+        Self {
+            min_commit_interval: Duration::from_secs(30),
+            idle_fallback_timeout: Duration::from_secs(30),
+            max_batch_size: 10,
+        }
     }
 }
 
@@ -156,6 +173,7 @@ pub struct TriggerCollector {
     config: TriggerConfig,
     pending_triggers: Vec<TriggerEvent>,
     changed_paths: HashSet<String>,
+    last_edit_at: Option<Instant>,
     last_commit_at: Option<Instant>,
 }
 
@@ -165,6 +183,7 @@ impl TriggerCollector {
             config,
             pending_triggers: Vec::new(),
             changed_paths: HashSet::new(),
+            last_edit_at: None,
             last_commit_at: None,
         }
     }
@@ -176,13 +195,19 @@ impl TriggerCollector {
 
     /// Record a file change.
     pub fn mark_changed(&mut self, path: &str) {
+        self.mark_changed_at(path, Instant::now());
+    }
+
+    /// Record a file change at a specific timestamp.
+    pub fn mark_changed_at(&mut self, path: &str, at: Instant) {
         self.changed_paths.insert(path.to_string());
+        self.last_edit_at = Some(at);
     }
 
     /// Check if a commit should be triggered now.
     pub fn should_commit(&self, now: Instant) -> bool {
         if self.pending_triggers.is_empty() {
-            return false;
+            return self.should_idle_fallback_commit(now);
         }
 
         // Explicit checkpoints always commit immediately.
@@ -200,10 +225,7 @@ impl TriggerCollector {
         }
 
         // Debounce interval passed.
-        match self.last_commit_at {
-            Some(last) => now.duration_since(last) >= self.config.min_commit_interval,
-            None => true, // First commit — no debounce.
-        }
+        self.commit_interval_elapsed(now)
     }
 
     /// Consume pending triggers and produce a commit context.
@@ -212,23 +234,40 @@ impl TriggerCollector {
         &mut self,
         changed_files: Vec<ChangedFile>,
     ) -> Option<CommitContext> {
-        if self.pending_triggers.is_empty() {
+        self.take_commit_context_at(Instant::now(), changed_files)
+    }
+
+    /// Consume pending triggers and produce a commit context at a specific timestamp.
+    /// Returns None if there's nothing to commit.
+    pub fn take_commit_context_at(
+        &mut self,
+        now: Instant,
+        changed_files: Vec<ChangedFile>,
+    ) -> Option<CommitContext> {
+        if self.pending_triggers.is_empty() && self.changed_paths.is_empty() {
             return None;
         }
 
-        // Use the most recent trigger as the primary.
-        let trigger = self.pending_triggers.last().cloned().unwrap();
-        let agents_involved: Vec<String> = self
-            .pending_triggers
-            .iter()
-            .map(|t| t.agent().to_string())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
+        let (trigger, agents_involved) = if self.pending_triggers.is_empty() {
+            // Fallback commit: no semantic trigger fired before idle timeout.
+            (TriggerEvent::IdleFallback, Vec::new())
+        } else {
+            // Use the most recent trigger as the primary.
+            let trigger = self.pending_triggers.last().cloned().unwrap();
+            let agents_involved: Vec<String> = self
+                .pending_triggers
+                .iter()
+                .map(|t| t.agent().to_string())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            (trigger, agents_involved)
+        };
 
         self.pending_triggers.clear();
         self.changed_paths.clear();
-        self.last_commit_at = Some(Instant::now());
+        self.last_edit_at = None;
+        self.last_commit_at = Some(now);
 
         Some(CommitContext { trigger, changed_files, agents_involved })
     }
@@ -241,6 +280,34 @@ impl TriggerCollector {
     /// Number of tracked changed paths.
     pub fn changed_path_count(&self) -> usize {
         self.changed_paths.len()
+    }
+
+    fn should_idle_fallback_commit(&self, now: Instant) -> bool {
+        if self.changed_paths.is_empty() {
+            return false;
+        }
+
+        let Some(last_edit) = self.last_edit_at else {
+            return false;
+        };
+
+        let idle_elapsed = now
+            .checked_duration_since(last_edit)
+            .map_or(false, |elapsed| elapsed >= self.config.idle_fallback_timeout);
+        if !idle_elapsed {
+            return false;
+        }
+
+        self.commit_interval_elapsed(now)
+    }
+
+    fn commit_interval_elapsed(&self, now: Instant) -> bool {
+        match self.last_commit_at {
+            Some(last) => now
+                .checked_duration_since(last)
+                .map_or(false, |elapsed| elapsed >= self.config.min_commit_interval),
+            None => true, // First commit — no debounce.
+        }
     }
 }
 
@@ -272,6 +339,10 @@ mod tests {
         };
         assert_eq!(checkpoint.agent(), "claude");
         assert_eq!(checkpoint.kind(), "checkpoint");
+
+        let idle = TriggerEvent::IdleFallback;
+        assert_eq!(idle.agent(), "scriptum");
+        assert_eq!(idle.kind(), "idle_fallback");
     }
 
     #[test]
@@ -357,6 +428,24 @@ mod tests {
     }
 
     #[test]
+    fn commit_message_for_idle_fallback() {
+        let ctx = CommitContext {
+            trigger: TriggerEvent::IdleFallback,
+            changed_files: vec![ChangedFile {
+                path: "docs/a.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Modified,
+            }],
+            agents_involved: vec![],
+        };
+
+        let msg = ctx.generate_message();
+        assert!(msg.starts_with("chore: idle fallback checkpoint"));
+        assert!(msg.contains("Triggered by 30s idle timeout"));
+        assert!(msg.contains("1 modified"));
+    }
+
+    #[test]
     fn path_scope_extracts_filename_without_extension() {
         assert_eq!(path_scope("docs/api.md"), "api");
         assert_eq!(path_scope("docs/guides/getting-started.md"), "getting-started");
@@ -423,6 +512,7 @@ mod tests {
     fn collector_should_commit_on_explicit_checkpoint() {
         let mut collector = TriggerCollector::new(TriggerConfig {
             min_commit_interval: Duration::from_secs(3600), // long debounce
+            idle_fallback_timeout: Duration::from_secs(30),
             max_batch_size: 100,
         });
 
@@ -444,6 +534,7 @@ mod tests {
     fn collector_should_commit_when_batch_full() {
         let mut collector = TriggerCollector::new(TriggerConfig {
             min_commit_interval: Duration::from_secs(3600),
+            idle_fallback_timeout: Duration::from_secs(30),
             max_batch_size: 3,
         });
 
@@ -462,6 +553,7 @@ mod tests {
     fn collector_debounces_within_interval() {
         let mut collector = TriggerCollector::new(TriggerConfig {
             min_commit_interval: Duration::from_secs(30),
+            idle_fallback_timeout: Duration::from_secs(30),
             max_batch_size: 100,
         });
 
@@ -536,5 +628,82 @@ mod tests {
         let mut agents = ctx.agents_involved.clone();
         agents.sort();
         assert_eq!(agents, vec!["alice", "bob"]);
+    }
+
+    #[test]
+    fn collector_idle_fallback_commits_after_timeout() {
+        let mut collector = TriggerCollector::new(TriggerConfig {
+            min_commit_interval: Duration::from_secs(30),
+            idle_fallback_timeout: Duration::from_secs(30),
+            max_batch_size: 100,
+        });
+
+        let t0 = Instant::now();
+        collector.mark_changed_at("docs/api.md", t0);
+
+        assert!(!collector.should_commit(t0 + Duration::from_secs(29)));
+        assert!(collector.should_commit(t0 + Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn collector_idle_fallback_resets_timer_on_each_edit() {
+        let mut collector = TriggerCollector::new(TriggerConfig {
+            min_commit_interval: Duration::from_secs(30),
+            idle_fallback_timeout: Duration::from_secs(30),
+            max_batch_size: 100,
+        });
+
+        let t0 = Instant::now();
+        collector.mark_changed_at("docs/api.md", t0);
+        collector.mark_changed_at("docs/api.md", t0 + Duration::from_secs(20));
+
+        assert!(!collector.should_commit(t0 + Duration::from_secs(49)));
+        assert!(collector.should_commit(t0 + Duration::from_secs(50)));
+    }
+
+    #[test]
+    fn collector_idle_fallback_emits_context_without_semantic_trigger() {
+        let mut collector = TriggerCollector::new(TriggerConfig {
+            min_commit_interval: Duration::from_secs(30),
+            idle_fallback_timeout: Duration::from_secs(30),
+            max_batch_size: 100,
+        });
+
+        let t0 = Instant::now();
+        collector.mark_changed_at("docs/api.md", t0);
+
+        let ctx = collector
+            .take_commit_context_at(
+                t0 + Duration::from_secs(30),
+                vec![ChangedFile {
+                    path: "docs/api.md".into(),
+                    doc_id: None,
+                    change_type: ChangeType::Modified,
+                }],
+            )
+            .expect("idle fallback should produce commit context");
+
+        assert!(matches!(ctx.trigger, TriggerEvent::IdleFallback));
+        assert!(ctx.agents_involved.is_empty());
+        assert_eq!(collector.pending_count(), 0);
+        assert_eq!(collector.changed_path_count(), 0);
+    }
+
+    #[test]
+    fn collector_idle_fallback_respects_max_one_auto_commit_per_interval() {
+        let mut collector = TriggerCollector::new(TriggerConfig {
+            min_commit_interval: Duration::from_secs(45),
+            idle_fallback_timeout: Duration::from_secs(30),
+            max_batch_size: 100,
+        });
+
+        let t0 = Instant::now();
+        collector.mark_changed_at("docs/a.md", t0);
+        assert!(collector.should_commit(t0 + Duration::from_secs(30)));
+        let _ = collector.take_commit_context_at(t0 + Duration::from_secs(30), vec![]);
+
+        collector.mark_changed_at("docs/b.md", t0 + Duration::from_secs(31));
+        assert!(!collector.should_commit(t0 + Duration::from_secs(61)));
+        assert!(collector.should_commit(t0 + Duration::from_secs(75)));
     }
 }

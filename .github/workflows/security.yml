@@ -1,0 +1,44 @@
+name: Security Tests
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: AuthZ bypass checks
+        run: cargo test -p scriptum-relay patch_workspace_requires_owner_role -- --nocapture
+
+      - name: Path traversal checks
+        run: cargo test -p scriptum-common test_reject_backslash_traversal -- --nocapture
+
+      - name: XSS sanitization checks
+        run: cargo test -p scriptum-relay sanitize_strips_script_tags -- --nocapture
+
+      - name: Token replay checks
+        run: cargo test -p scriptum-relay refresh_reuse_detection_revokes_family -- --nocapture
+
+      - name: Brute-force rate limiting checks
+        run: cargo test -p scriptum-relay start_rate_limits_and_sets_retry_after_header -- --nocapture
+
+      - name: Dependency policy checks
+        run: cargo deny check

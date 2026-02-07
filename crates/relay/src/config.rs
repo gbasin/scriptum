@@ -4,7 +4,10 @@
 // development. Individual modules (OAuth, DB pool, etc.) may still read
 // their own env vars — this module covers the core server settings.
 
+use anyhow::{bail, Context, Result};
+use std::net::IpAddr;
 use std::net::SocketAddr;
+use url::Url;
 
 /// Core relay server configuration.
 ///
@@ -16,7 +19,7 @@ pub struct RelayConfig {
     pub listen_addr: SocketAddr,
     /// JWT signing secret for access tokens.
     pub jwt_secret: String,
-    /// Base URL for WebSocket connections (e.g. `ws://localhost:8080`).
+    /// Base URL for WebSocket connections (e.g. `wss://relay.scriptum.dev`).
     pub ws_base_url: String,
     /// PostgreSQL connection string.
     pub database_url: Option<String>,
@@ -36,7 +39,7 @@ impl RelayConfig {
     /// | `SCRIPTUM_RELAY_HOST` | `0.0.0.0` |
     /// | `SCRIPTUM_RELAY_PORT` | `8080` |
     /// | `SCRIPTUM_RELAY_JWT_SECRET` | dev-only placeholder |
-    /// | `SCRIPTUM_RELAY_WS_BASE_URL` | `ws://{host}:{port}` |
+    /// | `SCRIPTUM_RELAY_WS_BASE_URL` | `wss://{host}:{port}` |
     /// | `SCRIPTUM_RELAY_DATABASE_URL` | *(none)* |
     /// | `SCRIPTUM_RELAY_CORS_ORIGINS` | *(none — cors.rs uses dev defaults)* |
     /// | `SCRIPTUM_RELAY_LOG_FILTER` | `info` |
@@ -61,7 +64,7 @@ impl RelayConfig {
             .unwrap_or_else(|_| "scriptum_local_development_jwt_secret_must_be_32_chars".into());
 
         let ws_base_url =
-            env("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("ws://{listen_addr}"));
+            env("SCRIPTUM_RELAY_WS_BASE_URL").unwrap_or_else(|_| format!("wss://{listen_addr}"));
 
         let database_url = env("SCRIPTUM_RELAY_DATABASE_URL").ok();
         let cors_origins = env("SCRIPTUM_RELAY_CORS_ORIGINS").ok();
@@ -86,6 +89,33 @@ impl RelayConfig {
     pub fn is_dev_jwt_secret(&self) -> bool {
         self.jwt_secret == "scriptum_local_development_jwt_secret_must_be_32_chars"
     }
+
+    /// Validate transport security requirements.
+    pub fn validate_security(&self) -> Result<()> {
+        validate_ws_base_url(&self.ws_base_url)
+    }
+}
+
+fn validate_ws_base_url(value: &str) -> Result<()> {
+    let parsed = Url::parse(value)
+        .with_context(|| format!("SCRIPTUM_RELAY_WS_BASE_URL is not a valid URL: `{value}`"))?;
+    match parsed.scheme() {
+        "wss" => Ok(()),
+        "ws" if is_loopback_host(parsed.host_str()) => Ok(()),
+        _ => bail!(
+            "SCRIPTUM_RELAY_WS_BASE_URL must use wss:// (ws:// is allowed only for localhost testing)"
+        ),
+    }
+}
+
+fn is_loopback_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>().is_ok_and(|addr| addr.is_loopback())
 }
 
 #[cfg(test)]
@@ -105,7 +135,7 @@ mod tests {
         assert_eq!(cfg.listen_addr.port(), 8080);
         assert_eq!(cfg.listen_addr.ip().to_string(), "0.0.0.0");
         assert!(cfg.is_dev_jwt_secret());
-        assert_eq!(cfg.ws_base_url, "ws://0.0.0.0:8080");
+        assert_eq!(cfg.ws_base_url, "wss://0.0.0.0:8080");
         assert!(cfg.database_url.is_none());
         assert!(cfg.cors_origins.is_none());
         assert_eq!(cfg.log_filter, "info");
@@ -118,7 +148,7 @@ mod tests {
         m.insert("SCRIPTUM_RELAY_PORT", "9090");
         let cfg = RelayConfig::from_env_fn(env_from_map(m));
         assert_eq!(cfg.listen_addr.port(), 9090);
-        assert_eq!(cfg.ws_base_url, "ws://0.0.0.0:9090");
+        assert_eq!(cfg.ws_base_url, "wss://0.0.0.0:9090");
     }
 
     #[test]
@@ -185,5 +215,30 @@ mod tests {
         m.insert("SCRIPTUM_RELAY_SHARE_LINK_BASE_URL", "https://app.scriptum.dev/s");
         let cfg = RelayConfig::from_env_fn(env_from_map(m));
         assert_eq!(cfg.share_link_base_url, "https://app.scriptum.dev/s");
+    }
+
+    #[test]
+    fn validate_security_accepts_wss() {
+        let mut m = HashMap::new();
+        m.insert("SCRIPTUM_RELAY_WS_BASE_URL", "wss://relay.scriptum.dev");
+        let cfg = RelayConfig::from_env_fn(env_from_map(m));
+        cfg.validate_security().expect("wss transport should be accepted");
+    }
+
+    #[test]
+    fn validate_security_rejects_non_loopback_ws() {
+        let mut m = HashMap::new();
+        m.insert("SCRIPTUM_RELAY_WS_BASE_URL", "ws://relay.scriptum.dev");
+        let cfg = RelayConfig::from_env_fn(env_from_map(m));
+        let error = cfg.validate_security().expect_err("insecure ws URL should be rejected");
+        assert!(error.to_string().contains("must use wss"));
+    }
+
+    #[test]
+    fn validate_security_allows_loopback_ws_for_tests() {
+        let mut m = HashMap::new();
+        m.insert("SCRIPTUM_RELAY_WS_BASE_URL", "ws://127.0.0.1:8080");
+        let cfg = RelayConfig::from_env_fn(env_from_map(m));
+        cfg.validate_security().expect("loopback ws URL should be accepted");
     }
 }

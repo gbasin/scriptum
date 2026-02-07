@@ -7,6 +7,11 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+use crate::security::{
+    decrypt_at_rest, encrypt_at_rest, ensure_owner_only_dir, ensure_owner_only_file,
+    open_private_truncate,
+};
+
 const SNAPSHOT_FILE_EXT: &str = "snap";
 const SNAPSHOT_MAGIC: [u8; 4] = *b"SNP1";
 const SNAPSHOT_VERSION: u8 = 1;
@@ -50,6 +55,7 @@ impl SnapshotStore {
         fs::create_dir_all(&snapshots_dir).with_context(|| {
             format!("failed to create snapshots directory `{}`", snapshots_dir.display())
         })?;
+        ensure_owner_only_dir(&snapshots_dir)?;
         Ok(Self { snapshots_dir })
     }
 
@@ -60,6 +66,8 @@ impl SnapshotStore {
         payload: &[u8],
     ) -> Result<PathBuf> {
         let (codec, encoded_payload) = encode_payload(payload);
+        let encrypted_payload =
+            encrypt_at_rest(&encoded_payload).context("failed to encrypt snapshot at rest")?;
         let mut header = [0u8; SNAPSHOT_HEADER_BYTES];
         header[..4].copy_from_slice(&SNAPSHOT_MAGIC);
         header[4] = SNAPSHOT_VERSION;
@@ -73,17 +81,13 @@ impl SnapshotStore {
 
         let target_path = self.snapshot_path(doc_id);
         let tmp_path = self.temp_path_for(doc_id);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)
-            .with_context(|| {
+        let mut file = open_private_truncate(&tmp_path).with_context(|| {
             format!("failed to open temp snapshot `{}`", tmp_path.display())
         })?;
+        ensure_owner_only_file(&tmp_path)?;
 
         file.write_all(&header).context("failed to write snapshot header")?;
-        file.write_all(&encoded_payload).context("failed to write snapshot payload")?;
+        file.write_all(&encrypted_payload).context("failed to write snapshot payload")?;
         file.sync_data().context("failed to fsync snapshot file")?;
         drop(file);
 
@@ -94,6 +98,7 @@ impl SnapshotStore {
                 target_path.display()
             )
         })?;
+        ensure_owner_only_file(&target_path)?;
 
         Ok(target_path)
     }
@@ -130,6 +135,8 @@ impl SnapshotStore {
 
         let mut encoded_payload = Vec::new();
         file.read_to_end(&mut encoded_payload).context("failed to read snapshot payload")?;
+        let encoded_payload = decrypt_at_rest(&encoded_payload)
+            .context("failed to decrypt snapshot payload at rest")?;
         let payload = decode_payload(codec, &encoded_payload, expected_len)?;
 
         Ok(Some(SnapshotRecord { snapshot_seq, payload, codec }))
@@ -292,5 +299,26 @@ mod tests {
         assert!(store.should_snapshot(0, 1000, now, now));
         assert!(store.should_snapshot(10, 100, now - Duration::minutes(10), now));
         assert!(!store.should_snapshot(10, 999, now - Duration::minutes(9), now));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir should be created");
+        let store = SnapshotStore::new(tmp.path().join("crdt_store")).expect("snapshot store");
+        let doc_id = Uuid::new_v4();
+
+        let path = store
+            .save_snapshot(doc_id, 1, b"snapshot payload")
+            .expect("snapshot should be saved");
+
+        let mode = std::fs::metadata(path)
+            .expect("snapshot metadata should load")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

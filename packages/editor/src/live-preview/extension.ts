@@ -12,6 +12,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import type { Tree } from "@lezer/common";
+import { footnotePreview } from "../extensions/footnotes";
 
 export interface MarkdownTreeAnalysis {
   readonly rootNode: string;
@@ -1878,6 +1879,7 @@ export function isLineActive(state: EditorState, lineNumber: number): boolean {
 export function livePreview(): Extension {
   return [
     markdown(),
+    footnotePreview(),
     activeLines,
     markdownTreeField,
     headingPreviewDecorations,

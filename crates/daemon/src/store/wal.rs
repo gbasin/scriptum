@@ -5,8 +5,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use uuid::Uuid;
 
+use crate::security::{
+    decrypt_at_rest, encrypt_at_rest, ensure_owner_only_dir, ensure_owner_only_file,
+    open_private_append,
+};
+
 const FRAME_HEADER_BYTES: usize = 8;
-const MAX_UPDATE_BYTES: usize = 1 << 20;
+// 1 MiB payload cap plus envelope overhead for at-rest encryption metadata.
+const MAX_UPDATE_BYTES: usize = (1 << 20) + 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalReplaySummary {
@@ -30,14 +36,13 @@ impl WalStore {
             fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create wal directory `{}`", parent.display())
             })?;
+            ensure_owner_only_dir(parent)?;
         }
 
         // Ensure the file exists so replay can open it consistently.
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
+        open_private_append(&path)
             .with_context(|| format!("failed to open wal file `{}`", path.display()))?;
+        ensure_owner_only_file(&path)?;
 
         Ok(Self { path })
     }
@@ -49,17 +54,20 @@ impl WalStore {
     }
 
     pub fn append_update(&self, payload: &[u8]) -> Result<()> {
-        let len = u32::try_from(payload.len()).context("wal payload exceeds u32::MAX")?;
-        let checksum = checksum(payload);
-        let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + payload.len());
+        let encrypted_payload =
+            encrypt_at_rest(payload).context("failed to encrypt wal payload at rest")?;
+        let len =
+            u32::try_from(encrypted_payload.len()).context("wal payload exceeds u32::MAX")?;
+        let checksum = checksum(&encrypted_payload);
+        let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + encrypted_payload.len());
         frame.extend_from_slice(&len.to_le_bytes());
         frame.extend_from_slice(&checksum.to_le_bytes());
-        frame.extend_from_slice(payload);
+        frame.extend_from_slice(&encrypted_payload);
 
-        let mut file =
-            OpenOptions::new().create(true).append(true).open(&self.path).with_context(|| {
-                format!("failed to open wal file `{}` for append", self.path.display())
-            })?;
+        let mut file = open_private_append(&self.path).with_context(|| {
+            format!("failed to open wal file `{}` for append", self.path.display())
+        })?;
+        ensure_owner_only_file(&self.path)?;
 
         file.write_all(&frame).context("failed to write wal frame payload")?;
         file.sync_data().context("failed to fsync wal file")?;
@@ -134,6 +142,15 @@ impl WalStore {
                 break;
             }
 
+            let payload = match decrypt_at_rest(&payload) {
+                Ok(payload) => payload,
+                Err(_) => {
+                    truncate_to = Some(frame_offset);
+                    checksum_failed = true;
+                    break;
+                }
+            };
+
             if valid_frames >= start_frame {
                 on_update(&payload).context("failed to apply wal frame payload")?;
                 applied = applied.saturating_add(1);
@@ -184,11 +201,22 @@ fn truncate_wal(path: &Path, offset: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs::OpenOptions;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::path::Path;
 
     use super::{WalReplaySummary, WalStore, FRAME_HEADER_BYTES};
     use tempfile::tempdir;
     use uuid::Uuid;
+
+    fn first_frame_len(path: &Path) -> usize {
+        let mut file =
+            OpenOptions::new().read(true).open(path).expect("wal file should open for reads");
+        let mut header = [0u8; FRAME_HEADER_BYTES];
+        file.read_exact(&mut header).expect("first wal frame header should be readable");
+        let payload_len =
+            u32::from_le_bytes(header[..4].try_into().expect("frame length bytes")) as usize;
+        FRAME_HEADER_BYTES + payload_len
+    }
 
     #[test]
     fn append_and_replay_round_trip() {
@@ -218,7 +246,7 @@ mod tests {
         wal.append_update(b"u1").expect("frame 1 should append");
         wal.append_update(b"u2").expect("frame 2 should append");
 
-        let first_frame_len = FRAME_HEADER_BYTES + b"u1".len();
+        let first_frame_len = first_frame_len(wal.path());
         let second_frame_checksum_offset = first_frame_len + 4;
 
         let mut file = OpenOptions::new()
@@ -291,7 +319,7 @@ mod tests {
         wal.append_update(b"u1").expect("frame 1 should append");
         wal.append_update(b"u2").expect("frame 2 should append");
 
-        let first_frame_len = FRAME_HEADER_BYTES + b"u1".len();
+        let first_frame_len = first_frame_len(wal.path());
         let second_frame_checksum_offset = first_frame_len + 4;
 
         let mut file = OpenOptions::new()
@@ -328,5 +356,22 @@ mod tests {
         let path = wal.path().to_string_lossy();
         assert!(path.contains(&workspace_id.to_string()));
         assert!(path.contains(&format!("{doc_id}.wal")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wal_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir should be created");
+        let wal = WalStore::open(tmp.path().join("secure.wal")).expect("wal should open");
+        wal.append_update(b"payload").expect("append should succeed");
+
+        let mode = std::fs::metadata(wal.path())
+            .expect("wal metadata should load")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

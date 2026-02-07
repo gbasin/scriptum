@@ -82,17 +82,8 @@ fn format_human(result: &BlameResult) -> String {
     lines.push(format!("{}:", result.doc_path));
 
     // Compute column widths for alignment.
-    let num_width = result
-        .lines
-        .last()
-        .map(|l| digit_count(l.line_number))
-        .unwrap_or(1);
-    let agent_width = result
-        .lines
-        .iter()
-        .map(|l| l.agent.len())
-        .max()
-        .unwrap_or(0);
+    let num_width = result.lines.last().map(|l| digit_count(l.line_number)).unwrap_or(1);
+    let agent_width = result.lines.iter().map(|l| l.agent.len()).max().unwrap_or(0);
 
     for bl in &result.lines {
         lines.push(format!(
@@ -160,10 +151,7 @@ mod tests {
 
     #[test]
     fn human_format_empty_doc() {
-        let result = BlameResult {
-            doc_path: "empty.md".into(),
-            lines: vec![],
-        };
+        let result = BlameResult { doc_path: "empty.md".into(), lines: vec![] };
         let output = format_human(&result);
         assert!(output.contains("(empty)"));
     }

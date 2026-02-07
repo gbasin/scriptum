@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use tokio::net::UnixListener;
 use tracing::info;
 
+use crate::security::{ensure_owner_only_dir, ensure_owner_only_file};
+
 /// Default socket path: ~/.scriptum/daemon.sock
 const SOCKET_NAME: &str = "daemon.sock";
 /// PID file: ~/.scriptum/daemon.pid (diagnostics only)
@@ -36,6 +38,7 @@ pub fn write_pid_file(path: &Path) -> Result<()> {
     let pid = std::process::id();
     let mut file = fs::File::create(path).context("failed to create PID file")?;
     write!(file, "{pid}").context("failed to write PID")?;
+    ensure_owner_only_file(path)?;
     info!(pid, path = %path.display(), "wrote PID file");
     Ok(())
 }
@@ -67,6 +70,7 @@ fn dirs_path() -> Result<PathBuf> {
     let home = home_dir().context("could not determine home directory")?;
     let scriptum_dir = home.join(".scriptum");
     fs::create_dir_all(&scriptum_dir).context("failed to create ~/.scriptum/")?;
+    ensure_owner_only_dir(&scriptum_dir)?;
     Ok(scriptum_dir)
 }
 

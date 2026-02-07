@@ -15,9 +15,70 @@ describe("mcp server scaffold", () => {
   it("registers tool and resource handlers over MCP transport", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const daemonCalls: Array<{ method: string; params: unknown }> = [];
+    const workspaceListPayload = {
+      items: [
+        {
+          workspace_id: "ws-1",
+          name: "Workspace 1",
+          root_path: "/tmp/ws-1",
+          doc_count: 1,
+        },
+      ],
+      total: 1,
+    };
+    const docTreePayload = {
+      items: [{ doc_id: "doc-1", path: "README.md", title: "README" }],
+      total: 1,
+    };
+    const docReadPayload = {
+      metadata: {
+        workspace_id: "ws-1",
+        doc_id: "doc-1",
+        path: "README.md",
+      },
+      sections: [],
+      content_md: "# Scriptum",
+      degraded: false,
+    };
+    const docSectionsPayload = {
+      doc_id: "doc-1",
+      sections: [
+        {
+          id: "s1",
+          heading: "Overview",
+          level: 1,
+          start_line: 1,
+          end_line: 3,
+        },
+      ],
+    };
+    const agentListPayload = {
+      items: [
+        {
+          agent_id: "cursor",
+          last_seen_at: "2026-02-07T00:00:00Z",
+          active_sections: 2,
+        },
+      ],
+    };
     const daemonClient: DaemonClient = {
       request: async (method, params) => {
         daemonCalls.push({ method, params });
+        if (method === "workspace.list") {
+          return workspaceListPayload;
+        }
+        if (method === "doc.tree") {
+          return docTreePayload;
+        }
+        if (method === "doc.read") {
+          return docReadPayload;
+        }
+        if (method === "doc.sections") {
+          return docSectionsPayload;
+        }
+        if (method === "agent.list") {
+          return agentListPayload;
+        }
         return {
           forwarded_method: method,
           forwarded_params: params ?? null,
@@ -55,7 +116,23 @@ describe("mcp server scaffold", () => {
       const resourceList = await client.listResources();
       expect(
         resourceList.resources.some(
+          (resource) => resource.uri === "scriptum://workspace",
+        ),
+      ).toBe(true);
+      expect(
+        resourceList.resources.some(
           (resource) => resource.uri === "scriptum://agents",
+        ),
+      ).toBe(true);
+      const resourceTemplates = await client.listResourceTemplates();
+      expect(
+        resourceTemplates.resourceTemplates.some(
+          (resource) => resource.uriTemplate === "scriptum://docs/{id}",
+        ),
+      ).toBe(true);
+      expect(
+        resourceTemplates.resourceTemplates.some(
+          (resource) => resource.uriTemplate === "scriptum://docs/{id}/sections",
         ),
       ).toBe(true);
 
@@ -104,16 +181,8 @@ describe("mcp server scaffold", () => {
           include_content: true,
         },
       });
-      const readPayload = readToolTextPayload(readToolResult) as {
-        forwarded_method: string;
-        forwarded_params: Record<string, unknown>;
-      };
-      expect(readPayload.forwarded_method).toBe("doc.read");
-      expect(readPayload.forwarded_params).toEqual({
-        workspace_id: "ws-1",
-        doc_id: "doc-1",
-        include_content: true,
-      });
+      const readPayload = readToolTextPayload(readToolResult);
+      expect(readPayload).toEqual(docReadPayload);
 
       const editToolResult = await client.callTool({
         name: "scriptum_edit",
@@ -133,10 +202,8 @@ describe("mcp server scaffold", () => {
         name: "scriptum_list",
         arguments: { workspace_id: "ws-1" },
       });
-      const listPayload = readToolTextPayload(listToolResult) as {
-        forwarded_method: string;
-      };
-      expect(listPayload.forwarded_method).toBe("doc.tree");
+      const listPayload = readToolTextPayload(listToolResult);
+      expect(listPayload).toEqual(docTreePayload);
 
       const treeToolResult = await client.callTool({
         name: "scriptum_tree",
@@ -145,10 +212,8 @@ describe("mcp server scaffold", () => {
           doc_id: "doc-1",
         },
       });
-      const treePayload = readToolTextPayload(treeToolResult) as {
-        forwarded_method: string;
-      };
-      expect(treePayload.forwarded_method).toBe("doc.sections");
+      const treePayload = readToolTextPayload(treeToolResult);
+      expect(treePayload).toEqual(docSectionsPayload);
 
       const conflictsToolResult = await client.callTool({
         name: "scriptum_conflicts",
@@ -172,10 +237,8 @@ describe("mcp server scaffold", () => {
         name: "scriptum_agents",
         arguments: { workspace_id: "ws-1" },
       });
-      const agentsToolPayload = readToolTextPayload(agentsToolResult) as {
-        forwarded_method: string;
-      };
-      expect(agentsToolPayload.forwarded_method).toBe("agent.list");
+      const agentsToolPayload = readToolTextPayload(agentsToolResult);
+      expect(agentsToolPayload).toEqual(agentListPayload);
 
       const claimToolResult = await client.callTool({
         name: "scriptum_claim",
@@ -296,17 +359,105 @@ describe("mcp server scaffold", () => {
         },
       ]);
 
-      const resourceResult = await client.readResource({ uri: "scriptum://agents" });
-      const firstResource = resourceResult.contents.at(0);
-      if (!firstResource || !("text" in firstResource)) {
-        throw new Error("Expected text resource content for scriptum://agents");
-      }
-      const agentsPayload = JSON.parse(firstResource.text) as {
-        agents: Array<{ name: string }>;
-      };
-      expect(agentsPayload).toEqual({
-        agents: [{ name: "cursor" }],
+      daemonCalls.length = 0;
+
+      const workspaceResourceResult = await client.readResource({
+        uri: "scriptum://workspace",
       });
+      const workspacePayload = readResourceTextPayload(workspaceResourceResult);
+      expect(workspacePayload).toEqual(workspaceListPayload);
+
+      const agentsResourceResult = await client.readResource({
+        uri: "scriptum://agents",
+      });
+      const agentsResourcePayload = readResourceTextPayload(agentsResourceResult) as {
+        connected_agent: string;
+        total_agents: number;
+        workspaces: Array<{
+          workspace_id: string;
+          name: string;
+          root_path: string;
+          agents: unknown[];
+        }>;
+      };
+      expect(agentsResourcePayload).toEqual({
+        connected_agent: "cursor",
+        total_agents: 1,
+        workspaces: [
+          {
+            workspace_id: "ws-1",
+            name: "Workspace 1",
+            root_path: "/tmp/ws-1",
+            agents: agentListPayload.items,
+          },
+        ],
+      });
+
+      const docResourceResult = await client.readResource({
+        uri: "scriptum://docs/doc-1",
+      });
+      const docResourcePayload = readResourceTextPayload(docResourceResult);
+      expect(docResourcePayload).toEqual(docReadPayload);
+
+      const docSectionsResourceResult = await client.readResource({
+        uri: "scriptum://docs/doc-1/sections",
+      });
+      const docSectionsResourcePayload = readResourceTextPayload(
+        docSectionsResourceResult,
+      );
+      expect(docSectionsResourcePayload).toEqual(docSectionsPayload);
+
+      expect(daemonCalls).toEqual([
+        {
+          method: "workspace.list",
+          params: {},
+        },
+        {
+          method: "workspace.list",
+          params: {},
+        },
+        {
+          method: "agent.list",
+          params: {
+            workspace_id: "ws-1",
+          },
+        },
+        {
+          method: "workspace.list",
+          params: {},
+        },
+        {
+          method: "doc.tree",
+          params: {
+            workspace_id: "ws-1",
+          },
+        },
+        {
+          method: "doc.read",
+          params: {
+            workspace_id: "ws-1",
+            doc_id: "doc-1",
+            include_content: true,
+          },
+        },
+        {
+          method: "workspace.list",
+          params: {},
+        },
+        {
+          method: "doc.tree",
+          params: {
+            workspace_id: "ws-1",
+          },
+        },
+        {
+          method: "doc.sections",
+          params: {
+            workspace_id: "ws-1",
+            doc_id: "doc-1",
+          },
+        },
+      ]);
     } finally {
       await client.close();
       await server.close();
@@ -324,6 +475,20 @@ function readToolTextPayload(result: unknown): unknown {
   const firstContent = payload.content.at(0);
   if (!firstContent || firstContent.type !== "text" || !firstContent.text) {
     throw new Error("Expected first tool content item to be text");
+  }
+  return JSON.parse(firstContent.text) as unknown;
+}
+
+function readResourceTextPayload(result: unknown): unknown {
+  if (!result || typeof result !== "object" || !("contents" in result)) {
+    throw new Error("Expected contents in resource response");
+  }
+  const payload = result as {
+    contents: Array<{ text?: string }>;
+  };
+  const firstContent = payload.contents.at(0);
+  if (!firstContent || typeof firstContent.text !== "string") {
+    throw new Error("Expected first resource content item to contain text");
   }
   return JSON.parse(firstContent.text) as unknown;
 }

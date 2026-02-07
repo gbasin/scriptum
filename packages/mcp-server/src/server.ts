@@ -1,5 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolRequestParamsSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
@@ -16,6 +17,28 @@ interface ToolDefinition {
   readonly description: string;
   readonly name: string;
   readonly rpcMethod: string;
+}
+
+interface WorkspaceSummary {
+  readonly workspace_id: string;
+  readonly name: string;
+  readonly root_path: string;
+}
+
+interface WorkspaceListResponse {
+  readonly items?: WorkspaceSummary[];
+}
+
+interface DocTreeEntry {
+  readonly doc_id: string;
+}
+
+interface DocTreeResponse {
+  readonly items?: DocTreeEntry[];
+}
+
+interface AgentListResponse {
+  readonly items?: unknown[];
 }
 
 const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
@@ -102,7 +125,11 @@ class DefaultScriptumMcpServer implements ScriptumMcpServer {
       this.daemonClient,
       () => this.resolveAgentName(),
     );
-    registerResourceHandlers(this.mcpServer, () => this.resolveAgentName());
+    registerResourceHandlers(
+      this.mcpServer,
+      this.daemonClient,
+      () => this.resolveAgentName(),
+    );
   }
 
   async start(): Promise<void> {
@@ -272,31 +299,161 @@ function makeToolResult(payload: unknown) {
 
 function registerResourceHandlers(
   server: McpServer,
+  daemonClient: DaemonClient,
   resolveAgentName: AgentNameResolver,
 ): void {
+  server.registerResource(
+    "scriptum-workspace",
+    "scriptum://workspace",
+    {
+      title: "Scriptum Workspaces",
+      description: "List workspaces from daemon workspace.list.",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const payload = await daemonClient.request("workspace.list", {});
+      return makeResourceResult(uri, payload);
+    },
+  );
+
   server.registerResource(
     "scriptum-agents",
     "scriptum://agents",
     {
       title: "Scriptum Agents",
       description:
-        "Scaffold resource returning the connected MCP agent name.",
+        "List active agents grouped by workspace.",
       mimeType: "application/json",
     },
     async (uri) => {
+      const workspaces = await listWorkspaces(daemonClient);
+      const workspacesWithAgents = [];
+      for (const workspace of workspaces) {
+        const agentList = await daemonClient.request<AgentListResponse>("agent.list", {
+          workspace_id: workspace.workspace_id,
+        });
+        workspacesWithAgents.push({
+          workspace_id: workspace.workspace_id,
+          name: workspace.name,
+          root_path: workspace.root_path,
+          agents: agentList.items ?? [],
+        });
+      }
+
       const payload = {
-        agents: [{ name: resolveAgentName() }],
+        connected_agent: resolveAgentName(),
+        workspaces: workspacesWithAgents,
+        total_agents: workspacesWithAgents.reduce(
+          (total, workspace) => total + workspace.agents.length,
+          0,
+        ),
       };
 
-      return {
-        contents: [
-          {
-            uri: uri.toString(),
-            mimeType: "application/json",
-            text: JSON.stringify(payload),
-          },
-        ],
-      };
+      return makeResourceResult(uri, payload);
     },
   );
+
+  server.registerResource(
+    "scriptum-doc-sections",
+    new ResourceTemplate("scriptum://docs/{id}/sections", { list: undefined }),
+    {
+      title: "Scriptum Document Sections",
+      description: "Read section tree for a document by ID.",
+      mimeType: "application/json",
+    },
+    async (uri, variables) => {
+      const docId = parseResourceVariable(variables, "id");
+      const workspace = await resolveWorkspaceForDocId(daemonClient, docId);
+      if (!workspace) {
+        throw new Error(`document ${docId} not found in any workspace`);
+      }
+
+      const payload = await daemonClient.request("doc.sections", {
+        workspace_id: workspace.workspace_id,
+        doc_id: docId,
+      });
+      return makeResourceResult(uri, payload);
+    },
+  );
+
+  server.registerResource(
+    "scriptum-doc",
+    new ResourceTemplate("scriptum://docs/{id}", { list: undefined }),
+    {
+      title: "Scriptum Document Content",
+      description: "Read markdown document content by document ID.",
+      mimeType: "application/json",
+    },
+    async (uri, variables) => {
+      const docId = parseResourceVariable(variables, "id");
+      const workspace = await resolveWorkspaceForDocId(daemonClient, docId);
+      if (!workspace) {
+        throw new Error(`document ${docId} not found in any workspace`);
+      }
+
+      const payload = await daemonClient.request("doc.read", {
+        workspace_id: workspace.workspace_id,
+        doc_id: docId,
+        include_content: true,
+      });
+      return makeResourceResult(uri, payload);
+    },
+  );
+}
+
+async function listWorkspaces(
+  daemonClient: DaemonClient,
+): Promise<WorkspaceSummary[]> {
+  const response = await daemonClient.request<WorkspaceListResponse>(
+    "workspace.list",
+    {},
+  );
+  return response.items ?? [];
+}
+
+async function resolveWorkspaceForDocId(
+  daemonClient: DaemonClient,
+  docId: string,
+): Promise<WorkspaceSummary | undefined> {
+  const workspaces = await listWorkspaces(daemonClient);
+  for (const workspace of workspaces) {
+    const tree = await daemonClient.request<DocTreeResponse>("doc.tree", {
+      workspace_id: workspace.workspace_id,
+    });
+    const items = tree.items ?? [];
+    if (items.some((item) => item.doc_id === docId)) {
+      return workspace;
+    }
+  }
+
+  return undefined;
+}
+
+function parseResourceVariable(variables: Variables, key: string): string {
+  const value = variables[key];
+  const raw =
+    typeof value === "string" ? value : Array.isArray(value) ? value[0] : undefined;
+  if (!raw) {
+    throw new Error(`resource URI is missing required variable: ${key}`);
+  }
+
+  const normalized = raw.trim();
+  if (!normalized) {
+    throw new Error(`resource URI variable ${key} must not be empty`);
+  }
+
+  return normalized;
+}
+
+function makeResourceResult(uri: URL, payload: unknown) {
+  const normalizedPayload = payload ?? null;
+  return {
+    contents: [
+      {
+        uri: uri.toString(),
+        mimeType: "application/json",
+        text: JSON.stringify(normalizedPayload),
+      },
+    ],
+  } as const;
 }

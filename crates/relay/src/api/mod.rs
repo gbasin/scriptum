@@ -2,7 +2,12 @@ pub mod comments;
 pub mod documents;
 pub mod search;
 
-use std::{collections::HashMap, env, sync::{Arc, Mutex}, time::Instant};
+use std::{
+    collections::HashMap,
+    env,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
 use argon2::{
@@ -648,10 +653,7 @@ fn build_router_with_store(
     store: WorkspaceStore,
     jwt_service: Arc<JwtAccessTokenService>,
 ) -> Router {
-    let state = ApiState {
-        store,
-        redeem_limiter: Arc::new(Mutex::new(HashMap::new())),
-    };
+    let state = ApiState { store, redeem_limiter: Arc::new(Mutex::new(HashMap::new())) };
     let viewer_role_layer =
         middleware::from_fn_with_state(state.clone(), require_workspace_viewer_role);
     let editor_role_layer =
@@ -826,10 +828,8 @@ async fn update_share_link(
 ) -> Result<Json<ShareLinkEnvelope>, ApiError> {
     validate_share_link_update_request(&payload)?;
     let if_match = extract_if_match(&headers)?;
-    let share_link = state
-        .store
-        .update_share_link(workspace_id, share_link_id, if_match, payload)
-        .await?;
+    let share_link =
+        state.store.update_share_link(workspace_id, share_link_id, if_match, payload).await?;
 
     Ok(Json(ShareLinkEnvelope { share_link: share_link.into_share_link(String::new()) }))
 }
@@ -950,10 +950,9 @@ async fn redeem_share_link(
     {
         let mut limiter = state.redeem_limiter.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
-        let entry = limiter.entry(token_hash.clone()).or_insert(RedeemRateEntry {
-            count: 0,
-            window_start: now,
-        });
+        let entry = limiter
+            .entry(token_hash.clone())
+            .or_insert(RedeemRateEntry { count: 0, window_start: now });
         if now.duration_since(entry.window_start).as_secs() > REDEEM_RATE_LIMIT_WINDOW_SECS {
             entry.count = 0;
             entry.window_start = now;
@@ -982,10 +981,7 @@ async fn redeem_share_link(
         ));
     }
     if link.expires_at.is_some_and(|expires| expires < Utc::now()) {
-        return Err(ApiError::bad_request(
-            "SHARE_LINK_EXPIRED",
-            "this share link has expired",
-        ));
+        return Err(ApiError::bad_request("SHARE_LINK_EXPIRED", "this share link has expired"));
     }
     if link.max_uses.is_some_and(|max| link.use_count >= max) {
         return Err(ApiError::bad_request(
@@ -1199,7 +1195,9 @@ impl WorkspaceStore {
     ) -> Result<(), ApiError> {
         match self {
             Self::Postgres(pool) => revoke_share_link_pg(pool, workspace_id, share_link_id).await,
-            Self::Memory(store) => revoke_share_link_memory(store, workspace_id, share_link_id).await,
+            Self::Memory(store) => {
+                revoke_share_link_memory(store, workspace_id, share_link_id).await
+            }
         }
     }
 
@@ -1311,10 +1309,7 @@ impl WorkspaceStore {
         }
     }
 
-    async fn increment_share_link_use_count(
-        &self,
-        share_link_id: Uuid,
-    ) -> Result<(), ApiError> {
+    async fn increment_share_link_use_count(&self, share_link_id: Uuid) -> Result<(), ApiError> {
         match self {
             Self::Postgres(pool) => increment_share_link_use_count_pg(pool, share_link_id).await,
             Self::Memory(store) => {
@@ -2033,10 +2028,7 @@ async fn list_share_links_memory(
         .cloned()
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
-        right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| right.id.cmp(&left.id))
+        right.created_at.cmp(&left.created_at).then_with(|| right.id.cmp(&left.id))
     });
 
     Ok(items
@@ -2764,17 +2756,11 @@ fn share_link_etag(share_link: &ShareLinkRecord) -> String {
         "\"sl-{}-{}-{}-{}-{}-{}-{}\"",
         share_link.id,
         share_link.permission,
-        share_link
-            .expires_at
-            .map(|value| value.timestamp_micros())
-            .unwrap_or_default(),
+        share_link.expires_at.map(|value| value.timestamp_micros()).unwrap_or_default(),
         share_link.max_uses.unwrap_or_default(),
         share_link.use_count,
         i32::from(share_link.disabled),
-        share_link
-            .revoked_at
-            .map(|value| value.timestamp_micros())
-            .unwrap_or_default()
+        share_link.revoked_at.map(|value| value.timestamp_micros()).unwrap_or_default()
     )
 }
 
@@ -3297,7 +3283,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(json!({ "permission": "edit" }).to_string()))
@@ -3312,7 +3301,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", "\"stale\"")
                     .header("content-type", "application/json")
@@ -3329,7 +3321,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .header("if-match", &created.share_link.etag)
                     .header("content-type", "application/json")
@@ -3358,7 +3353,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::DELETE)
-                    .uri(format!("/v1/workspaces/{workspace_id}/share-links/{}", created.share_link.id))
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
                     .body(Body::empty())
                     .expect("request should build"),

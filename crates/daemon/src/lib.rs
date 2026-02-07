@@ -9,6 +9,7 @@ pub mod outbox;
 pub mod relay;
 pub mod rpc;
 pub mod runtime;
+pub mod security;
 pub mod search;
 pub mod section;
 pub mod startup;

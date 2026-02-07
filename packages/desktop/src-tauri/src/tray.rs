@@ -38,10 +38,7 @@ pub struct TraySyncSnapshot {
 
 impl Default for TraySyncSnapshot {
     fn default() -> Self {
-        Self {
-            status: TraySyncStatus::Offline,
-            pending_changes: 0,
-        }
+        Self { status: TraySyncStatus::Offline, pending_changes: 0 }
     }
 }
 
@@ -58,17 +55,14 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     let default_snapshot = TraySyncSnapshot::default();
     let open_app = MenuItemBuilder::with_id(TRAY_OPEN_APP_ID, "Open App").build(app)?;
-    let sync_status = MenuItemBuilder::with_id(
-        TRAY_SYNC_STATUS_ID,
-        format_sync_menu_label(default_snapshot),
-    )
-    .enabled(false)
-    .build(app)?;
+    let sync_status =
+        MenuItemBuilder::with_id(TRAY_SYNC_STATUS_ID, format_sync_menu_label(default_snapshot))
+            .enabled(false)
+            .build(app)?;
     let quit = MenuItemBuilder::with_id(TRAY_QUIT_ID, "Quit").build(app)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let tray_menu = MenuBuilder::new(app)
-        .items(&[&open_app, &sync_status, &separator, &quit])
-        .build()?;
+    let tray_menu =
+        MenuBuilder::new(app).items(&[&open_app, &sync_status, &separator, &quit]).build()?;
 
     let mut tray_builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
         .menu(&tray_menu)
@@ -100,16 +94,9 @@ pub fn update_sync_status<R: Runtime>(
         return Ok(());
     };
 
-    let snapshot = TraySyncSnapshot {
-        status,
-        pending_changes,
-    };
-    controller
-        .sync_status_item
-        .set_text(format_sync_menu_label(snapshot))?;
-    controller
-        .tray_icon
-        .set_tooltip(Some(format_sync_tooltip(snapshot)))?;
+    let snapshot = TraySyncSnapshot { status, pending_changes };
+    controller.sync_status_item.set_text(format_sync_menu_label(snapshot))?;
+    controller.tray_icon.set_tooltip(Some(format_sync_tooltip(snapshot)))?;
 
     if let Some(badge) = format_pending_badge(snapshot.pending_changes) {
         controller.tray_icon.set_title(Some(badge))?;

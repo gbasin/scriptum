@@ -1,15 +1,26 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 use crate::agent::lease::{LeaseClaim, LeaseMode, LeaseStore};
 use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus, SessionStore};
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
-use crate::search::{Fts5Index, IndexEntry, SearchIndex};
+use crate::rpc::trace::{trace_id_from_raw_request, with_trace_id_scope};
+use crate::search::indexer::extract_title;
+use crate::search::{
+    resolve_wiki_links, BacklinkStore, Fts5Index, IndexEntry, LinkableDocument, SearchIndex,
+};
+use crate::store::documents_local::{DocumentsLocalStore, LocalDocumentRecord};
 use crate::store::meta_db::MetaDb;
 use crate::store::recovery::{recover_documents_into_manager, StartupRecoveryReport};
+use crate::watcher::hash::sha256_hex;
 use base64::Engine;
+use regex::Regex;
+use scriptum_common::backlink::parse_wiki_links;
+use scriptum_common::path::normalize_path;
 use scriptum_common::protocol::jsonrpc::{
     Request, RequestId, Response, RpcError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     METHOD_NOT_FOUND, PARSE_ERROR,
@@ -21,9 +32,10 @@ use scriptum_common::types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tiktoken_rs::CoreBPE;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
-use tiktoken_rs::CoreBPE;
+use tracing::{info_span, Instrument};
 use uuid::Uuid;
 
 // ── Git sync policy ─────────────────────────────────────────────────
@@ -498,6 +510,201 @@ struct WorkspaceCreateResult {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone)]
+struct ImportedWorkspaceDoc {
+    doc_id: Uuid,
+    path: String,
+    abs_path: PathBuf,
+    content: String,
+    line_ending_style: String,
+    last_fs_mtime_ns: i64,
+    content_hash: String,
+    title: String,
+    tags: Vec<String>,
+}
+
+const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
+fn is_markdown_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+}
+
+fn collect_markdown_files_recursive(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+
+    while let Some(dir) = pending.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|error| format!("failed to scan directory `{}`: {error}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!("failed to read directory entry in `{}`: {error}", dir.display())
+            })?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "failed to inspect path `{}` while importing workspace: {error}",
+                    path.display()
+                )
+            })?;
+
+            if file_type.is_dir() {
+                if entry.file_name() == ".scriptum" {
+                    continue;
+                }
+                pending.push(path);
+                continue;
+            }
+
+            if file_type.is_file() && is_markdown_file(&path) {
+                files.push(path);
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn normalize_markdown_utf8(raw: &[u8]) -> String {
+    let without_bom = raw.strip_prefix(&UTF8_BOM).unwrap_or(raw);
+    String::from_utf8_lossy(without_bom).into_owned()
+}
+
+fn detect_line_ending_style(content: &str) -> String {
+    if content.contains("\r\n") {
+        "crlf".to_string()
+    } else {
+        "lf".to_string()
+    }
+}
+
+fn modified_to_unix_nanos(path: &Path) -> Result<i64, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("failed to read metadata for `{}`: {error}", path.display()))?;
+    let modified = metadata.modified().map_err(|error| {
+        format!("failed to read modification time for `{}`: {error}", path.display())
+    })?;
+    let nanos = modified
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("invalid modification time for `{}`: {error}", path.display()))?
+        .as_nanos();
+    i64::try_from(nanos).map_err(|_| format!("modification time overflow for `{}`", path.display()))
+}
+
+fn ensure_unique_path_norm(raw_paths: &[String]) -> Result<(), String> {
+    let mut seen = HashMap::<String, String>::new();
+    for raw in raw_paths {
+        let path_norm = normalize_path(raw)
+            .map_err(|error| format!("invalid markdown path `{raw}`: {error}"))?;
+        if let Some(first) = seen.insert(path_norm.clone(), raw.clone()) {
+            return Err(format!(
+                "path collision after normalization for `{path_norm}`: `{first}` and `{raw}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn tag_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?m)(?:^|[\s(\[])#([A-Za-z0-9][A-Za-z0-9_-]{0,63})\b")
+            .expect("tag extraction regex should compile")
+    })
+}
+
+fn extract_index_tags(content: &str) -> Vec<String> {
+    let mut tags = BTreeSet::new();
+    for captures in tag_regex().captures_iter(content) {
+        if let Some(tag) = captures.get(1) {
+            tags.insert(tag.as_str().to_ascii_lowercase());
+        }
+    }
+    tags.into_iter().collect()
+}
+
+fn ensure_tag_schema(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tags (
+            name TEXT PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS document_tags (
+            doc_id TEXT NOT NULL,
+            tag_name TEXT NOT NULL,
+            PRIMARY KEY (doc_id, tag_name)
+        );
+        CREATE INDEX IF NOT EXISTS document_tags_tag_idx
+            ON document_tags (tag_name);",
+    )
+    .map_err(|error| format!("failed to ensure tag index schema: {error}"))
+}
+
+fn replace_document_tags(
+    conn: &rusqlite::Connection,
+    doc_id: &str,
+    tags: &[String],
+) -> Result<(), String> {
+    conn.execute("DELETE FROM document_tags WHERE doc_id = ?1", rusqlite::params![doc_id])
+        .map_err(|error| format!("failed to clear existing tags for doc `{doc_id}`: {error}"))?;
+
+    for tag in tags {
+        conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", rusqlite::params![tag])
+            .map_err(|error| format!("failed to upsert tag `{tag}`: {error}"))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO document_tags (doc_id, tag_name) VALUES (?1, ?2)",
+            rusqlite::params![doc_id, tag],
+        )
+        .map_err(|error| format!("failed to link tag `{tag}` to doc `{doc_id}`: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn scan_workspace_markdown_docs(root: &Path) -> Result<Vec<ImportedWorkspaceDoc>, String> {
+    let files = collect_markdown_files_recursive(root)?;
+    let relative_paths: Vec<String> = files
+        .iter()
+        .map(|path| {
+            path.strip_prefix(root)
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                .map_err(|_| {
+                    format!(
+                        "imported file `{}` is outside workspace root `{}`",
+                        path.display(),
+                        root.display()
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure_unique_path_norm(&relative_paths)?;
+
+    let mut imported = Vec::with_capacity(files.len());
+    for (abs_path, relative_path) in files.into_iter().zip(relative_paths.into_iter()) {
+        let path_norm = normalize_path(&relative_path)
+            .map_err(|error| format!("invalid markdown path `{relative_path}`: {error}"))?;
+        let raw = fs::read(&abs_path)
+            .map_err(|error| format!("failed to read `{}`: {error}", abs_path.display()))?;
+        let content = normalize_markdown_utf8(&raw);
+        let content_hash = sha256_hex(content.as_bytes());
+        let title = extract_title(&content, Path::new(&path_norm));
+        let tags = extract_index_tags(&content);
+        imported.push(ImportedWorkspaceDoc {
+            doc_id: Uuid::new_v4(),
+            path: path_norm,
+            abs_path: abs_path.clone(),
+            line_ending_style: detect_line_ending_style(&content),
+            last_fs_mtime_ns: modified_to_unix_nanos(&abs_path)?,
+            content_hash,
+            title,
+            tags,
+            content,
+        });
+    }
+
+    Ok(imported)
+}
+
 impl Default for RpcServerState {
     fn default() -> Self {
         let meta_db = MetaDb::open(":memory:").expect("in-memory meta.db should initialize");
@@ -566,14 +773,9 @@ impl RpcServerState {
     where
         F: FnOnce(&rusqlite::Connection, &mut LeaseStore) -> Result<T, String>,
     {
-        let db = self
-            .agent_db
-            .lock()
-            .map_err(|_| "agent db lock poisoned".to_string())?;
-        let mut leases = self
-            .lease_store
-            .lock()
-            .map_err(|_| "agent lease store lock poisoned".to_string())?;
+        let db = self.agent_db.lock().map_err(|_| "agent db lock poisoned".to_string())?;
+        let mut leases =
+            self.lease_store.lock().map_err(|_| "agent lease store lock poisoned".to_string())?;
         f(db.connection(), &mut leases)
     }
 
@@ -587,9 +789,11 @@ impl RpcServerState {
         let active_sessions =
             SessionStore::list_active(conn, &workspace).map_err(|error| error.to_string())?;
 
-        if let Some(session) = active_sessions.into_iter().find(|session| session.agent_id == agent_id)
+        if let Some(session) =
+            active_sessions.into_iter().find(|session| session.agent_id == agent_id)
         {
-            SessionStore::touch(conn, &session.session_id, now).map_err(|error| error.to_string())?;
+            SessionStore::touch(conn, &session.session_id, now)
+                .map_err(|error| error.to_string())?;
             return Ok(());
         }
 
@@ -677,9 +881,7 @@ impl RpcServerState {
                 })
                 .collect::<Vec<_>>();
             items.sort_by(|a, b| {
-                b.last_seen_at
-                    .cmp(&a.last_seen_at)
-                    .then_with(|| a.agent_id.cmp(&b.agent_id))
+                b.last_seen_at.cmp(&a.last_seen_at).then_with(|| a.agent_id.cmp(&b.agent_id))
             });
 
             Ok(AgentListResult { items })
@@ -778,7 +980,8 @@ impl RpcServerState {
                 note,
             };
 
-            let claim_result = lease_store.claim(conn, claim, now).map_err(|error| error.to_string())?;
+            let claim_result =
+                lease_store.claim(conn, claim, now).map_err(|error| error.to_string())?;
             let lease = claim_result.lease;
             let conflicts = claim_result
                 .conflicts
@@ -900,10 +1103,7 @@ impl RpcServerState {
             .ok_or_else(|| format!("workspace {} not found", workspace_id))?;
 
         let doc_metadata = self.doc_metadata.read().await;
-        let doc_count = doc_metadata
-            .keys()
-            .filter(|(ws_id, _)| *ws_id == workspace_id)
-            .count();
+        let doc_count = doc_metadata.keys().filter(|(ws_id, _)| *ws_id == workspace_id).count();
 
         Ok(WorkspaceOpenResult {
             workspace_id: ws.workspace_id,
@@ -935,12 +1135,110 @@ impl RpcServerState {
             .map_err(|e| format!("failed to create .scriptum directory: {e}"))?;
 
         let config = crate::config::WorkspaceConfig::default();
-        config
-            .save(path)
-            .map_err(|e| format!("failed to write workspace.toml: {e}"))?;
+        config.save(path).map_err(|e| format!("failed to write workspace.toml: {e}"))?;
+
+        // Import any existing markdown files from disk.
+        let imported_docs = scan_workspace_markdown_docs(path)?;
 
         let workspace_id = Uuid::new_v4();
         let created_at = chrono::Utc::now();
+
+        // Seed local metadata/index stores for imported docs.
+        self.with_agent_storage(|conn, _| {
+            let search_index = Fts5Index::new(conn);
+            search_index
+                .ensure_schema()
+                .map_err(|error| format!("failed to ensure FTS index schema: {error}"))?;
+
+            let backlink_store = BacklinkStore::new(conn);
+            backlink_store
+                .ensure_schema()
+                .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
+
+            ensure_tag_schema(conn)?;
+
+            let linkables: Vec<LinkableDocument> = imported_docs
+                .iter()
+                .map(|doc| LinkableDocument {
+                    doc_id: doc.doc_id.to_string(),
+                    path: doc.path.clone(),
+                    title: Some(doc.title.clone()),
+                })
+                .collect();
+
+            for doc in &imported_docs {
+                let local_record = LocalDocumentRecord {
+                    doc_id: doc.doc_id.to_string(),
+                    workspace_id: workspace_id.to_string(),
+                    abs_path: doc.abs_path.to_string_lossy().to_string(),
+                    line_ending_style: doc.line_ending_style.clone(),
+                    last_fs_mtime_ns: doc.last_fs_mtime_ns,
+                    last_content_hash: doc.content_hash.clone(),
+                    projection_rev: 0,
+                };
+                DocumentsLocalStore::insert(conn, &local_record).map_err(|error| {
+                    format!("failed to register imported local doc `{}`: {error}", doc.path)
+                })?;
+
+                search_index
+                    .upsert(&IndexEntry {
+                        doc_id: doc.doc_id.to_string(),
+                        title: doc.title.clone(),
+                        content: doc.content.clone(),
+                    })
+                    .map_err(|error| {
+                        format!("failed to index imported doc `{}`: {error}", doc.path)
+                    })?;
+
+                let links = parse_wiki_links(&doc.content);
+                let resolved = resolve_wiki_links(&doc.doc_id.to_string(), &links, &linkables);
+                backlink_store.replace_for_source(&doc.doc_id.to_string(), &resolved).map_err(
+                    |error| format!("failed to index backlinks for `{}`: {error}", doc.path),
+                )?;
+
+                replace_document_tags(conn, &doc.doc_id.to_string(), &doc.tags)?;
+            }
+
+            Ok(())
+        })?;
+
+        // Seed in-memory CRDT docs + RPC metadata/history with seq=0.
+        {
+            let mut manager = self.doc_manager.write().await;
+            for doc in &imported_docs {
+                let ydoc = manager.subscribe_or_create(doc.doc_id);
+                ydoc.insert_text("content", 0, &doc.content);
+                let _ = manager.unsubscribe(doc.doc_id);
+            }
+        }
+
+        {
+            let mut metadata = self.doc_metadata.write().await;
+            for doc in &imported_docs {
+                metadata.insert(
+                    (workspace_id, doc.doc_id),
+                    DocMetadataRecord {
+                        workspace_id,
+                        doc_id: doc.doc_id,
+                        path: doc.path.clone(),
+                        title: doc.title.clone(),
+                        head_seq: 0,
+                        etag: format!("doc:{}:0", doc.doc_id),
+                    },
+                );
+            }
+        }
+
+        {
+            let mut history = self.doc_history.write().await;
+            for doc in &imported_docs {
+                history
+                    .entry((workspace_id, doc.doc_id))
+                    .or_default()
+                    .insert(0, doc.content.clone());
+            }
+        }
+
         let info = WorkspaceInfo {
             workspace_id,
             name: trimmed_name.clone(),
@@ -949,12 +1247,7 @@ impl RpcServerState {
         };
         self.workspaces.write().await.insert(workspace_id, info);
 
-        Ok(WorkspaceCreateResult {
-            workspace_id,
-            name: trimmed_name,
-            root_path,
-            created_at,
-        })
+        Ok(WorkspaceCreateResult { workspace_id, name: trimmed_name, root_path, created_at })
     }
 
     async fn read_doc(
@@ -986,7 +1279,12 @@ impl RpcServerState {
             let _ = manager.unsubscribe(doc_id);
         }
 
-        DocReadResult { metadata, sections, content_md: include_content.then_some(content_md), degraded }
+        DocReadResult {
+            metadata,
+            sections,
+            content_md: include_content.then_some(content_md),
+            degraded,
+        }
     }
 
     async fn edit_doc(&self, params: DocEditParams) -> Result<DocEditResult, String> {
@@ -1055,8 +1353,13 @@ impl RpcServerState {
                     record.head_seq,
                 )
             };
-            self.record_doc_snapshot(params.workspace_id, params.doc_id, updated_seq, &updated_content)
-                .await;
+            self.record_doc_snapshot(
+                params.workspace_id,
+                params.doc_id,
+                updated_seq,
+                &updated_content,
+            )
+            .await;
 
             Ok(result)
         }
@@ -1097,11 +1400,7 @@ impl RpcServerState {
         DocSectionsResult { doc_id, sections }
     }
 
-    async fn doc_tree(
-        &self,
-        workspace_id: Uuid,
-        path_prefix: Option<&str>,
-    ) -> DocTreeResult {
+    async fn doc_tree(&self, workspace_id: Uuid, path_prefix: Option<&str>) -> DocTreeResult {
         let metadata = self.doc_metadata.read().await;
 
         let mut items: Vec<DocTreeEntry> = metadata
@@ -1130,10 +1429,7 @@ impl RpcServerState {
             return Err("q must not be empty".to_string());
         }
         if params.limit == 0 || params.limit > DOC_SEARCH_MAX_LIMIT {
-            return Err(format!(
-                "limit must be between 1 and {}",
-                DOC_SEARCH_MAX_LIMIT
-            ));
+            return Err(format!("limit must be between 1 and {}", DOC_SEARCH_MAX_LIMIT));
         }
 
         let offset = decode_doc_search_cursor(params.cursor.as_deref())?;
@@ -1204,11 +1500,7 @@ impl RpcServerState {
         }
 
         let next_cursor = (end < hits.len()).then(|| encode_doc_search_cursor(end));
-        Ok(DocSearchResult {
-            items,
-            total: hits.len(),
-            next_cursor,
-        })
+        Ok(DocSearchResult { items, total: hits.len(), next_cursor })
     }
 
     async fn doc_diff(
@@ -1444,28 +1736,45 @@ impl RpcServerState {
 }
 
 pub async fn handle_raw_request(raw: &[u8], state: &RpcServerState) -> Response {
-    let request = match serde_json::from_slice::<Request>(raw) {
-        Ok(request) => request,
-        Err(error) => {
+    let trace_id = trace_id_from_raw_request(raw);
+    with_trace_id_scope(trace_id.clone(), async {
+        let request = match serde_json::from_slice::<Request>(raw) {
+            Ok(request) => request,
+            Err(error) => {
+                return Response::error(
+                    RequestId::Null,
+                    RpcError {
+                        code: PARSE_ERROR,
+                        message: "Parse error".to_string(),
+                        data: Some(json!({ "reason": error.to_string() })),
+                    },
+                );
+            }
+        };
+
+        if request.jsonrpc != "2.0" {
             return Response::error(
-                RequestId::Null,
+                request.id,
                 RpcError {
-                    code: PARSE_ERROR,
-                    message: "Parse error".to_string(),
-                    data: Some(json!({ "reason": error.to_string() })),
+                    code: INVALID_REQUEST,
+                    message: "Invalid Request".to_string(),
+                    data: None,
                 },
             );
         }
-    };
 
-    if request.jsonrpc != "2.0" {
-        return Response::error(
-            request.id,
-            RpcError { code: INVALID_REQUEST, message: "Invalid Request".to_string(), data: None },
-        );
-    }
-
-    dispatch_request(request, state).await
+        let request_method = request.method.clone();
+        let request_id = request.id.clone();
+        dispatch_request(request, state)
+            .instrument(info_span!(
+                "daemon.rpc.dispatch",
+                rpc_method = %request_method,
+                rpc_id = ?request_id
+            ))
+            .await
+    })
+    .instrument(info_span!("daemon.rpc.request", trace_id = %trace_id))
+    .await
 }
 
 pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Response {
@@ -1561,10 +1870,7 @@ fn parse_doc_bundle_params(
     request_id: RequestId,
 ) -> Result<DocBundleParams, Response> {
     let Some(params) = params else {
-        return Err(invalid_params_response(
-            request_id,
-            "doc.bundle requires params".to_string(),
-        ));
+        return Err(invalid_params_response(request_id, "doc.bundle requires params".to_string()));
     };
 
     serde_json::from_value::<DocBundleParams>(params).map_err(|error| {
@@ -1617,14 +1923,9 @@ async fn handle_doc_edit_section(request: Request, state: &RpcServerState) -> Re
 
     match state.edit_section(params).await {
         Ok(result) => Response::success(request.id, json!(result)),
-        Err(e) => Response::error(
-            request.id,
-            RpcError {
-                code: INTERNAL_ERROR,
-                message: e,
-                data: None,
-            },
-        ),
+        Err(e) => {
+            Response::error(request.id, RpcError { code: INTERNAL_ERROR, message: e, data: None })
+        }
     }
 }
 
@@ -1689,10 +1990,7 @@ fn parse_doc_search_params(
     request_id: RequestId,
 ) -> Result<DocSearchParams, Response> {
     let Some(params) = params else {
-        return Err(invalid_params_response(
-            request_id,
-            "doc.search requires params".to_string(),
-        ));
+        return Err(invalid_params_response(request_id, "doc.search requires params".to_string()));
     };
 
     serde_json::from_value::<DocSearchParams>(params).map_err(|error| {
@@ -1715,9 +2013,7 @@ async fn handle_doc_tree(request: Request, state: &RpcServerState) -> Response {
         }
     };
 
-    let result = state
-        .doc_tree(params.workspace_id, params.path_prefix.as_deref())
-        .await;
+    let result = state.doc_tree(params.workspace_id, params.path_prefix.as_deref()).await;
     Response::success(request.id, json!(result))
 }
 
@@ -1835,17 +2131,11 @@ fn parse_agent_list_params(
     request_id: RequestId,
 ) -> Result<AgentListParams, Response> {
     let Some(params) = params else {
-        return Err(invalid_params_response(
-            request_id,
-            "agent.list requires params".to_string(),
-        ));
+        return Err(invalid_params_response(request_id, "agent.list requires params".to_string()));
     };
 
     serde_json::from_value::<AgentListParams>(params).map_err(|error| {
-        invalid_params_response(
-            request_id,
-            format!("failed to decode agent.list params: {error}"),
-        )
+        invalid_params_response(request_id, format!("failed to decode agent.list params: {error}"))
     })
 }
 
@@ -1866,7 +2156,9 @@ fn handle_agent_claim(request: Request, state: &RpcServerState) -> Response {
     ) {
         Ok(result) => Response::success(request.id, json!(result)),
         Err(reason) => {
-            if reason.contains("ttl_sec must be > 0") || reason.contains("section_id must not be empty") {
+            if reason.contains("ttl_sec must be > 0")
+                || reason.contains("section_id must not be empty")
+            {
                 invalid_params_response(request.id, reason)
             } else {
                 Response::error(
@@ -1887,17 +2179,11 @@ fn parse_agent_claim_params(
     request_id: RequestId,
 ) -> Result<AgentClaimParams, Response> {
     let Some(params) = params else {
-        return Err(invalid_params_response(
-            request_id,
-            "agent.claim requires params".to_string(),
-        ));
+        return Err(invalid_params_response(request_id, "agent.claim requires params".to_string()));
     };
 
     serde_json::from_value::<AgentClaimParams>(params).map_err(|error| {
-        invalid_params_response(
-            request_id,
-            format!("failed to decode agent.claim params: {error}"),
-        )
+        invalid_params_response(request_id, format!("failed to decode agent.claim params: {error}"))
     })
 }
 
@@ -1912,9 +2198,7 @@ fn extract_section_content(markdown: &str, section: Option<&Section>) -> String 
     markdown
         .lines()
         .enumerate()
-        .filter_map(|(index, line)| {
-            (index >= start_line && index < end_line).then_some(line)
-        })
+        .filter_map(|(index, line)| (index >= start_line && index < end_line).then_some(line))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1961,7 +2245,8 @@ fn section_is_descendant_of(
         if parent_id == ancestor_id {
             return true;
         }
-        current_parent = sections_by_id.get(parent_id).and_then(|section| section.parent_id.as_deref());
+        current_parent =
+            sections_by_id.get(parent_id).and_then(|section| section.parent_id.as_deref());
     }
     false
 }
@@ -2031,16 +2316,13 @@ where
     Ok(total)
 }
 
-fn count_serialized_tokens_with<T, F>(
-    value: &T,
-    token_counter: &F,
-) -> Result<usize, String>
+fn count_serialized_tokens_with<T, F>(value: &T, token_counter: &F) -> Result<usize, String>
 where
     T: Serialize,
     F: Fn(&str) -> Result<usize, String>,
 {
-    let serialized =
-        serde_json::to_string(value).map_err(|error| format!("failed to serialize bundle data: {error}"))?;
+    let serialized = serde_json::to_string(value)
+        .map_err(|error| format!("failed to serialize bundle data: {error}"))?;
     token_counter(&serialized)
 }
 
@@ -2051,7 +2333,8 @@ fn count_tokens_cl100k(value: &str) -> Result<usize, String> {
 
 fn cl100k_tokenizer() -> Result<&'static CoreBPE, String> {
     static TOKENIZER: OnceLock<Result<CoreBPE, String>> = OnceLock::new();
-    let tokenizer = TOKENIZER.get_or_init(|| tiktoken_rs::cl100k_base().map_err(|error| error.to_string()));
+    let tokenizer =
+        TOKENIZER.get_or_init(|| tiktoken_rs::cl100k_base().map_err(|error| error.to_string()));
 
     match tokenizer {
         Ok(tokenizer) => Ok(tokenizer),
@@ -2068,7 +2351,7 @@ fn decode_doc_edit_ops(value: &serde_json::Value) -> Result<Vec<u8>, String> {
                 object.get("payload_b64").or_else(|| object.get("base64"))
             else {
                 return Err(
-                    "doc.edit `ops` object must include `payload_b64` (or `base64`)".to_string(),
+                    "doc.edit `ops` object must include `payload_b64` (or `base64`)".to_string()
                 );
             };
             let Some(payload_b64) = payload_b64_value.as_str() else {
@@ -2076,10 +2359,10 @@ fn decode_doc_edit_ops(value: &serde_json::Value) -> Result<Vec<u8>, String> {
             };
             decode_doc_edit_ops_base64(payload_b64)
         }
-        _ => Err(
-            "doc.edit `ops` must be a base64 string, byte array, or object with `payload_b64`"
-                .to_string(),
-        ),
+        _ => {
+            Err("doc.edit `ops` must be a base64 string, byte array, or object with `payload_b64`"
+                .to_string())
+        }
     }
 }
 
@@ -2120,11 +2403,9 @@ fn decode_doc_search_cursor(cursor: Option<&str>) -> Result<usize, String> {
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|error| format!("invalid cursor encoding: {error}"))?;
-    let as_text =
-        String::from_utf8(decoded).map_err(|error| format!("cursor is not valid utf-8: {error}"))?;
-    as_text
-        .parse::<usize>()
-        .map_err(|error| format!("cursor is not a valid offset: {error}"))
+    let as_text = String::from_utf8(decoded)
+        .map_err(|error| format!("cursor is not valid utf-8: {error}"))?;
+    as_text.parse::<usize>().map_err(|error| format!("cursor is not a valid offset: {error}"))
 }
 
 fn encode_doc_search_cursor(offset: usize) -> String {
@@ -2311,21 +2592,14 @@ async fn handle_workspace_open(request: Request, state: &RpcServerState) -> Resp
         Ok(result) => Response::success(request.id, json!(result)),
         Err(reason) => Response::error(
             request.id,
-            RpcError {
-                code: INTERNAL_ERROR,
-                message: reason,
-                data: None,
-            },
+            RpcError { code: INTERNAL_ERROR, message: reason, data: None },
         ),
     }
 }
 
 async fn handle_workspace_create(request: Request, state: &RpcServerState) -> Response {
     let Some(params) = request.params else {
-        return invalid_params_response(
-            request.id,
-            "workspace.create requires params".to_string(),
-        );
+        return invalid_params_response(request.id, "workspace.create requires params".to_string());
     };
 
     let params: WorkspaceCreateParams = match serde_json::from_value(params) {
@@ -2341,16 +2615,16 @@ async fn handle_workspace_create(request: Request, state: &RpcServerState) -> Re
     match state.workspace_create(params.name, params.root_path).await {
         Ok(result) => Response::success(request.id, json!(result)),
         Err(reason) => {
-            if reason.contains("must not be empty") || reason.contains("must be an absolute path") {
+            if reason.contains("must not be empty")
+                || reason.contains("must be an absolute path")
+                || reason.contains("path collision after normalization")
+                || reason.contains("invalid markdown path")
+            {
                 invalid_params_response(request.id, reason)
             } else {
                 Response::error(
                     request.id,
-                    RpcError {
-                        code: INTERNAL_ERROR,
-                        message: reason,
-                        data: None,
-                    },
+                    RpcError { code: INTERNAL_ERROR, message: reason, data: None },
                 )
             }
         }
@@ -2414,11 +2688,7 @@ fn handle_git_sync(request: Request, state: &RpcServerState) -> Response {
         Ok(job_id) => Response::success(request.id, json!({ "job_id": job_id })),
         Err(e) => Response::error(
             request.id,
-            RpcError {
-                code: INTERNAL_ERROR,
-                message: format!("git sync failed: {e}"),
-                data: None,
-            },
+            RpcError { code: INTERNAL_ERROR, message: format!("git sync failed: {e}"), data: None },
         ),
     }
 }
@@ -2766,7 +3036,9 @@ mod tests {
         let state = RpcServerState::default();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
-        state.seed_doc(workspace_id, doc_id, "docs/history.md", "History", "# Title\nold line\n").await;
+        state
+            .seed_doc(workspace_id, doc_id, "docs/history.md", "History", "# Title\nold line\n")
+            .await;
 
         let edit_1 = Request::new(
             "doc.edit",
@@ -2779,7 +3051,10 @@ mod tests {
             RequestId::Number(90),
         );
         let edit_1_response = dispatch_request(edit_1, &state).await;
-        assert!(edit_1_response.error.is_none(), "expected first edit to succeed: {edit_1_response:?}");
+        assert!(
+            edit_1_response.error.is_none(),
+            "expected first edit to succeed: {edit_1_response:?}"
+        );
 
         let edit_2 = Request::new(
             "doc.edit",
@@ -2792,7 +3067,10 @@ mod tests {
             RequestId::Number(91),
         );
         let edit_2_response = dispatch_request(edit_2, &state).await;
-        assert!(edit_2_response.error.is_none(), "expected second edit to succeed: {edit_2_response:?}");
+        assert!(
+            edit_2_response.error.is_none(),
+            "expected second edit to succeed: {edit_2_response:?}"
+        );
 
         let diff_request = Request::new(
             "doc.diff",
@@ -2885,8 +3163,7 @@ mod tests {
         let state = RpcServerState::default();
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
-        state.seed_doc(workspace_id, doc_id, "docs/readme.md", "Readme", "# Root\n")
-            .await;
+        state.seed_doc(workspace_id, doc_id, "docs/readme.md", "Readme", "# Root\n").await;
 
         let request = Request::new(
             "doc.bundle",
@@ -3015,9 +3292,13 @@ mod tests {
         assert_eq!(drop_comments_backlinks_children.parents.len(), 1);
 
         let mut section_only_context = DocBundleContext::default();
-        let section_only_budget =
-            apply_bundle_token_budget_with(section_content, &mut section_only_context, None, &token_counter)
-                .expect("should count section-only tokens");
+        let section_only_budget = apply_bundle_token_budget_with(
+            section_content,
+            &mut section_only_context,
+            None,
+            &token_counter,
+        )
+        .expect("should count section-only tokens");
 
         let mut drop_all_context = base_context.clone();
         let _ = apply_bundle_token_budget_with(
@@ -3081,9 +3362,8 @@ mod tests {
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result should be populated");
         assert_eq!(result["agent_id"], "claude-1");
-        let capabilities = result["capabilities"]
-            .as_array()
-            .expect("capabilities should be an array");
+        let capabilities =
+            result["capabilities"].as_array().expect("capabilities should be an array");
         assert!(capabilities.contains(&json!("agent.claim")));
         assert!(capabilities.contains(&json!("agent.status")));
     }
@@ -3094,8 +3374,7 @@ mod tests {
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
 
-        claim_section(&state, 61, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
-            .await;
+        claim_section(&state, 61, workspace_id, doc_id, "root/auth", "claude-1", "exclusive").await;
 
         let request = Request::new(
             "agent.claim",
@@ -3113,17 +3392,13 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result should be populated");
-        let lease_id = result["lease_id"]
-            .as_str()
-            .expect("lease_id should be a string");
+        let lease_id = result["lease_id"].as_str().expect("lease_id should be a string");
         assert!(lease_id.contains(&workspace_id.to_string()));
         assert!(lease_id.contains(&doc_id.to_string()));
         assert!(lease_id.contains("root/auth"));
         assert!(lease_id.contains("copilot-1"));
 
-        let conflicts = result["conflicts"]
-            .as_array()
-            .expect("conflicts should be an array");
+        let conflicts = result["conflicts"].as_array().expect("conflicts should be an array");
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0]["agent_id"], "claude-1");
         assert_eq!(conflicts[0]["section_id"], "root/auth");
@@ -3136,8 +3411,7 @@ mod tests {
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
 
-        claim_section(&state, 63, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
-            .await;
+        claim_section(&state, 63, workspace_id, doc_id, "root/auth", "claude-1", "exclusive").await;
         claim_section(&state, 64, workspace_id, doc_id, "root/auth/oauth", "claude-1", "shared")
             .await;
         claim_section(&state, 65, workspace_id, doc_id, "root/api", "copilot-1", "shared").await;
@@ -3151,20 +3425,17 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result should be populated");
-        let sessions = result["active_sessions"]
-            .as_array()
-            .expect("active_sessions should be an array");
+        let sessions =
+            result["active_sessions"].as_array().expect("active_sessions should be an array");
         assert_eq!(sessions.len(), 2);
 
         let mut sections_by_agent = HashMap::new();
         for session in sessions {
-            let agent_id = session["agent_id"]
-                .as_str()
-                .expect("agent_id should be a string")
-                .to_string();
-            let active_sections = session["active_sections"]
-                .as_u64()
-                .expect("active_sections should be numeric") as u32;
+            let agent_id =
+                session["agent_id"].as_str().expect("agent_id should be a string").to_string();
+            let active_sections =
+                session["active_sections"].as_u64().expect("active_sections should be numeric")
+                    as u32;
             sections_by_agent.insert(agent_id, active_sections);
         }
         assert_eq!(sections_by_agent.get("claude-1"), Some(&2));
@@ -3177,8 +3448,7 @@ mod tests {
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
 
-        claim_section(&state, 67, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
-            .await;
+        claim_section(&state, 67, workspace_id, doc_id, "root/auth", "claude-1", "exclusive").await;
         claim_section(&state, 68, workspace_id, doc_id, "root/auth", "copilot-1", "shared").await;
         claim_section(&state, 69, workspace_id, doc_id, "root/api", "cursor-1", "shared").await;
 
@@ -3191,15 +3461,11 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result should be populated");
-        let items = result["items"]
-            .as_array()
-            .expect("items should be an array");
+        let items = result["items"].as_array().expect("items should be an array");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["section"]["id"], "root/auth");
         assert_eq!(items[0]["severity"], "info");
-        let editors = items[0]["editors"]
-            .as_array()
-            .expect("editors should be an array");
+        let editors = items[0]["editors"].as_array().expect("editors should be an array");
         assert_eq!(editors.len(), 2);
         let names = editors
             .iter()
@@ -3215,8 +3481,7 @@ mod tests {
         let workspace_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
 
-        claim_section(&state, 71, workspace_id, doc_id, "root/auth", "claude-1", "exclusive")
-            .await;
+        claim_section(&state, 71, workspace_id, doc_id, "root/auth", "claude-1", "exclusive").await;
         claim_section(&state, 72, workspace_id, doc_id, "root/auth/oauth", "claude-1", "shared")
             .await;
         claim_section(&state, 73, workspace_id, doc_id, "root/api", "copilot-1", "shared").await;
@@ -3230,18 +3495,14 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result should be populated");
-        let items = result["items"]
-            .as_array()
-            .expect("items should be an array");
+        let items = result["items"].as_array().expect("items should be an array");
         assert_eq!(items.len(), 2);
 
         let mut sections_by_agent = HashMap::new();
         for item in items {
             sections_by_agent.insert(
                 item["agent_id"].as_str().expect("agent_id should be a string").to_string(),
-                item["active_sections"]
-                    .as_u64()
-                    .expect("active_sections should be numeric") as u32,
+                item["active_sections"].as_u64().expect("active_sections should be numeric") as u32,
             );
             assert!(item["last_seen_at"].as_str().is_some());
         }
@@ -3369,11 +3630,8 @@ mod tests {
     #[tokio::test]
     async fn git_sync_rejects_invalid_params() {
         let state = state_with_git(MockGitOps::new());
-        let request = Request::new(
-            "git.sync",
-            Some(json!({ "action": "bad" })),
-            RequestId::Number(24),
-        );
+        let request =
+            Request::new("git.sync", Some(json!({ "action": "bad" })), RequestId::Number(24));
         let response = dispatch_request(request, &state).await;
 
         let error = response.error.expect("error should be present");
@@ -3563,11 +3821,8 @@ mod tests {
         state.seed_doc(ws, Uuid::new_v4(), "docs/guide.md", "Guide", "# Guide\n").await;
         state.seed_doc(ws, Uuid::new_v4(), "readme.md", "README", "# README\n").await;
 
-        let request = Request::new(
-            "doc.tree",
-            Some(json!({ "workspace_id": ws })),
-            RequestId::Number(210),
-        );
+        let request =
+            Request::new("doc.tree", Some(json!({ "workspace_id": ws })), RequestId::Number(210));
         let response = dispatch_request(request, &state).await;
 
         assert!(response.error.is_none(), "expected success: {response:?}");
@@ -3629,11 +3884,8 @@ mod tests {
         state.seed_doc(ws_a, Uuid::new_v4(), "a.md", "A", "# A\n").await;
         state.seed_doc(ws_b, Uuid::new_v4(), "b.md", "B", "# B\n").await;
 
-        let request = Request::new(
-            "doc.tree",
-            Some(json!({ "workspace_id": ws_a })),
-            RequestId::Number(213),
-        );
+        let request =
+            Request::new("doc.tree", Some(json!({ "workspace_id": ws_a })), RequestId::Number(213));
         let response = dispatch_request(request, &state).await;
 
         let result = response.result.expect("result");
@@ -3697,10 +3949,8 @@ mod tests {
         let first_items = first_result["items"].as_array().expect("items should be an array");
         assert_eq!(first_items.len(), 1);
         assert_eq!(first_result["total"], 2);
-        let first_path = first_items[0]["path"]
-            .as_str()
-            .expect("path should be a string")
-            .to_string();
+        let first_path =
+            first_items[0]["path"].as_str().expect("path should be a string").to_string();
         assert!(first_path == "docs/alpha.md" || first_path == "docs/beta.md");
         let first_title = first_items[0]["title"].as_str().expect("title should be a string");
         if first_path == "docs/alpha.md" {
@@ -3835,7 +4085,9 @@ mod tests {
     async fn workspace_list_respects_pagination() {
         let state = RpcServerState::default();
         for i in 0..5 {
-            state.seed_workspace(Uuid::new_v4(), format!("WS-{i:02}"), format!("/tmp/ws-{i}")).await;
+            state
+                .seed_workspace(Uuid::new_v4(), format!("WS-{i:02}"), format!("/tmp/ws-{i}"))
+                .await;
         }
 
         let request = Request::new(
@@ -3974,5 +4226,120 @@ mod tests {
 
         let error = response.error.expect("error should be present");
         assert_eq!(error.code, INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn workspace_create_imports_existing_markdown_files_and_indexes() {
+        let state = RpcServerState::default();
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+
+        std::fs::create_dir_all(tmp.path().join("docs")).expect("docs directory should be created");
+        std::fs::write(
+            tmp.path().join("docs").join("guide.md"),
+            "# Guide\n\nSee [[notes]].\n#ops #Migration\n",
+        )
+        .expect("guide markdown should be written");
+        std::fs::write(
+            tmp.path().join("notes.md"),
+            b"\xEF\xBB\xBF# Notes\r\n\r\nWindows line endings.\r\n",
+        )
+        .expect("notes markdown should be written");
+        std::fs::write(tmp.path().join("ignore.txt"), "not markdown")
+            .expect("non-markdown file should be written");
+
+        let create = Request::new(
+            "workspace.create",
+            Some(json!({
+                "name": "Imported Workspace",
+                "root_path": tmp.path().to_str().expect("workspace root should be UTF-8"),
+            })),
+            RequestId::Number(125),
+        );
+        let create_resp = dispatch_request(create, &state).await;
+        assert!(create_resp.error.is_none(), "workspace.create should succeed: {create_resp:?}");
+        let create_result = create_resp.result.expect("workspace.create result should be present");
+        let workspace_id: Uuid = serde_json::from_value(create_result["workspace_id"].clone())
+            .expect("workspace_id should decode");
+
+        let tree_resp = dispatch_request(
+            Request::new(
+                "doc.tree",
+                Some(json!({ "workspace_id": workspace_id })),
+                RequestId::Number(126),
+            ),
+            &state,
+        )
+        .await;
+        assert!(tree_resp.error.is_none(), "doc.tree should succeed");
+        let tree = tree_resp.result.expect("doc.tree result should be present");
+        assert_eq!(tree["total"], 2);
+
+        let mut docs_by_path = HashMap::new();
+        for item in tree["items"].as_array().expect("doc.tree items should be an array") {
+            let path = item["path"].as_str().expect("doc.tree path should be a string");
+            let doc_id = item["doc_id"].as_str().expect("doc.tree doc_id should be a string");
+            docs_by_path
+                .insert(path.to_string(), Uuid::parse_str(doc_id).expect("doc_id should parse"));
+        }
+        assert!(docs_by_path.contains_key("docs/guide.md"));
+        assert!(docs_by_path.contains_key("notes.md"));
+
+        let notes_doc_id = docs_by_path["notes.md"];
+        let read_resp = dispatch_request(
+            Request::new(
+                "doc.read",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": notes_doc_id,
+                    "include_content": true,
+                })),
+                RequestId::Number(127),
+            ),
+            &state,
+        )
+        .await;
+        assert!(read_resp.error.is_none(), "doc.read should succeed");
+        let read_result = read_resp.result.expect("doc.read result should be present");
+        let notes_content =
+            read_result["content_md"].as_str().expect("doc.read should include markdown content");
+        assert!(
+            !notes_content.contains('\u{feff}'),
+            "BOM should be stripped from imported content"
+        );
+        assert!(notes_content.contains("\r\n"), "CRLF line endings should be preserved");
+
+        let guide_doc_id = docs_by_path["docs/guide.md"];
+        let (source_doc_id, target_doc_id, indexed_tags) = state
+            .with_agent_storage(|conn, _| {
+                let source_doc_id: String = conn
+                    .query_row("SELECT source_doc_id FROM backlinks LIMIT 1", [], |row| row.get(0))
+                    .map_err(|error| format!("failed to query backlink source: {error}"))?;
+                let target_doc_id: String = conn
+                    .query_row("SELECT target_doc_id FROM backlinks LIMIT 1", [], |row| row.get(0))
+                    .map_err(|error| format!("failed to query backlink target: {error}"))?;
+                let indexed_tags: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM document_tags WHERE doc_id = ?1",
+                        rusqlite::params![guide_doc_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| format!("failed to count indexed tags: {error}"))?;
+                Ok((source_doc_id, target_doc_id, indexed_tags))
+            })
+            .expect("index rows should be queryable");
+
+        assert_eq!(source_doc_id, guide_doc_id.to_string());
+        assert_eq!(target_doc_id, notes_doc_id.to_string());
+        assert_eq!(indexed_tags, 2);
+    }
+
+    #[test]
+    fn workspace_import_detects_path_norm_collisions() {
+        let err = super::ensure_unique_path_norm(&[
+            "docs/file.md".to_string(),
+            "docs\\file.md".to_string(),
+        ])
+        .expect_err("equivalent normalized paths should be rejected");
+        assert!(err.contains("path collision after normalization"));
     }
 }

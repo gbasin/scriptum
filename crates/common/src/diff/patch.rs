@@ -243,10 +243,7 @@ mod tests {
         }
 
         fn next_u64(&mut self) -> u64 {
-            self.state = self
-                .state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1);
+            self.state = self.state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             self.state
         }
 

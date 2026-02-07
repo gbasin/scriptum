@@ -70,10 +70,8 @@ impl UpdaterRuntimeConfig {
             None
         };
 
-        let endpoints = env::var(ENV_UPDATER_ENDPOINTS)
-            .ok()
-            .map(parse_endpoints)
-            .unwrap_or_default();
+        let endpoints =
+            env::var(ENV_UPDATER_ENDPOINTS).ok().map(parse_endpoints).unwrap_or_default();
         let pubkey = env::var(ENV_UPDATER_PUBKEY)
             .ok()
             .map(|value| value.trim().to_string())
@@ -98,7 +96,9 @@ impl UpdaterRuntimeConfig {
             return self.kill_switch_reason.clone();
         }
         if self.endpoints.is_empty() {
-            return Some("No updater endpoints configured (set SCRIPTUM_UPDATER_ENDPOINTS)".to_string());
+            return Some(
+                "No updater endpoints configured (set SCRIPTUM_UPDATER_ENDPOINTS)".to_string(),
+            );
         }
         if self.pubkey.is_none() {
             return Some("Updater public key is missing (set SCRIPTUM_UPDATER_PUBKEY)".to_string());
@@ -156,10 +156,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     }
 
     let config = UpdaterRuntimeConfig::from_env();
-    app.manage(UpdaterController {
-        config: config.clone(),
-        last_check: Mutex::new(None),
-    });
+    app.manage(UpdaterController { config: config.clone(), last_check: Mutex::new(None) });
 
     if config.check_on_startup {
         let app_handle = app.clone();
@@ -341,13 +338,8 @@ pub async fn install_update<R: Runtime>(app: AppHandle<R>) -> UpdaterInstallResu
 }
 
 pub fn last_check<R: Runtime>(app: &AppHandle<R>) -> Option<UpdaterCheckResult> {
-    app.try_state::<UpdaterController>().and_then(|state| {
-        state
-            .last_check
-            .lock()
-            .ok()
-            .and_then(|result| (*result).clone())
-    })
+    app.try_state::<UpdaterController>()
+        .and_then(|state| state.last_check.lock().ok().and_then(|result| (*result).clone()))
 }
 
 fn update_last_check<R: Runtime>(app: &AppHandle<R>, result: UpdaterCheckResult) {
@@ -380,11 +372,7 @@ fn parse_endpoints(raw: String) -> Vec<Url> {
 }
 
 fn read_bool_env(key: &str, default: bool) -> bool {
-    env::var(key)
-        .ok()
-        .as_deref()
-        .and_then(parse_bool)
-        .unwrap_or(default)
+    env::var(key).ok().as_deref().and_then(parse_bool).unwrap_or(default)
 }
 
 fn parse_bool(raw: &str) -> Option<bool> {
@@ -414,9 +402,7 @@ fn is_crash_regression(baseline: Option<f64>, current: Option<f64>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        is_crash_regression, parse_bool, ring_allows_version, UpdateRing,
-    };
+    use super::{is_crash_regression, parse_bool, ring_allows_version, UpdateRing};
     use semver::Version;
 
     #[test]

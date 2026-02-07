@@ -3,6 +3,7 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sqlx::postgres::PgPool;
+use tracing::{info_span, Instrument};
 use uuid::Uuid;
 
 pub const SNAPSHOT_INTERVAL_UPDATES: i64 = 1_000;
@@ -143,140 +144,174 @@ impl SnapshotCompactor {
         pool: &PgPool,
         candidate: SnapshotCandidate,
     ) -> Result<SnapshotWriteResult> {
-        let latest_snapshot = sqlx::query_as::<_, SnapshotMetaRow>(
-            "
-            SELECT snapshot_seq, created_at
-            FROM yjs_snapshots
-            WHERE workspace_id = $1
-              AND doc_id = $2
-            ORDER BY snapshot_seq DESC
-            LIMIT 1
-            ",
-        )
-        .bind(candidate.workspace_id)
-        .bind(candidate.doc_id)
-        .fetch_optional(pool)
-        .await
-        .context("failed to fetch latest snapshot metadata")?;
+        async {
+            let latest_snapshot = sqlx::query_as::<_, SnapshotMetaRow>(
+                "
+                SELECT snapshot_seq, created_at
+                FROM yjs_snapshots
+                WHERE workspace_id = $1
+                  AND doc_id = $2
+                ORDER BY snapshot_seq DESC
+                LIMIT 1
+                ",
+            )
+            .bind(candidate.workspace_id)
+            .bind(candidate.doc_id)
+            .fetch_optional(pool)
+            .instrument(info_span!("relay.db.query", query = "fetch_latest_snapshot_metadata"))
+            .await
+            .context("failed to fetch latest snapshot metadata")?;
 
-        if let Some(snapshot) = latest_snapshot {
-            if candidate.snapshot_seq <= snapshot.snapshot_seq {
-                return Ok(SnapshotWriteResult::Skipped(SnapshotSkipReason::StaleSequence));
-            }
+            if let Some(snapshot) = latest_snapshot {
+                if candidate.snapshot_seq <= snapshot.snapshot_seq {
+                    return Ok(SnapshotWriteResult::Skipped(SnapshotSkipReason::StaleSequence));
+                }
 
-            if !self.config.policy.should_snapshot(
-                snapshot.snapshot_seq,
-                candidate.snapshot_seq,
-                snapshot.created_at,
-                candidate.now,
-            ) {
-                return Ok(SnapshotWriteResult::Skipped(SnapshotSkipReason::PolicyNotSatisfied));
-            }
-        }
-
-        let uploaded_to_object_store = self.should_upload_to_object_store(candidate.payload.len());
-        if uploaded_to_object_store {
-            if let Some(object_store) = &self.object_store {
-                let key = snapshot_object_storage_key(
-                    candidate.workspace_id,
-                    candidate.doc_id,
+                if !self.config.policy.should_snapshot(
+                    snapshot.snapshot_seq,
                     candidate.snapshot_seq,
-                );
-                object_store.put_snapshot(&key, &candidate.payload).await.with_context(|| {
-                    format!("failed to store snapshot in object storage: {key}")
-                })?;
+                    snapshot.created_at,
+                    candidate.now,
+                ) {
+                    return Ok(SnapshotWriteResult::Skipped(
+                        SnapshotSkipReason::PolicyNotSatisfied,
+                    ));
+                }
             }
+
+            let uploaded_to_object_store =
+                self.should_upload_to_object_store(candidate.payload.len());
+            if uploaded_to_object_store {
+                if let Some(object_store) = &self.object_store {
+                    let key = snapshot_object_storage_key(
+                        candidate.workspace_id,
+                        candidate.doc_id,
+                        candidate.snapshot_seq,
+                    );
+                    object_store
+                        .put_snapshot(&key, &candidate.payload)
+                        .instrument(info_span!(
+                            "relay.object_store.put_snapshot",
+                            key = %key,
+                            payload_bytes = candidate.payload.len()
+                        ))
+                        .await
+                        .with_context(|| {
+                            format!("failed to store snapshot in object storage: {key}")
+                        })?;
+                }
+            }
+
+            let mut tx = pool
+                .begin()
+                .instrument(info_span!("relay.db.query", query = "begin_snapshot_compaction_tx"))
+                .await
+                .context("failed to open transaction for snapshot compaction")?;
+
+            sqlx::query(
+                "
+                INSERT INTO yjs_snapshots (workspace_id, doc_id, snapshot_seq, payload)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (workspace_id, doc_id, snapshot_seq) DO NOTHING
+                ",
+            )
+            .bind(candidate.workspace_id)
+            .bind(candidate.doc_id)
+            .bind(candidate.snapshot_seq)
+            .bind(candidate.payload.as_slice())
+            .execute(&mut *tx)
+            .instrument(info_span!("relay.db.query", query = "insert_yjs_snapshot"))
+            .await
+            .context("failed to persist yjs snapshot")?;
+
+            let retain_limit =
+                i64::try_from(self.config.retain_snapshots.max(1)).unwrap_or(i64::MAX);
+            let retained_snapshots = sqlx::query_as::<_, SnapshotSeqRow>(
+                "
+                SELECT snapshot_seq
+                FROM yjs_snapshots
+                WHERE workspace_id = $1
+                  AND doc_id = $2
+                ORDER BY snapshot_seq DESC
+                LIMIT $3
+                ",
+            )
+            .bind(candidate.workspace_id)
+            .bind(candidate.doc_id)
+            .bind(retain_limit)
+            .fetch_all(&mut *tx)
+            .instrument(info_span!("relay.db.query", query = "fetch_retained_snapshots"))
+            .await
+            .context("failed to load retained snapshots for compaction")?;
+
+            let snapshot_seqs =
+                retained_snapshots.into_iter().map(|row| row.snapshot_seq).collect::<Vec<_>>();
+            let plan = build_compaction_plan(&snapshot_seqs, self.config.retain_snapshots);
+
+            let deleted_snapshot_rows =
+                if let Some(delete_below_seq) = plan.delete_snapshots_below_seq {
+                    sqlx::query(
+                        "
+                    DELETE FROM yjs_snapshots
+                    WHERE workspace_id = $1
+                      AND doc_id = $2
+                      AND snapshot_seq < $3
+                    ",
+                    )
+                    .bind(candidate.workspace_id)
+                    .bind(candidate.doc_id)
+                    .bind(delete_below_seq)
+                    .execute(&mut *tx)
+                    .instrument(info_span!("relay.db.query", query = "delete_compacted_snapshots"))
+                    .await
+                    .context("failed to compact old snapshots")?
+                    .rows_affected()
+                } else {
+                    0
+                };
+
+            let deleted_update_rows =
+                if let Some(delete_to_seq) = plan.delete_updates_at_or_below_seq {
+                    sqlx::query(
+                        "
+                    DELETE FROM yjs_update_log
+                    WHERE workspace_id = $1
+                      AND doc_id = $2
+                      AND server_seq <= $3
+                    ",
+                    )
+                    .bind(candidate.workspace_id)
+                    .bind(candidate.doc_id)
+                    .bind(delete_to_seq)
+                    .execute(&mut *tx)
+                    .instrument(info_span!("relay.db.query", query = "delete_compacted_updates"))
+                    .await
+                    .context("failed to compact old yjs updates")?
+                    .rows_affected()
+                } else {
+                    0
+                };
+
+            tx.commit()
+                .instrument(info_span!("relay.db.query", query = "commit_snapshot_compaction_tx"))
+                .await
+                .context("failed to commit snapshot compaction transaction")?;
+
+            Ok(SnapshotWriteResult::Persisted(SnapshotPersistOutcome {
+                snapshot_seq: candidate.snapshot_seq,
+                uploaded_to_object_store,
+                deleted_snapshot_rows,
+                deleted_update_rows,
+            }))
         }
-
-        let mut tx =
-            pool.begin().await.context("failed to open transaction for snapshot compaction")?;
-
-        sqlx::query(
-            "
-            INSERT INTO yjs_snapshots (workspace_id, doc_id, snapshot_seq, payload)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (workspace_id, doc_id, snapshot_seq) DO NOTHING
-            ",
-        )
-        .bind(candidate.workspace_id)
-        .bind(candidate.doc_id)
-        .bind(candidate.snapshot_seq)
-        .bind(candidate.payload.as_slice())
-        .execute(&mut *tx)
+        .instrument(info_span!(
+            "relay.snapshot.maybe_snapshot_and_compact",
+            workspace_id = %candidate.workspace_id,
+            doc_id = %candidate.doc_id,
+            snapshot_seq = candidate.snapshot_seq,
+            payload_bytes = candidate.payload.len()
+        ))
         .await
-        .context("failed to persist yjs snapshot")?;
-
-        let retain_limit = i64::try_from(self.config.retain_snapshots.max(1)).unwrap_or(i64::MAX);
-        let retained_snapshots = sqlx::query_as::<_, SnapshotSeqRow>(
-            "
-            SELECT snapshot_seq
-            FROM yjs_snapshots
-            WHERE workspace_id = $1
-              AND doc_id = $2
-            ORDER BY snapshot_seq DESC
-            LIMIT $3
-            ",
-        )
-        .bind(candidate.workspace_id)
-        .bind(candidate.doc_id)
-        .bind(retain_limit)
-        .fetch_all(&mut *tx)
-        .await
-        .context("failed to load retained snapshots for compaction")?;
-
-        let snapshot_seqs =
-            retained_snapshots.into_iter().map(|row| row.snapshot_seq).collect::<Vec<_>>();
-        let plan = build_compaction_plan(&snapshot_seqs, self.config.retain_snapshots);
-
-        let deleted_snapshot_rows = if let Some(delete_below_seq) = plan.delete_snapshots_below_seq
-        {
-            sqlx::query(
-                "
-                DELETE FROM yjs_snapshots
-                WHERE workspace_id = $1
-                  AND doc_id = $2
-                  AND snapshot_seq < $3
-                ",
-            )
-            .bind(candidate.workspace_id)
-            .bind(candidate.doc_id)
-            .bind(delete_below_seq)
-            .execute(&mut *tx)
-            .await
-            .context("failed to compact old snapshots")?
-            .rows_affected()
-        } else {
-            0
-        };
-
-        let deleted_update_rows = if let Some(delete_to_seq) = plan.delete_updates_at_or_below_seq {
-            sqlx::query(
-                "
-                DELETE FROM yjs_update_log
-                WHERE workspace_id = $1
-                  AND doc_id = $2
-                  AND server_seq <= $3
-                ",
-            )
-            .bind(candidate.workspace_id)
-            .bind(candidate.doc_id)
-            .bind(delete_to_seq)
-            .execute(&mut *tx)
-            .await
-            .context("failed to compact old yjs updates")?
-            .rows_affected()
-        } else {
-            0
-        };
-
-        tx.commit().await.context("failed to commit snapshot compaction transaction")?;
-
-        Ok(SnapshotWriteResult::Persisted(SnapshotPersistOutcome {
-            snapshot_seq: candidate.snapshot_seq,
-            uploaded_to_object_store,
-            deleted_snapshot_rows,
-            deleted_update_rows,
-        }))
     }
 
     fn should_upload_to_object_store(&self, payload_len: usize) -> bool {

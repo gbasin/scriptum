@@ -1,0 +1,49 @@
+name: Load Tests
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  release:
+    types: [prereleased]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SCRIPTUM_RELAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/scriptum_load_test
+  SCRIPTUM_RELAY_LOAD_CONCURRENT_SESSIONS: "1000"
+  SCRIPTUM_RELAY_LOAD_UPDATES_PER_SECOND: "50"
+  SCRIPTUM_RELAY_LOAD_SOAK_SECONDS: "3600"
+  SCRIPTUM_RELAY_LOAD_ACK_P95_TARGET_MS: "500"
+  SCRIPTUM_RELAY_LOAD_MIN_UPDATES_RATIO: "0.90"
+
+jobs:
+  relay-websocket-load:
+    name: Relay WebSocket Load Soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scriptum_load_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d scriptum_load_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run websocket load/stress suite
+        run: cargo test -p scriptum-relay websocket_load_stress_weekly_and_pre_release_profile -- --ignored --nocapture
