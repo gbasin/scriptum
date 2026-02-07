@@ -203,6 +203,7 @@ enum DocumentStore {
 struct MemoryDocumentStore {
     documents: HashMap<Uuid, MemoryDocument>,
     acl_overrides: HashMap<Uuid, MemoryAclOverride>,
+    workspace_owners: HashSet<(Uuid, Uuid)>,
 }
 
 #[derive(Clone)]
@@ -239,6 +240,7 @@ struct MemoryAclOverride {
 #[derive(Debug)]
 enum DocApiError {
     BadRequest { message: String },
+    Forbidden,
     NotFound,
     Conflict,
     PreconditionRequired,
@@ -261,6 +263,10 @@ impl IntoResponse for DocApiError {
         match self {
             Self::BadRequest { message } => {
                 RelayError::new(ErrorCode::ValidationFailed, message).into_response()
+            }
+            Self::Forbidden => {
+                RelayError::new(ErrorCode::AuthForbidden, "caller lacks required role")
+                    .into_response()
             }
             Self::NotFound => {
                 RelayError::new(ErrorCode::NotFound, "document not found").into_response()
@@ -400,10 +406,15 @@ async fn update_document_tags(
 
 async fn create_acl_override(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<CreateAclOverrideRequest>,
 ) -> Result<(StatusCode, Json<AclOverrideEnvelope>), DocApiError> {
+    if ws_id != user.workspace_id {
+        return Err(DocApiError::Forbidden);
+    }
+    ensure_acl_override_manager_access(&state.store, ws_id, doc_id, user.user_id).await?;
+
     validate_acl_override_request(&payload)?;
 
     let acl_override = state.store.create_acl_override(ws_id, doc_id, payload).await?;
@@ -412,9 +423,14 @@ async fn create_acl_override(
 
 async fn delete_acl_override(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id, override_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<StatusCode, DocApiError> {
+    if ws_id != user.workspace_id {
+        return Err(DocApiError::Forbidden);
+    }
+    ensure_acl_override_manager_access(&state.store, ws_id, doc_id, user.user_id).await?;
+
     state.store.delete_acl_override(ws_id, doc_id, override_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -914,6 +930,14 @@ async fn create_mem(
     let mut store = store.write().await;
     let path_norm = normalize_doc_path(path);
 
+    if !store
+        .workspace_owners
+        .iter()
+        .any(|(existing_workspace_id, _)| *existing_workspace_id == workspace_id)
+    {
+        store.workspace_owners.insert((workspace_id, created_by));
+    }
+
     // Check uniqueness.
     let conflict = store.documents.values().any(|d| {
         d.workspace_id == workspace_id && d.path_norm == path_norm && d.deleted_at.is_none()
@@ -1155,6 +1179,85 @@ fn mem_to_document(doc: &MemoryDocument) -> Document {
         created_at: doc.created_at,
         updated_at: doc.updated_at,
         archived_at: doc.archived_at,
+    }
+}
+
+async fn ensure_acl_override_manager_access(
+    store: &DocumentStore,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), DocApiError> {
+    match store {
+        DocumentStore::Postgres(pool) => {
+            ensure_acl_override_manager_access_pg(pool, workspace_id, doc_id, user_id).await
+        }
+        DocumentStore::Memory(store) => {
+            ensure_acl_override_manager_access_mem(store, workspace_id, doc_id, user_id).await
+        }
+    }
+}
+
+async fn ensure_acl_override_manager_access_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), DocApiError> {
+    let row = sqlx::query_as::<_, (bool, bool)>(
+        r#"
+        SELECT
+            d.created_by = $3 AS is_document_owner,
+            EXISTS(
+                SELECT 1
+                FROM workspace_members AS wm
+                WHERE wm.workspace_id = $1
+                  AND wm.user_id = $3
+                  AND wm.status = 'active'
+                  AND wm.role = 'owner'
+            ) AS is_workspace_owner
+        FROM documents AS d
+        WHERE d.workspace_id = $1
+          AND d.id = $2
+          AND d.deleted_at IS NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(doc_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    let Some((is_document_owner, is_workspace_owner)) = row else {
+        return Err(DocApiError::NotFound);
+    };
+
+    if is_document_owner || is_workspace_owner {
+        Ok(())
+    } else {
+        Err(DocApiError::Forbidden)
+    }
+}
+
+async fn ensure_acl_override_manager_access_mem(
+    store: &RwLock<MemoryDocumentStore>,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), DocApiError> {
+    let store = store.read().await;
+    let doc = store.documents.get(&doc_id).ok_or(DocApiError::NotFound)?;
+    if doc.workspace_id != workspace_id || doc.deleted_at.is_some() {
+        return Err(DocApiError::NotFound);
+    }
+
+    let is_document_owner = doc.created_by == user_id;
+    let is_workspace_owner = store.workspace_owners.contains(&(workspace_id, user_id));
+    if is_document_owner || is_workspace_owner {
+        Ok(())
+    } else {
+        Err(DocApiError::Forbidden)
     }
 }
 
@@ -1745,6 +1848,96 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(delete_override_resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn create_acl_override_rejects_non_owner_and_non_document_owner() {
+        let app = test_router();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let viewer_token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "acl-owner.md"}),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        let create_override_resp = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "agent",
+                    "subject_id": "cursor",
+                    "role": "editor"
+                }),
+                &viewer_token,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(create_override_resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn workspace_owner_can_manage_acl_overrides_for_other_document_owner() {
+        let app = test_router();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let other_author_token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        // First document creation seeds owner_id as workspace owner in memory store.
+        let _ = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "seed-owner.md"}),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "other-author.md"}),
+                &other_author_token,
+            ))
+            .await
+            .unwrap();
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        let create_override_resp = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "agent",
+                    "subject_id": "cursor",
+                    "role": "viewer"
+                }),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(create_override_resp.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]
