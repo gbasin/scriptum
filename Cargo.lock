@@ -1870,6 +1870,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "notify",
+ "regex",
  "rusqlite",
  "scriptum-common",
  "serde",

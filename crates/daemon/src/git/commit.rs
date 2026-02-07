@@ -12,8 +12,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
 
-use regex::Regex;
 use super::triggers::{ChangeType, ChangedFile};
+use regex::Regex;
 
 /// System prompt instructing the LLM to generate conventional commit messages.
 pub const SYSTEM_PROMPT: &str = "\
@@ -101,6 +101,7 @@ pub fn build_prompt(
         }
         RedactionPolicy::Redacted => {
             prompt.push_str("Diff (redacted):\n");
+            prompt.push_str("(Sensitive values redacted by policy.)\n");
             prompt.push_str(&redact_sensitive_content(diff_summary));
         }
         RedactionPolicy::Disabled => {}
@@ -145,9 +146,7 @@ fn redact_sensitive_content(diff_summary: &str) -> String {
 
     for pattern in sensitive_patterns() {
         redacted = if pattern.as_str().contains("api[_-]?key|secret|token|password") {
-            pattern
-                .replace_all(&redacted, "${1}${2}${3}[REDACTED]${4}")
-                .into_owned()
+            pattern.replace_all(&redacted, "${1}${2}${3}[REDACTED]${4}").into_owned()
         } else if pattern.as_str().contains("PRIVATE KEY") {
             pattern
                 .replace_all(
@@ -191,10 +190,7 @@ pub async fn generate_ai_commit_message(
 ///
 /// Format: `Update {n} file(s): {paths}`
 pub fn fallback_commit_message(changed_files: &[ChangedFile]) -> String {
-    let mut paths = changed_files
-        .iter()
-        .map(|file| file.path.as_str())
-        .collect::<Vec<_>>();
+    let mut paths = changed_files.iter().map(|file| file.path.as_str()).collect::<Vec<_>>();
     paths.sort_unstable();
     paths.dedup();
 
@@ -342,17 +338,18 @@ mod tests {
     async fn generates_message_with_redacted_policy() {
         let client = MockClient::ok("docs: update documentation");
         let files = test_files();
+        let diff = "token=top-secret-token";
 
-        let msg =
-            generate_ai_commit_message(&client, "secret diff", &files, RedactionPolicy::Redacted)
-                .await
-                .unwrap();
+        let msg = generate_ai_commit_message(&client, diff, &files, RedactionPolicy::Redacted)
+            .await
+            .unwrap();
 
         assert_eq!(msg, "docs: update documentation");
 
         let prompt = client.captured_prompt().unwrap();
         assert!(prompt.contains("redacted by policy"), "should mention redaction");
-        assert!(!prompt.contains("secret diff"), "diff content must not leak");
+        assert!(!prompt.contains("top-secret-token"), "sensitive token must not leak");
+        assert!(prompt.contains("token=[REDACTED]"), "token should be masked");
         assert!(prompt.contains("M docs/api.md"), "file names should still be present");
     }
 
@@ -417,11 +414,7 @@ mod tests {
                 doc_id: None,
                 change_type: ChangeType::Modified,
             },
-            ChangedFile {
-                path: "docs/a.md".into(),
-                doc_id: None,
-                change_type: ChangeType::Added,
-            },
+            ChangedFile { path: "docs/a.md".into(), doc_id: None, change_type: ChangeType::Added },
             ChangedFile {
                 path: "docs/a.md".into(),
                 doc_id: None,
@@ -485,11 +478,18 @@ mod tests {
     #[test]
     fn redacted_prompt_excludes_diff_content() {
         let files = test_files();
-        let prompt = build_prompt("secret content", &files, RedactionPolicy::Redacted);
+        let prompt = build_prompt(
+            "api_key = \"sk-live-1234567890abcdef\"\npassword=supersecret",
+            &files,
+            RedactionPolicy::Redacted,
+        );
 
         assert!(prompt.contains("M docs/api.md"));
-        assert!(prompt.contains("redacted by policy"));
-        assert!(!prompt.contains("secret content"));
+        assert!(prompt.contains("Diff (redacted):"));
+        assert!(prompt.contains("api_key = \"[REDACTED]\""));
+        assert!(prompt.contains("password=[REDACTED]"));
+        assert!(!prompt.contains("sk-live-1234567890abcdef"));
+        assert!(!prompt.contains("supersecret"));
     }
 
     #[test]
@@ -524,11 +524,7 @@ mod tests {
                 doc_id: None,
                 change_type: ChangeType::Modified,
             },
-            ChangedFile {
-                path: "docs/a.md".into(),
-                doc_id: None,
-                change_type: ChangeType::Added,
-            },
+            ChangedFile { path: "docs/a.md".into(), doc_id: None, change_type: ChangeType::Added },
             ChangedFile {
                 path: "docs/z.md".into(),
                 doc_id: None,
@@ -537,5 +533,24 @@ mod tests {
         ];
         let message = fallback_commit_message(&files);
         assert_eq!(message, "Update 2 file(s): docs/a.md, docs/z.md");
+    }
+
+    #[test]
+    fn redacts_tokens_and_private_keys_from_diff() {
+        let diff = "\
++Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdefghi123456789.xyz987654321qwe\n\
++aws_access_key_id=AKIAABCDEFGHIJKLMNOP\n\
++github_pat=ghp_abcdefghijklmnopqrstuvwxyzABCDEFGH\n\
++-----BEGIN PRIVATE KEY-----\n\
++MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...\n\
++-----END PRIVATE KEY-----\n";
+
+        let redacted = redact_sensitive_content(diff);
+        assert!(!redacted.contains("eyJhbGciOiJIUzI1Ni"));
+        assert!(!redacted.contains("AKIAABCDEFGHIJKLMNOP"));
+        assert!(!redacted.contains("ghp_abcdefghijklmnopqrstuvwxyzABCDEFGH"));
+        assert!(!redacted.contains("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"));
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(redacted.contains("BEGIN PRIVATE KEY"));
     }
 }
