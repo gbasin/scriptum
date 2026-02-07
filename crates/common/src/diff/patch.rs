@@ -15,18 +15,29 @@ enum CharEdit {
     Delete(char),
 }
 
+/// Threshold (in total characters) below which we use direct character-level
+/// Myers diff. Above this we first diff by lines, then refine per-line.
+const LINE_DIFF_THRESHOLD: usize = 8_000;
+
 /// Computes a patch-style diff from `old_text` to `new_text`.
 ///
 /// Operations use UTF-8 byte offsets to match `yrs::Text` indexing.
+/// For large texts, uses a line-level diff first, then character-level
+/// refinement on changed regions to avoid O(N*D) blow-up.
 pub fn diff_to_patch_ops(old_text: &str, new_text: &str) -> Vec<TextPatchOp> {
     if old_text == new_text {
         return Vec::new();
     }
 
-    let old_chars: Vec<char> = old_text.chars().collect();
-    let new_chars: Vec<char> = new_text.chars().collect();
-    let edits = myers_char_edits(&old_chars, &new_chars);
-    edits_to_patch_ops(&edits)
+    let total_chars = old_text.len() + new_text.len();
+    if total_chars < LINE_DIFF_THRESHOLD {
+        let old_chars: Vec<char> = old_text.chars().collect();
+        let new_chars: Vec<char> = new_text.chars().collect();
+        let edits = myers_char_edits(&old_chars, &new_chars);
+        return edits_to_patch_ops(&edits);
+    }
+
+    line_then_char_diff(old_text, new_text)
 }
 
 /// Applies precomputed patch operations to a Yjs text value.
@@ -80,6 +91,182 @@ fn shifted_index(index: u32, offset: i64) -> u32 {
 
 fn utf8_len(value: &str) -> u32 {
     value.len() as u32
+}
+
+/// Line-level diff followed by character-level refinement on changed regions.
+fn line_then_char_diff(old_text: &str, new_text: &str) -> Vec<TextPatchOp> {
+    let old_lines: Vec<&str> = old_text.split_inclusive('\n').collect();
+    let new_lines: Vec<&str> = new_text.split_inclusive('\n').collect();
+
+    // If the text doesn't end with newline, the last "line" won't have one.
+    // This is fine — we handle it as a regular line.
+
+    let line_edits = myers_line_edits(&old_lines, &new_lines);
+
+    // Walk the line edits and collect byte-offset patch ops.
+    let mut ops = Vec::new();
+    let mut old_byte_offset: u32 = 0;
+
+    // Accumulate runs of consecutive inserts/deletes for character refinement.
+    let mut pending_old = String::new();
+    let mut pending_new = String::new();
+    let mut pending_byte_start: u32 = 0;
+
+    let flush = |ops: &mut Vec<TextPatchOp>,
+                 pending_old: &mut String,
+                 pending_new: &mut String,
+                 pending_byte_start: u32| {
+        if pending_old.is_empty() && pending_new.is_empty() {
+            return;
+        }
+        let old_chars: Vec<char> = pending_old.chars().collect();
+        let new_chars: Vec<char> = pending_new.chars().collect();
+        let char_edits = myers_char_edits(&old_chars, &new_chars);
+        let sub_ops = edits_to_patch_ops(&char_edits);
+        for op in sub_ops {
+            match op {
+                TextPatchOp::Insert { index, text } => {
+                    ops.push(TextPatchOp::Insert { index: pending_byte_start + index, text });
+                }
+                TextPatchOp::Delete { index, len } => {
+                    ops.push(TextPatchOp::Delete { index: pending_byte_start + index, len });
+                }
+            }
+        }
+        pending_old.clear();
+        pending_new.clear();
+    };
+
+    for edit in &line_edits {
+        match edit {
+            LineEdit::Equal(line) => {
+                flush(&mut ops, &mut pending_old, &mut pending_new, pending_byte_start);
+                old_byte_offset += line.len() as u32;
+                pending_byte_start = old_byte_offset;
+            }
+            LineEdit::Delete(line) => {
+                if pending_old.is_empty() && pending_new.is_empty() {
+                    pending_byte_start = old_byte_offset;
+                }
+                pending_old.push_str(line);
+                old_byte_offset += line.len() as u32;
+            }
+            LineEdit::Insert(line) => {
+                if pending_old.is_empty() && pending_new.is_empty() {
+                    pending_byte_start = old_byte_offset;
+                }
+                pending_new.push_str(line);
+            }
+        }
+    }
+
+    flush(&mut ops, &mut pending_old, &mut pending_new, pending_byte_start);
+
+    ops
+}
+
+#[derive(Debug, Clone)]
+enum LineEdit<'a> {
+    Equal(&'a str),
+    Insert(&'a str),
+    Delete(&'a str),
+}
+
+fn myers_line_edits<'a>(old_lines: &[&'a str], new_lines: &[&'a str]) -> Vec<LineEdit<'a>> {
+    let old_len = old_lines.len();
+    let new_len = new_lines.len();
+
+    if old_len == 0 {
+        return new_lines.iter().map(|l| LineEdit::Insert(l)).collect();
+    }
+    if new_len == 0 {
+        return old_lines.iter().map(|l| LineEdit::Delete(l)).collect();
+    }
+
+    let max = old_len + new_len;
+    let offset = max as isize;
+    let mut v = vec![0isize; 2 * max + 1];
+    let mut trace: Vec<Vec<isize>> = Vec::with_capacity(max + 1);
+    let mut solved_d = 0usize;
+
+    'outer: for d in 0..=max {
+        trace.push(v.clone());
+
+        let d_isize = d as isize;
+        let mut k = -d_isize;
+        while k <= d_isize {
+            let k_idx = (k + offset) as usize;
+            let mut x = if k == -d_isize
+                || (k != d_isize && v[(k - 1 + offset) as usize] < v[(k + 1 + offset) as usize])
+            {
+                v[(k + 1 + offset) as usize]
+            } else {
+                v[(k - 1 + offset) as usize] + 1
+            };
+            let mut y = x - k;
+
+            while x < old_len as isize
+                && y < new_len as isize
+                && old_lines[x as usize] == new_lines[y as usize]
+            {
+                x += 1;
+                y += 1;
+            }
+
+            v[k_idx] = x;
+
+            if x >= old_len as isize && y >= new_len as isize {
+                solved_d = d;
+                break 'outer;
+            }
+
+            k += 2;
+        }
+    }
+
+    // Backtrack
+    let mut edits = Vec::new();
+    let mut x = old_len as isize;
+    let mut y = new_len as isize;
+
+    for d in (0..=solved_d).rev() {
+        let v = &trace[d];
+        let k = x - y;
+        let d_isize = d as isize;
+
+        let prev_k = if d == 0 {
+            0
+        } else if k == -d_isize
+            || (k != d_isize && v[(k - 1 + offset) as usize] < v[(k + 1 + offset) as usize])
+        {
+            k + 1
+        } else {
+            k - 1
+        };
+        let prev_x = if d == 0 { 0 } else { v[(prev_k + offset) as usize] };
+        let prev_y = prev_x - prev_k;
+
+        while x > prev_x && y > prev_y {
+            edits.push(LineEdit::Equal(old_lines[(x - 1) as usize]));
+            x -= 1;
+            y -= 1;
+        }
+
+        if d == 0 {
+            break;
+        }
+
+        if x == prev_x {
+            edits.push(LineEdit::Insert(new_lines[(y - 1) as usize]));
+            y -= 1;
+        } else {
+            edits.push(LineEdit::Delete(old_lines[(x - 1) as usize]));
+            x -= 1;
+        }
+    }
+
+    edits.reverse();
+    edits
 }
 
 fn myers_char_edits(old_chars: &[char], new_chars: &[char]) -> Vec<CharEdit> {
