@@ -19,6 +19,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
+import { OfflineBanner } from "../components/OfflineBanner";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
 import {
@@ -1344,23 +1345,7 @@ export function DocumentRoute() {
         tabs={openTabs}
       />
       <Breadcrumb path={currentDocumentPath} workspaceLabel={workspaceLabel} />
-      {syncState === "offline" ? (
-        <aside
-          aria-label="Offline banner"
-          data-testid="offline-banner"
-          role="status"
-          style={{
-            background: "#fef3c7",
-            border: "1px solid #f59e0b",
-            borderRadius: "0.5rem",
-            color: "#78350f",
-            marginBottom: "0.75rem",
-            padding: "0.625rem 0.75rem",
-          }}
-        >
-          Offline: updates are queued locally and will sync when reconnected.
-        </aside>
-      ) : null}
+      <OfflineBanner status={syncState} reconnectProgress={reconnectProgress} />
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>
