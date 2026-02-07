@@ -92,3 +92,19 @@ export {
   type SlashCommandInsertion,
   type SlashCommandName,
 } from "./slash-commands/commands";
+export {
+  footnotePreview,
+  footnotePreviewDecorations,
+  footnotePreviewExtension,
+} from "./extensions/footnotes";
+export {
+  dragDropUpload,
+  dragDropUploadExtension,
+  isImageFile,
+  markdownForUploadedFile,
+  uploadDroppedFiles,
+  type DragDropUploadOptions,
+  type DropUploadProgress,
+  type DroppedFileUploadResult,
+  type DroppedFileUploader,
+} from "./drag-drop/extension";
