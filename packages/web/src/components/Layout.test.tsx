@@ -443,6 +443,14 @@ describe("Layout backlinks panel", () => {
       );
     });
 
+    const backlinksTab = container.querySelector(
+      '[data-testid="right-panel-tab-backlinks"]',
+    ) as HTMLButtonElement | null;
+    expect(backlinksTab).not.toBeNull();
+    act(() => {
+      backlinksTab?.click();
+    });
+
     const backlinkButton = container.querySelector(
       '[data-testid="backlink-item-doc-notes"]',
     ) as HTMLButtonElement | null;

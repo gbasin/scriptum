@@ -76,8 +76,11 @@ export function Layout() {
   const openDocumentIds = useDocumentsStore((state) => state.openDocumentIds);
   const remotePeers = usePresenceStore((state) => state.remotePeers);
   const sidebarPanel = useUiStore((state) => state.sidebarPanel);
+  const sidebarOpen = useUiStore((state) => state.sidebarOpen);
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const setSidebarPanel = useUiStore((state) => state.setSidebarPanel);
   const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
+  const rightPanelTab = useUiStore((state) => state.rightPanelTab);
   const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
   const setRightPanelTab = useUiStore((state) => state.setRightPanelTab);
   const commandPaletteOpen = useUiStore((state) => state.commandPaletteOpen);
@@ -448,82 +451,105 @@ export function Layout() {
 
   return (
     <div className={styles.layout} data-testid="app-layout">
-      <aside
-        aria-label="Sidebar"
-        className={styles.sidebar}
-        data-testid="app-sidebar"
-      >
-        <WorkspaceDropdown
-          activeWorkspaceId={activeWorkspaceId}
-          onCreateWorkspace={handleCreateWorkspace}
-          onWorkspaceSelect={setActiveWorkspaceId}
-          workspaces={workspaces}
-        />
-        <CommandPalette
-          activeWorkspaceId={activeWorkspaceId}
-          documents={documents}
-          onCreateDocument={createUntitledDocument}
-          onCreateWorkspace={handleCreateWorkspace}
-          onOpenSearchPanel={() => setSidebarPanel("search")}
-          onOpenChange={(open) =>
-            open ? openCommandPalette() : closeCommandPalette()
-          }
-          open={commandPaletteOpen}
-          openDocumentIds={openDocumentIds}
-          workspaces={workspaces}
-        />
-        <TagsList
-          activeTag={activeTag}
-          onTagSelect={setActiveTag}
-          tags={workspaceTags}
-        />
-        {renameBacklinkToast ? (
-          <p
-            className={styles.renameBacklinkToast}
-            data-testid="rename-backlink-toast"
-            role="status"
-          >
-            {renameBacklinkToast}
-          </p>
-        ) : null}
-        {searchPanelOpen ? (
-          <SearchPanel
-            loading={showPanelSkeletons}
-            onClose={() => setSidebarPanel("files")}
-            onResultSelect={(result) =>
-              handleSearchResultSelect(result.documentId)
-            }
-            results={searchPanelResults}
+      {sidebarOpen ? (
+        <aside
+          aria-label="Sidebar"
+          className={styles.sidebar}
+          data-testid="app-sidebar"
+        >
+          <div className={styles.sidebarHeader}>
+            <h2 className={styles.sidebarTitle}>Workspace</h2>
+            <button
+              className={styles.secondaryButton}
+              data-testid="sidebar-toggle"
+              onClick={toggleSidebar}
+              type="button"
+            >
+              Hide
+            </button>
+          </div>
+          <WorkspaceDropdown
+            activeWorkspaceId={activeWorkspaceId}
+            onCreateWorkspace={handleCreateWorkspace}
+            onWorkspaceSelect={setActiveWorkspaceId}
+            workspaces={workspaces}
           />
-        ) : (
-          <section aria-label="Document tree section">
-            <div className={styles.documentTreeHeader}>
-              <h2 className={styles.documentTreeHeading}>
-                Documents
-              </h2>
-              <button
-                className={styles.secondaryButton}
-                data-testid="new-document-button"
-                onClick={createUntitledDocument}
-                title="Cmd+N"
-                type="button"
-              >
-                + New
-              </button>
-            </div>
-            <DocumentTree
-              activeDocumentId={activeDocumentId}
-              documents={filteredDocuments}
+          <CommandPalette
+            activeWorkspaceId={activeWorkspaceId}
+            documents={documents}
+            onCreateDocument={createUntitledDocument}
+            onCreateWorkspace={handleCreateWorkspace}
+            onOpenSearchPanel={() => setSidebarPanel("search")}
+            onOpenChange={(open) =>
+              open ? openCommandPalette() : closeCommandPalette()
+            }
+            open={commandPaletteOpen}
+            openDocumentIds={openDocumentIds}
+            workspaces={workspaces}
+          />
+          <TagsList
+            activeTag={activeTag}
+            onTagSelect={setActiveTag}
+            tags={workspaceTags}
+          />
+          {renameBacklinkToast ? (
+            <p
+              className={styles.renameBacklinkToast}
+              data-testid="rename-backlink-toast"
+              role="status"
+            >
+              {renameBacklinkToast}
+            </p>
+          ) : null}
+          {searchPanelOpen ? (
+            <SearchPanel
               loading={showPanelSkeletons}
-              onContextMenuAction={handleDocumentContextAction}
-              onDocumentSelect={handleDocumentSelect}
-              onRenameDocument={handleRenameDocument}
-              pendingRenameDocumentId={pendingRenameDocumentId}
+              onClose={() => setSidebarPanel("files")}
+              onResultSelect={(result) =>
+                handleSearchResultSelect(result.documentId)
+              }
+              results={searchPanelResults}
             />
-          </section>
-        )}
-        <AgentsSection peers={remotePeers} />
-      </aside>
+          ) : (
+            <section aria-label="Document tree section">
+              <div className={styles.documentTreeHeader}>
+                <h2 className={styles.documentTreeHeading}>
+                  Documents
+                </h2>
+                <button
+                  className={styles.secondaryButton}
+                  data-testid="new-document-button"
+                  onClick={createUntitledDocument}
+                  title="Cmd+N"
+                  type="button"
+                >
+                  + New
+                </button>
+              </div>
+              <DocumentTree
+                activeDocumentId={activeDocumentId}
+                documents={filteredDocuments}
+                loading={showPanelSkeletons}
+                onContextMenuAction={handleDocumentContextAction}
+                onDocumentSelect={handleDocumentSelect}
+                onRenameDocument={handleRenameDocument}
+                pendingRenameDocumentId={pendingRenameDocumentId}
+              />
+            </section>
+          )}
+          <AgentsSection peers={remotePeers} />
+        </aside>
+      ) : (
+        <button
+          aria-label="Show sidebar"
+          className={styles.showSidebarButton}
+          data-testid="sidebar-toggle"
+          onClick={toggleSidebar}
+          type="button"
+        >
+          Show Sidebar
+        </button>
+      )}
       <main
         aria-label="Editor area"
         className={styles.editorArea}
@@ -552,62 +578,114 @@ export function Layout() {
               Hide
             </button>
           </div>
-
-          <Outline
-            editorContainer={outlineContainer}
-            loading={showOutlineSkeleton}
-          />
-
-          <section
-            aria-label="Incoming backlinks"
-            className={styles.backlinksSection}
-            data-testid="backlinks-panel"
+          <div
+            aria-label="Right panel tabs"
+            className={styles.panelTabs}
+            role="tablist"
           >
-            <h3 className={styles.backlinksTitle}>Backlinks</h3>
-            {showPanelSkeletons ? (
-              <div data-testid="backlinks-loading">
-                <div
-                  aria-hidden="true"
-                  style={{ display: "grid", gap: "0.45rem", marginTop: "0.25rem" }}
-                >
-                  <SkeletonBlock style={{ height: "0.78rem", width: "72%" }} />
-                  <SkeletonBlock style={{ height: "0.78rem", width: "56%" }} />
-                  <SkeletonBlock style={{ height: "0.78rem", width: "67%" }} />
+            <button
+              aria-pressed={rightPanelTab === "outline"}
+              className={
+                rightPanelTab === "outline"
+                  ? styles.panelTabButtonActive
+                  : styles.panelTabButton
+              }
+              data-testid="right-panel-tab-outline"
+              onClick={() => setRightPanelTab("outline")}
+              type="button"
+            >
+              Outline
+            </button>
+            <button
+              aria-pressed={rightPanelTab === "backlinks"}
+              className={
+                rightPanelTab === "backlinks"
+                  ? styles.panelTabButtonActive
+                  : styles.panelTabButton
+              }
+              data-testid="right-panel-tab-backlinks"
+              onClick={() => setRightPanelTab("backlinks")}
+              type="button"
+            >
+              Backlinks
+            </button>
+            <button
+              aria-pressed={rightPanelTab === "comments"}
+              className={
+                rightPanelTab === "comments"
+                  ? styles.panelTabButtonActive
+                  : styles.panelTabButton
+              }
+              data-testid="right-panel-tab-comments"
+              onClick={() => setRightPanelTab("comments")}
+              type="button"
+            >
+              Comments
+            </button>
+          </div>
+
+          {rightPanelTab === "outline" ? (
+            <Outline
+              editorContainer={outlineContainer}
+              loading={showOutlineSkeleton}
+            />
+          ) : null}
+
+          {rightPanelTab === "backlinks" ? (
+            <section
+              aria-label="Incoming backlinks"
+              className={styles.backlinksSection}
+              data-testid="backlinks-panel"
+            >
+              <h3 className={styles.backlinksTitle}>Backlinks</h3>
+              {showPanelSkeletons ? (
+                <div data-testid="backlinks-loading">
+                  <div className={styles.backlinksLoadingList}>
+                    <SkeletonBlock className={styles.backlinksLoadingLine72} />
+                    <SkeletonBlock className={styles.backlinksLoadingLine56} />
+                    <SkeletonBlock className={styles.backlinksLoadingLine67} />
+                  </div>
                 </div>
-              </div>
-            ) : incomingBacklinks.length === 0 ? (
-              <p className={styles.backlinksEmpty} data-testid="backlinks-empty">
-                No incoming links to this document.
-              </p>
-            ) : (
-              <ul
-                aria-label="Incoming wiki links"
-                className={styles.backlinksList}
-                data-testid="backlinks-list"
-              >
-                {incomingBacklinks.map((backlink) => (
-                  <li className={styles.backlinksItem} key={backlink.sourceDocumentId}>
-                    <button
-                      className={styles.backlinkButton}
-                      data-testid={`backlink-item-${backlink.sourceDocumentId}`}
-                      onClick={() =>
-                        handleBacklinkSelect(backlink.sourceDocumentId)
-                      }
-                      type="button"
-                    >
-                      {backlink.sourceTitle}
-                    </button>
-                    <p
-                      className={styles.backlinkSnippet}
-                      data-testid={`backlink-snippet-${backlink.sourceDocumentId}`}
-                    >
-                      {backlink.snippet}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+              ) : incomingBacklinks.length === 0 ? (
+                <p className={styles.backlinksEmpty} data-testid="backlinks-empty">
+                  No incoming links to this document.
+                </p>
+              ) : (
+                <ul
+                  aria-label="Incoming wiki links"
+                  className={styles.backlinksList}
+                  data-testid="backlinks-list"
+                >
+                  {incomingBacklinks.map((backlink) => (
+                    <li className={styles.backlinksItem} key={backlink.sourceDocumentId}>
+                      <button
+                        className={styles.backlinkButton}
+                        data-testid={`backlink-item-${backlink.sourceDocumentId}`}
+                        onClick={() =>
+                          handleBacklinkSelect(backlink.sourceDocumentId)
+                        }
+                        type="button"
+                      >
+                        {backlink.sourceTitle}
+                      </button>
+                      <p
+                        className={styles.backlinkSnippet}
+                        data-testid={`backlink-snippet-${backlink.sourceDocumentId}`}
+                      >
+                        {backlink.snippet}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
+
+          {rightPanelTab === "comments" ? (
+            <p className={styles.commentsPlaceholder} data-testid="comments-panel-empty">
+              Comments panel is coming soon.
+            </p>
+          ) : null}
         </aside>
       ) : (
         <button
