@@ -26,6 +26,24 @@ describe("createScriptumTestApi", () => {
       behind: 1,
       lastCommit: "abc123",
     });
+    api.setReconciliationEntries([
+      {
+        id: "recon-1",
+        sectionId: "shared-auth-flow",
+        from: 0,
+        to: 7,
+        versionA: {
+          authorId: "alex-human",
+          authorName: "Alex Human",
+          content: "Version A",
+        },
+        versionB: {
+          authorId: "relay-agent",
+          authorName: "Relay Agent",
+          content: "Version B",
+        },
+      },
+    ]);
 
     const state = api.getState();
     expect(state.docContent).toBe("# Updated");
@@ -44,6 +62,8 @@ describe("createScriptumTestApi", () => {
       behind: 1,
       lastCommit: "abc123",
     });
+    expect(state.reconciliationEntries).toHaveLength(1);
+    expect(state.reconciliationEntries[0]?.id).toBe("recon-1");
   });
 
   it("loads named fixtures and notifies subscribers", () => {

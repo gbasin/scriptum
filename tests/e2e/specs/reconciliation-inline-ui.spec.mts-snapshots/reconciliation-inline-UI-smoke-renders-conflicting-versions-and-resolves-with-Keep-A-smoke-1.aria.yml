@@ -1,0 +1,4 @@
+- text: Version A by Alex Human User login via OAuth redirect with PKCE token exchange and refresh. Version B by Relay Agent User login with device-code handshake, nonce verification, and refresh.
+- button "Keep A"
+- button "Keep B"
+- button "Keep Both"

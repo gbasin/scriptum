@@ -1,0 +1,70 @@
+{
+  "name": "reconciliation-conflict",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "state": {
+    "fixtureName": "default",
+    "docContent": "# Reconciliation Harness\n\n## Shared Auth Flow\nCurrent section text is a conflicted merge candidate.",
+    "cursor": { "line": 2, "ch": 0 },
+    "syncState": "synced",
+    "gitStatus": {
+      "dirty": true,
+      "ahead": 1,
+      "behind": 0,
+      "lastCommit": "recon123"
+    },
+    "remotePeers": [
+      {
+        "name": "Alex Human",
+        "type": "human",
+        "cursor": { "line": 2, "ch": 8 },
+        "section": "Shared Auth Flow"
+      },
+      {
+        "name": "Relay Agent",
+        "type": "agent",
+        "cursor": { "line": 2, "ch": 37 },
+        "section": "Shared Auth Flow"
+      }
+    ]
+  },
+  "reconciliation": {
+    "sectionId": "shared-auth-flow",
+    "sectionHeading": "Shared Auth Flow",
+    "currentContent": "Current section text is a conflicted merge candidate.",
+    "windowMs": 30000,
+    "thresholdRatio": 0.5,
+    "events": [
+      {
+        "authorId": "alex-human",
+        "timestampMs": 1000,
+        "changedChars": 36,
+        "sectionLength": 60
+      },
+      {
+        "authorId": "relay-agent",
+        "timestampMs": 12500,
+        "changedChars": 20,
+        "sectionLength": 60
+      }
+    ],
+    "versionA": {
+      "authorId": "alex-human",
+      "authorName": "Alex Human",
+      "content": "User login via OAuth redirect with PKCE token exchange and refresh."
+    },
+    "versionB": {
+      "authorId": "relay-agent",
+      "authorName": "Relay Agent",
+      "content": "User login with device-code handshake, nonce verification, and refresh."
+    },
+    "expectedTrigger": {
+      "distinctAuthorCount": 2,
+      "changeRatio": 0.9333333333
+    }
+  },
+  "expectations": {
+    "heading": "Document: ws-smoke/doc-smoke",
+    "syncState": "synced",
+    "remotePeerCount": 2
+  }
+}

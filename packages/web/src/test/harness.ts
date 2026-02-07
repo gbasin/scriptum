@@ -1,3 +1,4 @@
+import type { ReconciliationInlineEntry } from "@scriptum/editor";
 import { isFixtureModeEnabled } from "./setup";
 
 export type SyncState = "synced" | "offline" | "reconnecting" | "error";
@@ -36,6 +37,7 @@ export interface ScriptumTestState {
   reconnectProgress: ReconnectProgress | null;
   gitStatus: GitStatus;
   commentThreads: unknown[];
+  reconciliationEntries: ReconciliationInlineEntry[];
 }
 
 export interface ScriptumTestApi {
@@ -48,6 +50,7 @@ export interface ScriptumTestApi {
   setPendingSyncUpdates(count: number): void;
   setReconnectProgress(progress: ReconnectProgress | null): void;
   setCommentThreads(threads: unknown[]): void;
+  setReconciliationEntries(entries: ReconciliationInlineEntry[]): void;
   getState(): ScriptumTestState;
   reset(): void;
   subscribe(listener: (state: ScriptumTestState) => void): () => void;
@@ -69,6 +72,7 @@ const DEFAULT_STATE: ScriptumTestState = {
   reconnectProgress: null,
   gitStatus: { dirty: false, ahead: 0, behind: 0 },
   commentThreads: [],
+  reconciliationEntries: [],
 };
 
 const FIXTURES: Record<string, Partial<ScriptumTestState>> = {
@@ -159,6 +163,9 @@ function withDefaults(
     gitStatus: initialState?.gitStatus ?? DEFAULT_STATE.gitStatus,
     commentThreads:
       initialState?.commentThreads ?? DEFAULT_STATE.commentThreads,
+    reconciliationEntries:
+      initialState?.reconciliationEntries ??
+      DEFAULT_STATE.reconciliationEntries,
   };
   return clone(merged);
 }
@@ -226,6 +233,11 @@ export function createScriptumTestApi(
 
     setCommentThreads(threads: unknown[]) {
       state.commentThreads = clone(threads);
+      emit();
+    },
+
+    setReconciliationEntries(entries: ReconciliationInlineEntry[]) {
+      state.reconciliationEntries = clone(entries);
       emit();
     },
 

@@ -10,9 +10,11 @@ import {
   dragDropUploadExtension,
   livePreviewExtension,
   nameToColor,
+  reconciliationInlineExtension,
   remoteCursorExtension,
   setCommentGutterRanges,
   setCommentHighlightRanges,
+  setReconciliationInlineEntries,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import type { Document as ScriptumDocument } from "@scriptum/shared";
@@ -58,6 +60,7 @@ const DEFAULT_TEST_STATE: ScriptumTestState = {
   reconnectProgress: null,
   gitStatus: { dirty: false, ahead: 0, behind: 0 },
   commentThreads: [],
+  reconciliationEntries: [],
 };
 
 interface UnknownRecord {
@@ -977,6 +980,7 @@ export function DocumentRoute() {
         extensions: [
           markdown(),
           livePreviewExtension(),
+          reconciliationInlineExtension(),
           commentHighlightExtension(),
           commentGutterExtension(),
           provider.extension(),
@@ -1097,6 +1101,23 @@ export function DocumentRoute() {
       ],
     });
   }, [commentRanges]);
+
+  useEffect(() => {
+    if (!fixtureModeEnabled) {
+      return;
+    }
+
+    const view = editorViewRef.current;
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      effects: [
+        setReconciliationInlineEntries.of(fixtureState.reconciliationEntries),
+      ],
+    });
+  }, [fixtureModeEnabled, fixtureState.reconciliationEntries]);
 
   useEffect(() => {
     if (!fixtureModeEnabled) {
