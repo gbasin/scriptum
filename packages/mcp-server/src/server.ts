@@ -19,6 +19,7 @@ import {
   toToolPayload,
 } from "./shared";
 import { registerPassthroughTools } from "./tools/passthrough";
+import { registerStatusTool } from "./tools/status";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
 const SERVER_INFO: Implementation = {
@@ -103,23 +104,7 @@ function registerToolHandlers(
   daemonClient: DaemonClient,
   resolveAgentName: AgentNameResolver,
 ): void {
-  server.registerTool(
-    "scriptum_status",
-    {
-      description:
-        "Return agent status including identity, sync state, and change token via daemon agent.status.",
-      inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
-    },
-    async (toolArgs) => {
-      const rpcParams = {
-        ...toToolPayload(toolArgs),
-        agent_name: resolveAgentName(),
-      };
-      const payload = await daemonClient.request("agent.status", rpcParams);
-
-      return makeToolResult(payload);
-    },
-  );
+  registerStatusTool(server, daemonClient, resolveAgentName);
 
   server.registerTool(
     "scriptum_subscribe",
