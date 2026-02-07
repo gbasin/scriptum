@@ -6,6 +6,7 @@ export interface BreadcrumbSegment {
 export interface BreadcrumbProps {
   path: string;
   workspaceLabel: string;
+  onNavigate?: (path: string | null) => void;
 }
 
 export function buildBreadcrumbSegments(path: string): BreadcrumbSegment[] {
@@ -25,8 +26,25 @@ export function buildBreadcrumbSegments(path: string): BreadcrumbSegment[] {
   return breadcrumbs;
 }
 
-export function Breadcrumb({ path, workspaceLabel }: BreadcrumbProps) {
+const MAX_BREADCRUMB_LABEL_LENGTH = 24;
+
+export function truncateBreadcrumbLabel(
+  label: string,
+  maxLength = MAX_BREADCRUMB_LABEL_LENGTH,
+): string {
+  if (label.length <= maxLength) {
+    return label;
+  }
+  return `${label.slice(0, Math.max(1, maxLength - 1))}…`;
+}
+
+export function Breadcrumb({ path, workspaceLabel, onNavigate }: BreadcrumbProps) {
   const segments = buildBreadcrumbSegments(path);
+  const rootLabel = truncateBreadcrumbLabel(workspaceLabel);
+
+  const triggerNavigate = (nextPath: string | null) => {
+    onNavigate?.(nextPath);
+  };
 
   return (
     <nav
@@ -39,13 +57,58 @@ export function Breadcrumb({ path, workspaceLabel }: BreadcrumbProps) {
         marginTop: "0.45rem",
       }}
     >
-      <span data-testid="breadcrumb-root">{workspaceLabel}</span>
-      {segments.map((segment) => (
-        <span data-testid={`breadcrumb-${segment.path}`} key={segment.path}>
-          {" / "}
-          <span>{segment.label}</span>
-        </span>
-      ))}
+      <button
+        data-testid="breadcrumb-root"
+        onClick={() => triggerNavigate(null)}
+        style={{
+          background: "none",
+          border: "none",
+          color: "inherit",
+          cursor: onNavigate ? "pointer" : "default",
+          margin: 0,
+          maxWidth: "14rem",
+          overflow: "hidden",
+          padding: 0,
+          textAlign: "inherit",
+          textOverflow: "ellipsis",
+          verticalAlign: "bottom",
+          whiteSpace: "nowrap",
+        }}
+        title={workspaceLabel}
+        type="button"
+      >
+        {rootLabel}
+      </button>
+      {segments.map((segment) => {
+        const label = truncateBreadcrumbLabel(segment.label);
+        return (
+          <span data-testid={`breadcrumb-${segment.path}`} key={segment.path}>
+            {" / "}
+            <button
+              data-testid={`breadcrumb-segment-${segment.path}`}
+              onClick={() => triggerNavigate(segment.path)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "inherit",
+                cursor: onNavigate ? "pointer" : "default",
+                margin: 0,
+                maxWidth: "14rem",
+                overflow: "hidden",
+                padding: 0,
+                textAlign: "inherit",
+                textOverflow: "ellipsis",
+                verticalAlign: "bottom",
+                whiteSpace: "nowrap",
+              }}
+              title={segment.label}
+              type="button"
+            >
+              {label}
+            </button>
+          </span>
+        );
+      })}
     </nav>
   );
 }
