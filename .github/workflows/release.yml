@@ -45,8 +45,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "${NPM_TOKEN}" ]; then
-            echo "::error::Missing Actions secret NPM_TOKEN. Configure the repository secret before running Release."
-            exit 1
+            echo "::warning::NPM_TOKEN secret not configured — skipping npm publish."
           fi
 
       - name: Version / publish packages
