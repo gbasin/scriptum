@@ -1,0 +1,708 @@
+import type {
+  CommentMessage,
+  CommentThread,
+  Document,
+  Section,
+  ShareLink,
+  SyncSession,
+  Workspace,
+} from "../index";
+import {
+  acceptInvite as acceptInvitePath,
+  addCommentMessage as addCommentMessagePath,
+  addTags as addTagsPath,
+  authLogout as authLogoutPath,
+  authOAuthCallback as authOAuthCallbackPath,
+  authOAuthStart as authOAuthStartPath,
+  authTokenRefresh as authTokenRefreshPath,
+  createAclOverride as createAclOverridePath,
+  createComment as createCommentPath,
+  createDocument as createDocumentPath,
+  createShareLink as createShareLinkPath,
+  createSyncSession as createSyncSessionPath,
+  createWorkspace as createWorkspacePath,
+  deleteAclOverride as deleteAclOverridePath,
+  deleteDocument as deleteDocumentPath,
+  getDocument as getDocumentPath,
+  getWorkspace as getWorkspacePath,
+  inviteToWorkspace as inviteToWorkspacePath,
+  listComments as listCommentsPath,
+  listDocuments as listDocumentsPath,
+  listMembers as listMembersPath,
+  listWorkspaces as listWorkspacesPath,
+  removeMember as removeMemberPath,
+  reopenComment as reopenCommentPath,
+  resolveComment as resolveCommentPath,
+  searchDocuments as searchDocumentsPath,
+  updateDocument as updateDocumentPath,
+  updateMember as updateMemberPath,
+  updateShareLink as updateShareLinkPath,
+  updateWorkspace as updateWorkspacePath,
+} from "./endpoints";
+
+type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+type QueryValue = string | number | boolean | null | undefined;
+type QueryParams = Record<string, QueryValue>;
+
+export interface ScriptumApiClientOptions {
+  baseUrl: string;
+  fetchImpl?: typeof fetch;
+  tokenProvider?: (() => Promise<string | null>) | (() => string | null);
+  idempotencyKeyFactory?: () => string;
+}
+
+export interface RelayErrorEnvelope {
+  error?: {
+    code?: string;
+    message?: string;
+    retryable?: boolean;
+    request_id?: string;
+    requestId?: string;
+    details?: unknown;
+  };
+}
+
+export class ScriptumApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly method: HttpMethod,
+    public readonly url: string,
+    public readonly code: string | null,
+    message: string,
+    public readonly retryable: boolean,
+    public readonly requestId: string | null,
+    public readonly details: unknown,
+  ) {
+    super(message);
+    this.name = "ScriptumApiError";
+  }
+}
+
+export interface WorkspaceMember {
+  user_id: string;
+  email: string;
+  role: string;
+  status?: string;
+  etag?: string;
+}
+
+export interface PagedResponse<T> {
+  items: T[];
+  next_cursor: string | null;
+}
+
+export interface OAuthStartRequest {
+  redirect_uri: string;
+  state: string;
+  code_challenge: string;
+  code_challenge_method: "S256";
+}
+
+export interface OAuthStartResponse {
+  flow_id: string;
+  authorization_url: string;
+  expires_at: string;
+}
+
+export interface OAuthCallbackRequest {
+  flow_id: string;
+  code: string;
+  state: string;
+  code_verifier: string;
+  device_name?: string;
+}
+
+export interface OAuthCallbackResponse {
+  access_token: string;
+  access_expires_at: string;
+  refresh_token: string;
+  refresh_expires_at: string;
+  user: {
+    id: string;
+    email: string;
+    display_name: string;
+  };
+}
+
+export interface AuthRefreshRequest {
+  refresh_token: string;
+}
+
+export type AuthRefreshResponse = OAuthCallbackResponse;
+
+export interface AuthLogoutRequest {
+  refresh_token: string;
+}
+
+export interface CreateWorkspaceRequest {
+  name: string;
+  slug: string;
+}
+
+export interface UpdateWorkspaceRequest {
+  name?: string;
+  slug?: string;
+}
+
+export interface InviteToWorkspaceRequest {
+  email: string;
+  role: string;
+  expires_at?: string;
+}
+
+export interface AcceptInviteRequest {
+  display_name: string;
+}
+
+export interface CreateDocumentRequest {
+  path: string;
+  title: string;
+  content_md: string;
+  tags?: string[];
+}
+
+export interface UpdateDocumentRequest {
+  title?: string;
+  path?: string;
+  archived?: boolean;
+}
+
+export interface AddTagsRequest {
+  op: "add" | "remove";
+  tags: string[];
+}
+
+export interface SearchDocumentResult {
+  doc_id: string;
+  path: string;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
+export interface CreateCommentRequest {
+  anchor: {
+    section_id: string | null;
+    start_offset_utf16: number;
+    end_offset_utf16: number;
+    head_seq: number;
+  };
+  message: string;
+}
+
+export interface AddCommentMessageRequest {
+  body_md: string;
+}
+
+export interface ResolveCommentRequest {
+  if_version: number;
+}
+
+export interface ReopenCommentRequest {
+  if_version: number;
+}
+
+export interface CreateShareLinkRequest {
+  target_type: "workspace" | "document";
+  target_id: string;
+  permission: "view" | "edit";
+  expires_at?: string | null;
+  max_uses?: number | null;
+}
+
+export interface UpdateShareLinkRequest {
+  expires_at?: string | null;
+  max_uses?: number | null;
+  disabled?: boolean;
+}
+
+export interface AclOverride {
+  id: string;
+  subject_type: "user" | "agent";
+  subject_id: string;
+  role: string;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface CreateAclOverrideRequest {
+  subject_type: "user" | "agent";
+  subject_id: string;
+  role: string;
+  expires_at?: string | null;
+}
+
+interface RequestOptions {
+  method?: HttpMethod;
+  query?: QueryParams;
+  body?: unknown;
+  ifMatch?: string;
+  includeAuth?: boolean;
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function readString(
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readBoolean(
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): boolean | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+async function parseJsonMaybe(response: Response): Promise<unknown> {
+  if (response.status === 204) {
+    return undefined;
+  }
+  const text = await response.text();
+  if (text.length === 0) {
+    return undefined;
+  }
+  return JSON.parse(text);
+}
+
+export class ScriptumApiClient {
+  private readonly baseUrl: string;
+  private readonly fetchImpl: typeof fetch;
+  private readonly tokenProvider: (() => Promise<string | null>) | (() => string | null);
+  private readonly idempotencyKeyFactory: () => string;
+
+  constructor(options: ScriptumApiClientOptions) {
+    this.baseUrl = normalizeBaseUrl(options.baseUrl);
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.tokenProvider = options.tokenProvider ?? (() => null);
+    this.idempotencyKeyFactory =
+      options.idempotencyKeyFactory ?? (() => crypto.randomUUID());
+  }
+
+  private buildUrl(path: string, query?: QueryParams): URL {
+    const url = new URL(path, `${this.baseUrl}/`);
+    if (query) {
+      for (const [key, value] of Object.entries(query)) {
+        if (value === undefined || value === null) {
+          continue;
+        }
+        url.searchParams.set(key, String(value));
+      }
+    }
+    return url;
+  }
+
+  private async parseError(
+    response: Response,
+    method: HttpMethod,
+    url: string,
+  ): Promise<ScriptumApiError> {
+    const fallback = `Request failed (${response.status})`;
+    let parsed: unknown;
+
+    try {
+      parsed = await parseJsonMaybe(response);
+    } catch {
+      parsed = undefined;
+    }
+
+    const envelope = asRecord(parsed);
+    const errorRecord = asRecord(envelope?.error);
+
+    const message = readString(errorRecord, ["message"]) ?? fallback;
+    const code = readString(errorRecord, ["code"]);
+    const retryable =
+      readBoolean(errorRecord, ["retryable"]) ??
+      (response.status === 429 || response.status >= 500);
+    const requestId = readString(errorRecord, ["request_id", "requestId"]);
+    const details = errorRecord?.details;
+
+    return new ScriptumApiError(
+      response.status,
+      method,
+      url,
+      code,
+      message,
+      retryable,
+      requestId,
+      details,
+    );
+  }
+
+  private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const method = options.method ?? "GET";
+    const url = this.buildUrl(path, options.query);
+    const headers = new Headers();
+
+    if (options.body !== undefined) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    if (options.ifMatch) {
+      headers.set("If-Match", options.ifMatch);
+    }
+
+    if (options.includeAuth !== false) {
+      const token = await this.tokenProvider();
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+    }
+
+    if (method === "POST" && !url.pathname.startsWith("/v1/auth/")) {
+      headers.set("Idempotency-Key", this.idempotencyKeyFactory());
+    }
+
+    const response = await this.fetchImpl(url.toString(), {
+      method,
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+
+    if (!response.ok) {
+      throw await this.parseError(response, method, url.toString());
+    }
+
+    return (await parseJsonMaybe(response)) as T;
+  }
+
+  authOAuthStart(body: OAuthStartRequest): Promise<OAuthStartResponse> {
+    return this.request(authOAuthStartPath(), {
+      method: "POST",
+      body,
+      includeAuth: false,
+    });
+  }
+
+  authOAuthCallback(body: OAuthCallbackRequest): Promise<OAuthCallbackResponse> {
+    return this.request(authOAuthCallbackPath(), {
+      method: "POST",
+      body,
+      includeAuth: false,
+    });
+  }
+
+  authTokenRefresh(body: AuthRefreshRequest): Promise<AuthRefreshResponse> {
+    return this.request(authTokenRefreshPath(), {
+      method: "POST",
+      body,
+      includeAuth: false,
+    });
+  }
+
+  async authLogout(body: AuthLogoutRequest): Promise<void> {
+    await this.request<void>(authLogoutPath(), {
+      method: "POST",
+      body,
+      includeAuth: true,
+    });
+  }
+
+  listWorkspaces(params?: {
+    limit?: number;
+    cursor?: string;
+  }): Promise<PagedResponse<Workspace>> {
+    return this.request(listWorkspacesPath(), {
+      query: params,
+    });
+  }
+
+  createWorkspace(body: CreateWorkspaceRequest): Promise<{ workspace: Workspace }> {
+    return this.request(createWorkspacePath(), {
+      method: "POST",
+      body,
+    });
+  }
+
+  getWorkspace(workspaceId: string): Promise<{ workspace: Workspace }> {
+    return this.request(getWorkspacePath(workspaceId));
+  }
+
+  updateWorkspace(
+    workspaceId: string,
+    body: UpdateWorkspaceRequest,
+    options: { ifMatch?: string } = {},
+  ): Promise<{ workspace: Workspace }> {
+    return this.request(updateWorkspacePath(workspaceId), {
+      method: "PATCH",
+      body,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  inviteToWorkspace(
+    workspaceId: string,
+    body: InviteToWorkspaceRequest,
+  ): Promise<{
+    invite_id: string;
+    email: string;
+    role: string;
+    expires_at: string | null;
+    status: string;
+  }> {
+    return this.request(inviteToWorkspacePath(workspaceId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  acceptInvite(
+    token: string,
+    body: AcceptInviteRequest,
+  ): Promise<{ workspace: Workspace; member: WorkspaceMember }> {
+    return this.request(acceptInvitePath(token), {
+      method: "POST",
+      body,
+    });
+  }
+
+  listMembers(
+    workspaceId: string,
+    params?: { limit?: number; cursor?: string },
+  ): Promise<PagedResponse<WorkspaceMember>> {
+    return this.request(listMembersPath(workspaceId), {
+      query: params,
+    });
+  }
+
+  updateMember(
+    workspaceId: string,
+    userId: string,
+    body: { role?: string; status?: string },
+    options: { ifMatch?: string } = {},
+  ): Promise<WorkspaceMember> {
+    return this.request(updateMemberPath(workspaceId, userId), {
+      method: "PATCH",
+      body,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  async removeMember(
+    workspaceId: string,
+    userId: string,
+    options: { ifMatch?: string } = {},
+  ): Promise<void> {
+    await this.request<void>(removeMemberPath(workspaceId, userId), {
+      method: "DELETE",
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  listDocuments(
+    workspaceId: string,
+    params?: {
+      limit?: number;
+      cursor?: string;
+      path_prefix?: string;
+      tag?: string;
+      include_archived?: boolean;
+    },
+  ): Promise<PagedResponse<Document>> {
+    return this.request(listDocumentsPath(workspaceId), {
+      query: params,
+    });
+  }
+
+  createDocument(
+    workspaceId: string,
+    body: CreateDocumentRequest,
+  ): Promise<{ document: Document; sections: Section[]; etag: string }> {
+    return this.request(createDocumentPath(workspaceId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  getDocument(
+    workspaceId: string,
+    documentId: string,
+    params?: { include_content?: boolean; include_sections?: boolean },
+  ): Promise<{ document: Document; content_md?: string; sections?: Section[] }> {
+    return this.request(getDocumentPath(workspaceId, documentId), {
+      query: params,
+    });
+  }
+
+  updateDocument(
+    workspaceId: string,
+    documentId: string,
+    body: UpdateDocumentRequest,
+    options: { ifMatch?: string } = {},
+  ): Promise<{ document: Document }> {
+    return this.request(updateDocumentPath(workspaceId, documentId), {
+      method: "PATCH",
+      body,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  async deleteDocument(
+    workspaceId: string,
+    documentId: string,
+    params?: { hard_delete?: boolean },
+    options: { ifMatch?: string } = {},
+  ): Promise<void> {
+    await this.request<void>(deleteDocumentPath(workspaceId, documentId), {
+      method: "DELETE",
+      query: params,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  addTags(
+    workspaceId: string,
+    documentId: string,
+    body: AddTagsRequest,
+  ): Promise<{ document: Document }> {
+    return this.request(addTagsPath(workspaceId, documentId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  searchDocuments(
+    workspaceId: string,
+    params: { q: string; limit?: number; cursor?: string },
+  ): Promise<PagedResponse<SearchDocumentResult>> {
+    return this.request(searchDocumentsPath(workspaceId), {
+      query: params,
+    });
+  }
+
+  listComments(
+    workspaceId: string,
+    documentId: string,
+    params?: { status?: "open" | "resolved"; limit?: number; cursor?: string },
+  ): Promise<PagedResponse<{ thread: CommentThread; messages: CommentMessage[] }>> {
+    return this.request(listCommentsPath(workspaceId, documentId), {
+      query: params,
+    });
+  }
+
+  createComment(
+    workspaceId: string,
+    documentId: string,
+    body: CreateCommentRequest,
+  ): Promise<{ thread: CommentThread; message: CommentMessage }> {
+    return this.request(createCommentPath(workspaceId, documentId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  addCommentMessage(
+    workspaceId: string,
+    commentId: string,
+    body: AddCommentMessageRequest,
+  ): Promise<{ message: CommentMessage }> {
+    return this.request(addCommentMessagePath(workspaceId, commentId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  resolveComment(
+    workspaceId: string,
+    commentId: string,
+    body: ResolveCommentRequest,
+  ): Promise<{ thread: CommentThread }> {
+    return this.request(resolveCommentPath(workspaceId, commentId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  reopenComment(
+    workspaceId: string,
+    commentId: string,
+    body: ReopenCommentRequest,
+  ): Promise<{ thread: CommentThread }> {
+    return this.request(reopenCommentPath(workspaceId, commentId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  createShareLink(
+    workspaceId: string,
+    body: CreateShareLinkRequest,
+  ): Promise<{ share_link: ShareLink }> {
+    return this.request(createShareLinkPath(workspaceId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  updateShareLink(
+    workspaceId: string,
+    shareLinkId: string,
+    body: UpdateShareLinkRequest,
+    options: { ifMatch?: string } = {},
+  ): Promise<{ share_link: ShareLink }> {
+    return this.request(updateShareLinkPath(workspaceId, shareLinkId), {
+      method: "PATCH",
+      body,
+      ifMatch: options.ifMatch,
+    });
+  }
+
+  createAclOverride(
+    workspaceId: string,
+    documentId: string,
+    body: CreateAclOverrideRequest,
+  ): Promise<{ acl_override: AclOverride }> {
+    return this.request(createAclOverridePath(workspaceId, documentId), {
+      method: "POST",
+      body,
+    });
+  }
+
+  async deleteAclOverride(
+    workspaceId: string,
+    documentId: string,
+    overrideId: string,
+  ): Promise<void> {
+    await this.request<void>(
+      deleteAclOverridePath(workspaceId, documentId, overrideId),
+      {
+        method: "DELETE",
+      },
+    );
+  }
+
+  createSyncSession(workspaceId: string): Promise<SyncSession> {
+    return this.request(createSyncSessionPath(workspaceId), {
+      method: "POST",
+    });
+  }
+}
