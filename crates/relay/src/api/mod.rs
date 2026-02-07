@@ -1,6 +1,7 @@
 pub mod comments;
 pub mod documents;
 pub mod search;
+pub mod workspaces;
 
 use std::{
     collections::HashMap,
@@ -668,9 +669,18 @@ fn build_router_with_store(
         middleware::from_fn_with_state(state.clone(), require_workspace_owner_role);
 
     Router::new()
-        .route("/v1/workspaces", post(create_workspace).get(list_workspaces))
-        .route("/v1/workspaces/{id}", get(get_workspace).route_layer(viewer_role_layer))
-        .route("/v1/workspaces/{id}", patch(update_workspace).route_layer(owner_role_layer))
+        .route(
+            "/v1/workspaces",
+            post(workspaces::create_workspace).get(workspaces::list_workspaces),
+        )
+        .route(
+            "/v1/workspaces/{id}",
+            get(workspaces::get_workspace).route_layer(viewer_role_layer),
+        )
+        .route(
+            "/v1/workspaces/{id}",
+            patch(workspaces::update_workspace).route_layer(owner_role_layer),
+        )
         .route(
             "/v1/workspaces/{id}/share-links",
             post(create_share_link).get(list_share_links).route_layer(editor_role_layer.clone()),
@@ -706,76 +716,6 @@ fn build_router_with_store(
                 .route("/v1/share-links/redeem", post(redeem_share_link))
                 .with_state(state),
         )
-}
-
-async fn create_workspace(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Json(payload): Json<CreateWorkspaceRequest>,
-) -> Result<(StatusCode, Json<WorkspaceEnvelope>), ApiError> {
-    validate_name(&payload.name)?;
-    validate_slug(&payload.slug)?;
-
-    let workspace = state
-        .store
-        .create_workspace(user.user_id, payload.name, payload.slug)
-        .await?
-        .into_workspace();
-
-    Ok((StatusCode::CREATED, Json(WorkspaceEnvelope { workspace })))
-}
-
-async fn list_workspaces(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Query(query): Query<ListWorkspacesQuery>,
-) -> Result<Json<WorkspacesPageEnvelope>, ApiError> {
-    let limit = normalize_limit(query.limit);
-    let cursor = match query.cursor {
-        Some(raw_cursor) => Some(parse_cursor(&raw_cursor)?),
-        None => None,
-    };
-
-    let page = state.store.list_workspaces(user.user_id, limit, cursor).await?;
-
-    Ok(Json(WorkspacesPageEnvelope {
-        items: page.items.into_iter().map(WorkspaceRecord::into_workspace).collect(),
-        next_cursor: page.next_cursor,
-    }))
-}
-
-async fn get_workspace(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Path(workspace_id): Path<Uuid>,
-) -> Result<Json<WorkspaceEnvelope>, ApiError> {
-    let workspace = state.store.get_workspace(user.user_id, workspace_id).await?.into_workspace();
-
-    Ok(Json(WorkspaceEnvelope { workspace }))
-}
-
-async fn update_workspace(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Path(workspace_id): Path<Uuid>,
-    headers: HeaderMap,
-    Json(payload): Json<UpdateWorkspaceRequest>,
-) -> Result<Json<WorkspaceEnvelope>, ApiError> {
-    if let Some(name) = payload.name.as_deref() {
-        validate_name(name)?;
-    }
-    if let Some(slug) = payload.slug.as_deref() {
-        validate_slug(slug)?;
-    }
-
-    let if_match = extract_if_match(&headers)?;
-    let workspace = state
-        .store
-        .update_workspace(user.user_id, workspace_id, if_match, payload)
-        .await?
-        .into_workspace();
-
-    Ok(Json(WorkspaceEnvelope { workspace }))
 }
 
 async fn create_share_link(
