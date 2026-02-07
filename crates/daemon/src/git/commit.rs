@@ -31,7 +31,7 @@ Rules:\n\
 pub enum RedactionPolicy {
     /// AI commit messages disabled entirely.
     Disabled,
-    /// Send file names and change types but not diff content.
+    /// Send sanitized diff content with sensitive values redacted.
     #[default]
     Redacted,
     /// Send full diff to AI.
@@ -110,53 +110,80 @@ pub fn build_prompt(
     prompt
 }
 
-fn sensitive_patterns() -> &'static [Regex] {
-    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+struct RedactionRule {
+    pattern: Regex,
+    replacement: &'static str,
+}
+
+fn sensitive_patterns() -> &'static [RedactionRule] {
+    static PATTERNS: OnceLock<Vec<RedactionRule>> = OnceLock::new();
     PATTERNS
         .get_or_init(|| {
             vec![
                 // key = value style assignments.
-                Regex::new(
-                    r#"(?im)\b(api[_-]?key|secret|token|password|passwd|credential|client[_-]?secret|access[_-]?key|private[_-]?key)\b(\s*[:=]\s*)(['"]?)[^'"\s]+(['"]?)"#,
-                )
-                .expect("assignment redaction pattern should compile"),
+                RedactionRule {
+                    pattern: Regex::new(
+                        r#"(?im)\b(api[_-]?key|secret|token|password|passwd|credential|client[_-]?secret|access[_-]?key|private[_-]?key)\b(\s*[:=]\s*)(['"]?)[^'"\s]+(['"]?)"#,
+                    )
+                    .expect("assignment redaction pattern should compile"),
+                    replacement: "${1}${2}${3}[REDACTED]${4}",
+                },
+                // Authorization bearer token headers.
+                RedactionRule {
+                    pattern: Regex::new(r"(?im)\b(authorization\s*:\s*bearer\s+)\S+")
+                        .expect("authorization header redaction pattern should compile"),
+                    replacement: "${1}[REDACTED]",
+                },
+                // URI credentials like scheme://user:password@host.
+                RedactionRule {
+                    pattern: Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@]+:)([^@\s/]+)(@)")
+                        .expect("url credential redaction pattern should compile"),
+                    replacement: "${1}[REDACTED]${3}",
+                },
                 // AWS-style access keys.
-                Regex::new(r"(?i)\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
-                    .expect("aws key redaction pattern should compile"),
-                // GitHub PATs.
-                Regex::new(r"(?i)\bghp_[A-Za-z0-9]{30,}\b")
-                    .expect("github pat redaction pattern should compile"),
+                RedactionRule {
+                    pattern: Regex::new(r"(?i)\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+                        .expect("aws key redaction pattern should compile"),
+                    replacement: "[REDACTED]",
+                },
+                // GitHub access tokens.
+                RedactionRule {
+                    pattern: Regex::new(r"(?i)\bgh[pousr]_[A-Za-z0-9]{30,}\b")
+                        .expect("github token redaction pattern should compile"),
+                    replacement: "[REDACTED]",
+                },
                 // Common API key prefixes.
-                Regex::new(r"(?i)\bsk-(?:live|test)-[A-Za-z0-9]{16,}\b")
-                    .expect("api key prefix redaction pattern should compile"),
+                RedactionRule {
+                    pattern: Regex::new(r"(?i)\bsk-(?:live|test)-[A-Za-z0-9]{16,}\b")
+                        .expect("api key prefix redaction pattern should compile"),
+                    replacement: "[REDACTED]",
+                },
                 // JWT-like bearer tokens.
-                Regex::new(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+                RedactionRule {
+                    pattern: Regex::new(
+                        r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b",
+                    )
                     .expect("jwt redaction pattern should compile"),
+                    replacement: "[REDACTED]",
+                },
                 // PEM private keys.
-                Regex::new(r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----")
+                RedactionRule {
+                    pattern: Regex::new(
+                        r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+                    )
                     .expect("pem redaction pattern should compile"),
+                    replacement: "-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----",
+                },
             ]
         })
         .as_slice()
 }
 
 fn redact_sensitive_content(diff_summary: &str) -> String {
-    const REDACTED_VALUE: &str = "[REDACTED]";
     let mut redacted = diff_summary.to_string();
 
-    for pattern in sensitive_patterns() {
-        redacted = if pattern.as_str().contains("api[_-]?key|secret|token|password") {
-            pattern.replace_all(&redacted, "${1}${2}${3}[REDACTED]${4}").into_owned()
-        } else if pattern.as_str().contains("PRIVATE KEY") {
-            pattern
-                .replace_all(
-                    &redacted,
-                    "-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----",
-                )
-                .into_owned()
-        } else {
-            pattern.replace_all(&redacted, REDACTED_VALUE).into_owned()
-        };
+    for rule in sensitive_patterns() {
+        redacted = rule.pattern.replace_all(&redacted, rule.replacement).into_owned();
     }
 
     redacted
@@ -476,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn redacted_prompt_excludes_diff_content() {
+    fn redacted_prompt_includes_sanitized_diff_content() {
         let files = test_files();
         let prompt = build_prompt(
             "api_key = \"sk-live-1234567890abcdef\"\npassword=supersecret",
@@ -539,18 +566,26 @@ mod tests {
     fn redacts_tokens_and_private_keys_from_diff() {
         let diff = "\
 +Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdefghi123456789.xyz987654321qwe\n\
++Authorization: Bearer not-a-jwt-secret-token\n\
 +aws_access_key_id=AKIAABCDEFGHIJKLMNOP\n\
 +github_pat=ghp_abcdefghijklmnopqrstuvwxyzABCDEFGH\n\
++github_actions_token=ghs_abcdefghijklmnopqrstuvwxyzABCDEFGH\n\
++DATABASE_URL=postgres://alice:supersecret@localhost:5432/scriptum\n\
 +-----BEGIN PRIVATE KEY-----\n\
 +MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...\n\
 +-----END PRIVATE KEY-----\n";
 
         let redacted = redact_sensitive_content(diff);
         assert!(!redacted.contains("eyJhbGciOiJIUzI1Ni"));
+        assert!(!redacted.contains("not-a-jwt-secret-token"));
         assert!(!redacted.contains("AKIAABCDEFGHIJKLMNOP"));
         assert!(!redacted.contains("ghp_abcdefghijklmnopqrstuvwxyzABCDEFGH"));
+        assert!(!redacted.contains("ghs_abcdefghijklmnopqrstuvwxyzABCDEFGH"));
+        assert!(!redacted.contains("supersecret"));
         assert!(!redacted.contains("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"));
         assert!(redacted.contains("[REDACTED]"));
+        assert!(redacted.contains("Authorization: Bearer [REDACTED]"));
+        assert!(redacted.contains("postgres://alice:[REDACTED]@localhost:5432/scriptum"));
         assert!(redacted.contains("BEGIN PRIVATE KEY"));
     }
 }
