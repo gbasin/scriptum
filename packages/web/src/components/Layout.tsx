@@ -27,6 +27,18 @@ interface OutlineHeading {
   text: string;
 }
 
+interface ParsedWikiLink {
+  raw: string;
+  target: string;
+}
+
+export interface IncomingBacklink {
+  sourceDocumentId: string;
+  sourcePath: string;
+  sourceTitle: string;
+  snippet: string;
+}
+
 export function isNewDocumentShortcut(event: KeyboardEvent): boolean {
   return (
     (event.metaKey || event.ctrlKey) &&
@@ -109,6 +121,107 @@ function detectActiveOutlineHeadingId(
   return headingElements.find((heading) => heading.id)?.id ?? null;
 }
 
+function normalizeBacklinkTarget(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function baseName(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
+function baseNameWithoutExtension(path: string): string {
+  return baseName(path).replace(/\.[^.]+$/, "");
+}
+
+function extractWikiLinks(markdown: string): ParsedWikiLink[] {
+  const links: ParsedWikiLink[] = [];
+  const pattern = /\[\[([^[\]]+)\]\]/g;
+  let match: RegExpExecArray | null = pattern.exec(markdown);
+
+  while (match) {
+    const rawInner = match[1]?.trim() ?? "";
+    if (rawInner.length > 0) {
+      const [targetWithHeading] = rawInner.split("|");
+      const [target] = targetWithHeading.split("#");
+      const normalizedTarget = normalizeBacklinkTarget(target);
+      if (normalizedTarget.length > 0) {
+        links.push({
+          raw: match[0],
+          target: normalizedTarget,
+        });
+      }
+    }
+    match = pattern.exec(markdown);
+  }
+
+  return links;
+}
+
+function targetAliases(document: Document): Set<string> {
+  const aliases = new Set<string>();
+  const pathNormalized = normalizeBacklinkTarget(document.path);
+  const pathBaseName = normalizeBacklinkTarget(baseName(document.path));
+  const pathBaseNameWithoutExtension = normalizeBacklinkTarget(
+    baseNameWithoutExtension(document.path),
+  );
+  const titleNormalized = normalizeBacklinkTarget(document.title);
+
+  if (pathNormalized.length > 0) {
+    aliases.add(pathNormalized);
+  }
+  if (pathBaseName.length > 0) {
+    aliases.add(pathBaseName);
+  }
+  if (pathBaseNameWithoutExtension.length > 0) {
+    aliases.add(pathBaseNameWithoutExtension);
+  }
+  if (titleNormalized.length > 0) {
+    aliases.add(titleNormalized);
+  }
+
+  return aliases;
+}
+
+export function buildIncomingBacklinks(
+  documents: readonly Document[],
+  activeDocumentId: string | null,
+): IncomingBacklink[] {
+  if (!activeDocumentId) {
+    return [];
+  }
+
+  const activeDocument = documents.find((document) => document.id === activeDocumentId);
+  if (!activeDocument) {
+    return [];
+  }
+  const aliases = targetAliases(activeDocument);
+  const backlinks: IncomingBacklink[] = [];
+
+  for (const document of documents) {
+    if (document.id === activeDocument.id || typeof document.bodyMd !== "string") {
+      continue;
+    }
+    const link = extractWikiLinks(document.bodyMd).find((candidate) =>
+      aliases.has(candidate.target),
+    );
+    if (!link) {
+      continue;
+    }
+
+    backlinks.push({
+      sourceDocumentId: document.id,
+      sourcePath: document.path,
+      sourceTitle: document.title,
+      snippet: link.raw,
+    });
+  }
+
+  return backlinks.sort((left, right) =>
+    left.sourcePath.localeCompare(right.sourcePath),
+  );
+}
+
 export function Layout() {
   const navigate = useNavigate();
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
@@ -163,6 +276,10 @@ export function Layout() {
   const activeDocumentId = activeWorkspaceId
     ? activeDocumentIdByWorkspace[activeWorkspaceId] ?? null
     : null;
+  const incomingBacklinks = useMemo(
+    () => buildIncomingBacklinks(workspaceDocuments, activeDocumentId),
+    [workspaceDocuments, activeDocumentId],
+  );
 
   const createDocumentInActiveWorkspace = (
     path: string,
@@ -183,6 +300,7 @@ export function Layout() {
       etag: `document-${token}`,
       headSeq: 0,
       id: `doc-${token}`,
+      bodyMd: "",
       path,
       tags: [],
       title: titleFromPath(path),
@@ -445,6 +563,10 @@ export function Layout() {
     setActiveOutlineHeadingId(headingId);
   };
 
+  const handleBacklinkSelect = (documentId: string) => {
+    handleDocumentSelect(documentId);
+  };
+
   return (
     <div
       data-testid="app-layout"
@@ -573,6 +695,53 @@ export function Layout() {
               ))}
             </ul>
           )}
+
+          <section
+            aria-label="Incoming backlinks"
+            data-testid="backlinks-panel"
+            style={{ marginTop: "1.25rem" }}
+          >
+            <h3 style={{ margin: "0 0 0.5rem" }}>Backlinks</h3>
+            {incomingBacklinks.length === 0 ? (
+              <p data-testid="backlinks-empty" style={{ color: "#6b7280", margin: 0 }}>
+                No incoming links to this document.
+              </p>
+            ) : (
+              <ul
+                aria-label="Incoming wiki links"
+                data-testid="backlinks-list"
+                style={{ listStyle: "none", margin: 0, padding: 0 }}
+              >
+                {incomingBacklinks.map((backlink) => (
+                  <li key={backlink.sourceDocumentId} style={{ marginBottom: "0.75rem" }}>
+                    <button
+                      data-testid={`backlink-item-${backlink.sourceDocumentId}`}
+                      onClick={() => handleBacklinkSelect(backlink.sourceDocumentId)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "#1d4ed8",
+                        cursor: "pointer",
+                        fontSize: "0.875rem",
+                        fontWeight: 600,
+                        padding: 0,
+                        textAlign: "left",
+                      }}
+                      type="button"
+                    >
+                      {backlink.sourceTitle}
+                    </button>
+                    <p
+                      data-testid={`backlink-snippet-${backlink.sourceDocumentId}`}
+                      style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0.2rem 0 0" }}
+                    >
+                      {backlink.snippet}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </aside>
       ) : (
         <button

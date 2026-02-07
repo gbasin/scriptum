@@ -81,6 +81,7 @@ function normalizeDocument(value: unknown): Document | null {
   const workspaceId = asString(document.workspaceId);
   const path = asString(document.path);
   const title = asString(document.title);
+  const bodyMdValue = document.bodyMd;
   const tags = asStringArray(document.tags);
   const headSeq = asNumber(document.headSeq);
   const etag = asString(document.etag);
@@ -94,6 +95,7 @@ function normalizeDocument(value: unknown): Document | null {
     !workspaceId ||
     !path ||
     !title ||
+    bodyMdValue !== undefined && typeof bodyMdValue !== "string" ||
     !tags ||
     headSeq === null ||
     !etag ||
@@ -110,6 +112,7 @@ function normalizeDocument(value: unknown): Document | null {
     workspaceId,
     path,
     title,
+    ...(typeof bodyMdValue === "string" ? { bodyMd: bodyMdValue } : {}),
     tags,
     headSeq,
     etag,
@@ -422,4 +425,3 @@ export function bindDocumentsStoreToYjs(
     activeDocumentByWorkspace.unobserve(handleActiveDocumentChange);
   };
 }
-

@@ -3,6 +3,7 @@ export interface Document {
   workspaceId: string;
   path: string;
   title: string;
+  bodyMd?: string;
   tags: string[];
   headSeq: number;
   etag: string;
