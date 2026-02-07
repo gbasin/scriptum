@@ -53,6 +53,8 @@ const DEFAULT_DAEMON_WS_BASE_URL =
 const DEFAULT_WEBRTC_SIGNALING_URL =
   (import.meta.env.VITE_SCRIPTUM_WEBRTC_SIGNALING_URL as string | undefined) ??
   null;
+const REALTIME_E2E_MODE =
+  (import.meta.env.VITE_SCRIPTUM_REALTIME_E2E as string | undefined) === "1";
 const LOCAL_COMMENT_AUTHOR_ID = "local-user";
 const LOCAL_COMMENT_AUTHOR_NAME = "You";
 const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
@@ -1002,6 +1004,18 @@ export function DocumentRoute() {
       provider.connect();
       setSyncState("reconnecting");
     }
+    if (REALTIME_E2E_MODE) {
+      const localAwarenessName = `User ${provider.provider.awareness.clientID}`;
+      provider.provider.awareness.setLocalStateField("user", {
+        color: nameToColor(localAwarenessName),
+        name: localAwarenessName,
+        type: "human",
+      });
+      provider.provider.awareness.setLocalStateField("cursor", {
+        anchor: 0,
+        head: 0,
+      });
+    }
 
     const view = new EditorView({
       parent: host,
@@ -1075,6 +1089,12 @@ export function DocumentRoute() {
               ch: mainSelection.head - line.from,
               line: line.number - 1,
             });
+            if (REALTIME_E2E_MODE) {
+              provider.provider.awareness.setLocalStateField("cursor", {
+                anchor: mainSelection.anchor,
+                head: mainSelection.head,
+              });
+            }
 
             if (mainSelection.empty) {
               setActiveSelection(null);
