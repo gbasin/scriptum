@@ -1,7 +1,16 @@
 import type { Document } from "@scriptum/shared";
-import { type MouseEvent, useCallback, useMemo, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// -- Types --------------------------------------------------------------------
 
 export interface TreeNode {
   /** Segment name (folder name or file basename). */
@@ -14,7 +23,14 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
-export type ContextMenuAction = "rename" | "move" | "delete" | "add-tag";
+export type ContextMenuAction =
+  | "new-folder"
+  | "rename"
+  | "move"
+  | "delete"
+  | "copy-link"
+  | "add-tag"
+  | "archive";
 
 export interface ContextMenuState {
   x: number;
@@ -31,9 +47,13 @@ export interface DocumentTreeProps {
   onDocumentSelect?: (documentId: string) => void;
   /** Called when user picks a context menu action. */
   onContextMenuAction?: (action: ContextMenuAction, document: Document) => void;
+  /** Called when user commits an inline rename. */
+  onRenameDocument?: (documentId: string, nextPath: string) => void;
+  /** Newly-created document id that should enter inline rename mode. */
+  pendingRenameDocumentId?: string | null;
 }
 
-// ── Tree building ────────────────────────────────────────────────────────────
+// -- Tree building -------------------------------------------------------------
 
 export function buildTree(documents: Document[]): TreeNode[] {
   const root: TreeNode = {
@@ -47,10 +67,10 @@ export function buildTree(documents: Document[]): TreeNode[] {
     const segments = doc.path.split("/").filter(Boolean);
     let current = root;
 
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
-      const isFile = i === segments.length - 1;
-      const fullPath = segments.slice(0, i + 1).join("/");
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      const isFile = index === segments.length - 1;
+      const fullPath = segments.slice(0, index + 1).join("/");
 
       let child = current.children.find((node) => node.name === segment);
       if (!child) {
@@ -74,13 +94,12 @@ export function buildTree(documents: Document[]): TreeNode[] {
 }
 
 function sortTreeNodes(nodes: TreeNode[]): void {
-  nodes.sort((a, b) => {
-    // Folders first, then files.
-    const aIsFolder = a.children.length > 0 && !a.document;
-    const bIsFolder = b.children.length > 0 && !b.document;
-    if (aIsFolder && !bIsFolder) return -1;
-    if (!aIsFolder && bIsFolder) return 1;
-    return a.name.localeCompare(b.name);
+  nodes.sort((left, right) => {
+    const leftIsFolder = left.children.length > 0 && !left.document;
+    const rightIsFolder = right.children.length > 0 && !right.document;
+    if (leftIsFolder && !rightIsFolder) return -1;
+    if (!leftIsFolder && rightIsFolder) return 1;
+    return left.name.localeCompare(right.name);
   });
 
   for (const node of nodes) {
@@ -90,7 +109,7 @@ function sortTreeNodes(nodes: TreeNode[]): void {
   }
 }
 
-// ── Icon helpers ─────────────────────────────────────────────────────────────
+// -- Icon helpers --------------------------------------------------------------
 
 export function fileIcon(name: string): string {
   if (name.endsWith(".md") || name.endsWith(".markdown")) return "\u{1F4DD}";
@@ -100,13 +119,16 @@ export function fileIcon(name: string): string {
   return "\u{1F4C4}";
 }
 
-// ── Context menu ─────────────────────────────────────────────────────────────
+// -- Context menu --------------------------------------------------------------
 
 const CONTEXT_ACTIONS: { action: ContextMenuAction; label: string }[] = [
+  { action: "new-folder", label: "New Folder" },
   { action: "rename", label: "Rename" },
   { action: "move", label: "Move" },
   { action: "delete", label: "Delete" },
+  { action: "copy-link", label: "Copy Link" },
   { action: "add-tag", label: "Add Tag" },
+  { action: "archive", label: "Archive" },
 ];
 
 function ContextMenu({
@@ -164,28 +186,39 @@ function ContextMenu({
   );
 }
 
-// ── Tree node component ──────────────────────────────────────────────────────
+// -- Tree node component -------------------------------------------------------
 
 function TreeNodeItem({
   activeDocumentId,
   depth,
+  editingDocumentId,
+  editingPath,
   expanded,
   node,
   onContextMenu,
   onDocumentSelect,
+  onRenameCancel,
+  onRenameChange,
+  onRenameCommit,
   onToggle,
 }: {
   activeDocumentId: string | null;
   depth: number;
+  editingDocumentId: string | null;
+  editingPath: string;
   expanded: Set<string>;
   node: TreeNode;
   onContextMenu: (event: MouseEvent, doc: Document) => void;
   onDocumentSelect?: (documentId: string) => void;
+  onRenameCancel: () => void;
+  onRenameChange: (value: string) => void;
+  onRenameCommit: (documentId: string) => void;
   onToggle: (path: string) => void;
 }) {
   const isFolder = node.children.length > 0;
   const isExpanded = expanded.has(node.fullPath);
   const isActive = node.document?.id === activeDocumentId;
+  const isEditing = node.document?.id === editingDocumentId;
 
   const handleClick = () => {
     if (isFolder) {
@@ -196,11 +229,64 @@ function TreeNodeItem({
   };
 
   const handleContextMenu = (event: MouseEvent) => {
-    if (node.document) {
+    if (!node.document) {
+      return;
+    }
+    event.preventDefault();
+    onContextMenu(event, node.document);
+  };
+
+  const handleRenameInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!node.document) {
+      return;
+    }
+
+    if (event.key === "Enter") {
       event.preventDefault();
-      onContextMenu(event, node.document);
+      onRenameCommit(node.document.id);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onRenameCancel();
     }
   };
+
+  if (isEditing && node.document) {
+    return (
+      <li
+        data-testid={`tree-node-${node.fullPath}`}
+        role="treeitem"
+      >
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: "0.35rem",
+            paddingBottom: "2px",
+            paddingLeft: `${depth * 16 + 4}px`,
+            paddingRight: "4px",
+            paddingTop: "2px",
+          }}
+        >
+          <span aria-hidden="true">{fileIcon(node.name)}</span>
+          <input
+            autoFocus
+            data-testid={`tree-rename-input-${node.document.id}`}
+            onBlur={() => onRenameCommit(node.document!.id)}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              onRenameChange(event.target.value)
+            }
+            onKeyDown={handleRenameInputKeyDown}
+            style={{ flex: 1, minWidth: 0 }}
+            type="text"
+            value={editingPath}
+          />
+        </div>
+      </li>
+    );
+  }
 
   return (
     <>
@@ -230,11 +316,7 @@ function TreeNodeItem({
           type="button"
         >
           <span aria-hidden="true" style={{ marginRight: "4px" }}>
-            {isFolder
-              ? isExpanded
-                ? "\u{1F4C2}"
-                : "\u{1F4C1}"
-              : fileIcon(node.name)}
+            {isFolder ? (isExpanded ? "\u{1F4C2}" : "\u{1F4C1}") : fileIcon(node.name)}
           </span>
           {node.name}
         </button>
@@ -246,11 +328,16 @@ function TreeNodeItem({
               <TreeNodeItem
                 activeDocumentId={activeDocumentId}
                 depth={depth + 1}
+                editingDocumentId={editingDocumentId}
+                editingPath={editingPath}
                 expanded={expanded}
                 key={child.fullPath}
                 node={child}
                 onContextMenu={onContextMenu}
                 onDocumentSelect={onDocumentSelect}
+                onRenameCancel={onRenameCancel}
+                onRenameChange={onRenameChange}
+                onRenameCommit={onRenameCommit}
                 onToggle={onToggle}
               />
             ))}
@@ -261,26 +348,49 @@ function TreeNodeItem({
   );
 }
 
-// ── Main component ───────────────────────────────────────────────────────────
+// -- Main component ------------------------------------------------------------
 
 export function DocumentTree({
   documents,
   activeDocumentId,
   onDocumentSelect,
   onContextMenuAction,
+  onRenameDocument,
+  pendingRenameDocumentId = null,
 }: DocumentTreeProps) {
   const tree = useMemo(() => buildTree(documents), [documents]);
   const [expanded, setExpanded] = useState<Set<string>>(() => {
-    // Auto-expand top-level folders.
-    return new Set(
-      tree.filter((n) => n.children.length > 0).map((n) => n.fullPath)
-    );
+    return new Set(tree.filter((node) => node.children.length > 0).map((node) => node.fullPath));
   });
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
+  const [editingPath, setEditingPath] = useState("");
+  const consumedPendingRenameIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingRenameDocumentId) {
+      consumedPendingRenameIdRef.current = null;
+      return;
+    }
+    if (consumedPendingRenameIdRef.current === pendingRenameDocumentId) {
+      return;
+    }
+
+    const pendingDocument = documents.find(
+      (document) => document.id === pendingRenameDocumentId,
+    );
+    if (!pendingDocument) {
+      return;
+    }
+
+    consumedPendingRenameIdRef.current = pendingRenameDocumentId;
+    setEditingDocumentId(pendingDocument.id);
+    setEditingPath(pendingDocument.path);
+  }, [documents, pendingRenameDocumentId]);
 
   const handleToggle = useCallback((path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
+    setExpanded((previous) => {
+      const next = new Set(previous);
       if (next.has(path)) {
         next.delete(path);
       } else {
@@ -290,21 +400,47 @@ export function DocumentTree({
     });
   }, []);
 
-  const handleContextMenu = useCallback(
-    (event: MouseEvent, doc: Document) => {
-      setContextMenu({ x: event.clientX, y: event.clientY, document: doc });
+  const handleContextMenu = useCallback((event: MouseEvent, document: Document) => {
+    setContextMenu({ document, x: event.clientX, y: event.clientY });
+  }, []);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const beginRenameDocument = useCallback((document: Document) => {
+    setEditingDocumentId(document.id);
+    setEditingPath(document.path);
+  }, []);
+
+  const cancelRenameDocument = useCallback(() => {
+    setEditingDocumentId(null);
+    setEditingPath("");
+  }, []);
+
+  const commitRenameDocument = useCallback(
+    (documentId: string) => {
+      const nextPath = editingPath.trim();
+      if (!nextPath) {
+        cancelRenameDocument();
+        return;
+      }
+
+      onRenameDocument?.(documentId, nextPath);
+      setEditingDocumentId(null);
+      setEditingPath("");
     },
-    []
+    [cancelRenameDocument, editingPath, onRenameDocument],
   );
 
   const handleContextAction = useCallback(
-    (action: ContextMenuAction, doc: Document) => {
-      onContextMenuAction?.(action, doc);
+    (action: ContextMenuAction, document: Document) => {
+      if (action === "rename") {
+        beginRenameDocument(document);
+        return;
+      }
+      onContextMenuAction?.(action, document);
     },
-    [onContextMenuAction]
+    [beginRenameDocument, onContextMenuAction],
   );
-
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   if (documents.length === 0) {
     return (
@@ -327,22 +463,27 @@ export function DocumentTree({
           <TreeNodeItem
             activeDocumentId={activeDocumentId}
             depth={0}
+            editingDocumentId={editingDocumentId}
+            editingPath={editingPath}
             expanded={expanded}
             key={node.fullPath}
             node={node}
             onContextMenu={handleContextMenu}
             onDocumentSelect={onDocumentSelect}
+            onRenameCancel={cancelRenameDocument}
+            onRenameChange={setEditingPath}
+            onRenameCommit={commitRenameDocument}
             onToggle={handleToggle}
           />
         ))}
       </ul>
-      {contextMenu && (
+      {contextMenu ? (
         <ContextMenu
           menu={contextMenu}
           onAction={handleContextAction}
           onClose={closeContextMenu}
         />
-      )}
+      ) : null}
     </nav>
   );
 }

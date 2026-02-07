@@ -322,6 +322,112 @@ export function Layout() {
     setSearchPanelOpen(false);
   };
 
+  const updateExistingDocument = (
+    documentId: string,
+    updater: (document: Document) => Document,
+  ) => {
+    const currentDocument = documents.find((document) => document.id === documentId);
+    if (!currentDocument) {
+      return;
+    }
+    upsertDocument(updater(currentDocument));
+  };
+
+  const handleRenameDocument = (documentId: string, nextPath: string) => {
+    const normalizedPath = nextPath.trim();
+    if (!normalizedPath) {
+      return;
+    }
+    const now = new Date().toISOString();
+    updateExistingDocument(documentId, (document) => ({
+      ...document,
+      etag: `${document.etag}:rename:${Date.now().toString(36)}`,
+      path: normalizedPath,
+      title: titleFromPath(normalizedPath),
+      updatedAt: now,
+    }));
+    setPendingRenameDocumentId(null);
+  };
+
+  const createDocumentInNewFolder = (sourceDocument: Document) => {
+    const segments = sourceDocument.path.split("/").filter(Boolean);
+    const parentPath = segments.slice(0, -1).join("/");
+    const existingPaths = new Set(workspaceDocuments.map((document) => document.path));
+    let suffix = 1;
+    let folderName = "new-folder";
+    let candidatePath = `${folderName}/untitled.md`;
+
+    while (
+      existingPaths.has(
+        parentPath.length > 0 ? `${parentPath}/${candidatePath}` : candidatePath,
+      )
+    ) {
+      suffix += 1;
+      folderName = `new-folder-${suffix}`;
+      candidatePath = `${folderName}/untitled.md`;
+    }
+
+    createDocumentInActiveWorkspace(
+      parentPath.length > 0 ? `${parentPath}/${candidatePath}` : candidatePath,
+      { inlineRename: true },
+    );
+  };
+
+  const handleDocumentContextAction = (
+    action: ContextMenuAction,
+    document: Document,
+  ) => {
+    if (action === "rename") {
+      return;
+    }
+
+    if (action === "delete") {
+      removeDocument(document.id);
+      return;
+    }
+
+    if (action === "move") {
+      const fileName = titleFromPath(document.path);
+      handleRenameDocument(document.id, `moved/${fileName}`);
+      return;
+    }
+
+    if (action === "copy-link") {
+      const link = `/workspace/${encodeURIComponent(document.workspaceId)}/document/${encodeURIComponent(document.id)}`;
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        void navigator.clipboard.writeText(link);
+      }
+      return;
+    }
+
+    if (action === "add-tag") {
+      const now = new Date().toISOString();
+      updateExistingDocument(document.id, (currentDocument) => ({
+        ...currentDocument,
+        etag: `${currentDocument.etag}:tag:${Date.now().toString(36)}`,
+        tags: Array.from(new Set([...currentDocument.tags, "tagged"])),
+        updatedAt: now,
+      }));
+      return;
+    }
+
+    if (action === "archive") {
+      const now = new Date().toISOString();
+      updateExistingDocument(document.id, (currentDocument) => ({
+        ...currentDocument,
+        archivedAt: now,
+        etag: `${currentDocument.etag}:archive:${Date.now().toString(36)}`,
+        updatedAt: now,
+      }));
+      return;
+    }
+
+    if (action === "new-folder") {
+      createDocumentInNewFolder(document);
+      return;
+    }
+  };
+
   const handleOutlineHeadingClick = (headingId: string) => {
     const container = editorAreaRef.current;
     if (!container) {
@@ -383,7 +489,10 @@ export function Layout() {
             <DocumentTree
               activeDocumentId={activeDocumentId}
               documents={filteredDocuments}
+              onContextMenuAction={handleDocumentContextAction}
               onDocumentSelect={handleDocumentSelect}
+              onRenameDocument={handleRenameDocument}
+              pendingRenameDocumentId={pendingRenameDocumentId}
             />
           </section>
         )}

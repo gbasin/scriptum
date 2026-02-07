@@ -4,6 +4,7 @@ import {
   commentAnchorTopPx,
   commentRangesFromThreads,
   normalizeInlineCommentThreads,
+  updateInlineCommentThreadStatus,
   updateInlineCommentMessageBody,
   type InlineCommentThread,
 } from "./document";
@@ -165,5 +166,50 @@ describe("document comment helpers", () => {
       "Should not change"
     );
     expect(afterOtherEdit[0]?.messages[1]?.bodyMd).toBe("Teammate note");
+  });
+
+  it("resolves and reopens comment thread status", () => {
+    const threads: InlineCommentThread[] = [
+      {
+        endOffsetUtf16: 20,
+        id: "thread-1",
+        messages: [],
+        startOffsetUtf16: 10,
+        status: "open",
+      },
+    ];
+
+    const resolved = updateInlineCommentThreadStatus(
+      threads,
+      "thread-1",
+      "resolved"
+    );
+    expect(resolved[0]?.status).toBe("resolved");
+
+    const reopened = updateInlineCommentThreadStatus(
+      resolved,
+      "thread-1",
+      "open"
+    );
+    expect(reopened[0]?.status).toBe("open");
+  });
+
+  it("returns unchanged thread statuses when id is missing", () => {
+    const threads: InlineCommentThread[] = [
+      {
+        endOffsetUtf16: 20,
+        id: "thread-1",
+        messages: [],
+        startOffsetUtf16: 10,
+        status: "open",
+      },
+    ];
+
+    const next = updateInlineCommentThreadStatus(
+      threads,
+      "missing-thread",
+      "resolved"
+    );
+    expect(next).toEqual(threads);
   });
 });

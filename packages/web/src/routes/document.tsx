@@ -283,6 +283,29 @@ export function updateInlineCommentMessageBody(
   return didUpdate ? nextThreads : [...threads];
 }
 
+export function updateInlineCommentThreadStatus(
+  threads: readonly InlineCommentThread[],
+  threadId: string,
+  status: InlineCommentThread["status"]
+): InlineCommentThread[] {
+  let didUpdate = false;
+  const nextThreads = threads.map((thread) => {
+    if (thread.id !== threadId) {
+      return thread;
+    }
+    if (thread.status === status) {
+      return thread;
+    }
+    didUpdate = true;
+    return {
+      ...thread,
+      status,
+    };
+  });
+
+  return didUpdate ? nextThreads : [...threads];
+}
+
 export function commentAnchorTopPx(line: number): number {
   if (!Number.isFinite(line)) {
     return 12;
@@ -563,6 +586,7 @@ export function DocumentRoute() {
       ) ?? null
     );
   }, [activeSelection, inlineCommentThreads]);
+  const canComposeInActiveThread = !activeThread || activeThread.status === "open";
   const pendingSyncUpdates = fixtureModeEnabled
     ? fixtureState.pendingSyncUpdates
     : pendingChanges;
@@ -914,6 +938,23 @@ export function DocumentRoute() {
     setEditingMessageBody("");
   };
 
+  const setThreadStatus = (
+    threadId: string,
+    status: InlineCommentThread["status"]
+  ) => {
+    persistCommentThreads((currentThreads) =>
+      updateInlineCommentThreadStatus(currentThreads, threadId, status)
+    );
+  };
+
+  const resolveThread = (threadId: string) => {
+    setThreadStatus(threadId, "resolved");
+  };
+
+  const reopenThread = (threadId: string) => {
+    setThreadStatus(threadId, "open");
+  };
+
   const selectTab = (nextDocumentId: string) => {
     if (!workspaceId) {
       return;
@@ -991,23 +1032,54 @@ export function DocumentRoute() {
 
           {activeSelection ? (
             <button
+              aria-label={
+                activeThread?.status === "resolved"
+                  ? "Resolved comment thread"
+                  : "Add comment"
+              }
               data-testid="comment-margin-button"
               onClick={() => setCommentPopoverOpen((isOpen) => !isOpen)}
               style={{
-                background: "#fde68a",
-                border: "1px solid #f59e0b",
+                alignItems: "center",
+                background:
+                  activeThread?.status === "resolved" ? "#f3f4f6" : "#fde68a",
+                border:
+                  activeThread?.status === "resolved"
+                    ? "1px solid #9ca3af"
+                    : "1px solid #f59e0b",
                 borderRadius: "9999px",
                 cursor: "pointer",
+                display: "inline-flex",
                 fontSize: "0.75rem",
                 fontWeight: 600,
-                padding: "0.25rem 0.5rem",
+                gap: "0.25rem",
+                minHeight: "1.5rem",
+                minWidth: activeThread?.status === "resolved" ? "1.5rem" : undefined,
+                padding:
+                  activeThread?.status === "resolved"
+                    ? "0.25rem"
+                    : "0.25rem 0.5rem",
                 position: "absolute",
                 right: "0.5rem",
                 top: `${commentAnchorTop}px`,
               }}
               type="button"
             >
-              Comment
+              {activeThread?.status === "resolved" ? (
+                <span
+                  aria-hidden="true"
+                  data-testid="comment-margin-resolved-dot"
+                  style={{
+                    background: "#6b7280",
+                    borderRadius: "9999px",
+                    display: "inline-block",
+                    height: "0.5rem",
+                    width: "0.5rem",
+                  }}
+                />
+              ) : (
+                "Comment"
+              )}
             </button>
           ) : null}
 
@@ -1043,122 +1115,189 @@ export function DocumentRoute() {
               </p>
 
               {activeThread ? (
-                <section
-                  aria-label="Thread replies"
-                  data-testid="comment-thread-replies"
-                  style={{
-                    borderBottom: "1px solid #e5e7eb",
-                    marginBottom: "0.5rem",
-                    maxHeight: "12rem",
-                    overflowY: "auto",
-                    paddingBottom: "0.5rem",
-                  }}
-                >
-                  {activeThread.messages.length === 0 ? (
-                    <p style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}>
-                      No replies yet.
-                    </p>
-                  ) : (
-                    <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                      {activeThread.messages.map((message) => {
-                        const isEditing = editingMessageId === message.id;
-                        return (
-                          <li
-                            key={message.id}
-                            style={{
-                              border: "1px solid #e5e7eb",
-                              borderRadius: "0.375rem",
-                              marginBottom: "0.375rem",
-                              padding: "0.375rem",
-                            }}
-                          >
-                            <div
+                activeThread.status === "resolved" ? (
+                  <section
+                    aria-label="Collapsed resolved thread"
+                    data-testid="comment-thread-collapsed"
+                    style={{
+                      alignItems: "center",
+                      borderBottom: "1px solid #e5e7eb",
+                      display: "flex",
+                      gap: "0.5rem",
+                      marginBottom: "0.5rem",
+                      paddingBottom: "0.5rem",
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      data-testid="comment-thread-collapsed-dot"
+                      style={{
+                        background: "#6b7280",
+                        borderRadius: "9999px",
+                        display: "inline-block",
+                        flexShrink: 0,
+                        height: "0.45rem",
+                        width: "0.45rem",
+                      }}
+                    />
+                    <span style={{ color: "#4b5563", fontSize: "0.75rem" }}>
+                      Thread resolved
+                    </span>
+                    <button
+                      data-testid="comment-thread-reopen"
+                      onClick={() => reopenThread(activeThread.id)}
+                      style={{ marginLeft: "auto" }}
+                      type="button"
+                    >
+                      Reopen
+                    </button>
+                  </section>
+                ) : (
+                  <section
+                    aria-label="Thread replies"
+                    data-testid="comment-thread-replies"
+                    style={{
+                      borderBottom: "1px solid #e5e7eb",
+                      marginBottom: "0.5rem",
+                      maxHeight: "12rem",
+                      overflowY: "auto",
+                      paddingBottom: "0.5rem",
+                    }}
+                  >
+                    <div
+                      style={{
+                        alignItems: "center",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
+                      <strong style={{ fontSize: "0.75rem" }}>Thread</strong>
+                      <button
+                        data-testid="comment-thread-resolve"
+                        onClick={() => resolveThread(activeThread.id)}
+                        type="button"
+                      >
+                        Resolve
+                      </button>
+                    </div>
+                    {activeThread.messages.length === 0 ? (
+                      <p style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}>
+                        No replies yet.
+                      </p>
+                    ) : (
+                      <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                        {activeThread.messages.map((message) => {
+                          const isEditing = editingMessageId === message.id;
+                          return (
+                            <li
+                              key={message.id}
                               style={{
-                                alignItems: "center",
-                                display: "flex",
-                                fontSize: "0.75rem",
-                                gap: "0.375rem",
-                                justifyContent: "space-between",
-                                marginBottom: "0.25rem",
+                                border: "1px solid #e5e7eb",
+                                borderRadius: "0.375rem",
+                                marginBottom: "0.375rem",
+                                padding: "0.375rem",
                               }}
                             >
-                              <strong>{message.authorName}</strong>
-                              <time dateTime={message.createdAt}>
-                                {message.createdAt}
-                              </time>
-                            </div>
-                            {isEditing ? (
-                              <>
-                                <textarea
-                                  data-testid="comment-edit-input"
-                                  onChange={(event) =>
-                                    setEditingMessageBody(event.target.value)
-                                  }
-                                  rows={3}
-                                  style={{ display: "block", width: "100%" }}
-                                  value={editingMessageBody}
-                                />
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    gap: "0.5rem",
-                                    justifyContent: "flex-end",
-                                    marginTop: "0.375rem",
-                                  }}
-                                >
-                                  <button
-                                    data-testid="comment-edit-cancel"
-                                    onClick={() => {
-                                      setEditingMessageId(null);
-                                      setEditingMessageBody("");
+                              <div
+                                style={{
+                                  alignItems: "center",
+                                  display: "flex",
+                                  fontSize: "0.75rem",
+                                  gap: "0.375rem",
+                                  justifyContent: "space-between",
+                                  marginBottom: "0.25rem",
+                                }}
+                              >
+                                <strong>{message.authorName}</strong>
+                                <time dateTime={message.createdAt}>
+                                  {message.createdAt}
+                                </time>
+                              </div>
+                              {isEditing ? (
+                                <>
+                                  <textarea
+                                    data-testid="comment-edit-input"
+                                    onChange={(event) =>
+                                      setEditingMessageBody(event.target.value)
+                                    }
+                                    rows={3}
+                                    style={{ display: "block", width: "100%" }}
+                                    value={editingMessageBody}
+                                  />
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      gap: "0.5rem",
+                                      justifyContent: "flex-end",
+                                      marginTop: "0.375rem",
                                     }}
-                                    type="button"
                                   >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    data-testid="comment-edit-save"
-                                    onClick={saveEditedMessage}
-                                    type="button"
-                                  >
-                                    Save
-                                  </button>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <p style={{ margin: 0 }}>{message.bodyMd}</p>
-                                {message.isOwn ? (
-                                  <button
-                                    data-testid={`comment-edit-${message.id}`}
-                                    onClick={() => beginEditingMessage(message)}
-                                    style={{ marginTop: "0.25rem" }}
-                                    type="button"
-                                  >
-                                    Edit
-                                  </button>
-                                ) : null}
-                              </>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </section>
+                                    <button
+                                      data-testid="comment-edit-cancel"
+                                      onClick={() => {
+                                        setEditingMessageId(null);
+                                        setEditingMessageBody("");
+                                      }}
+                                      type="button"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      data-testid="comment-edit-save"
+                                      onClick={saveEditedMessage}
+                                      type="button"
+                                    >
+                                      Save
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <p style={{ margin: 0 }}>{message.bodyMd}</p>
+                                  {message.isOwn ? (
+                                    <button
+                                      data-testid={`comment-edit-${message.id}`}
+                                      onClick={() => beginEditingMessage(message)}
+                                      style={{ marginTop: "0.25rem" }}
+                                      type="button"
+                                    >
+                                      Edit
+                                    </button>
+                                  ) : null}
+                                </>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
+                  </section>
+                )
               ) : null}
 
-              <label htmlFor="inline-comment-input">
-                {activeThread ? "Reply" : "Comment"}
-              </label>
-              <textarea
-                data-testid="comment-input"
-                id="inline-comment-input"
-                onChange={(event) => setPendingCommentBody(event.target.value)}
-                rows={3}
-                style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
-                value={pendingCommentBody}
-              />
+              {canComposeInActiveThread ? (
+                <>
+                  <label htmlFor="inline-comment-input">
+                    {activeThread ? "Reply" : "Comment"}
+                  </label>
+                  <textarea
+                    data-testid="comment-input"
+                    id="inline-comment-input"
+                    onChange={(event) => setPendingCommentBody(event.target.value)}
+                    rows={3}
+                    style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
+                    value={pendingCommentBody}
+                  />
+                </>
+              ) : (
+                <p
+                  data-testid="comment-thread-resolved-note"
+                  style={{ color: "#6b7280", fontSize: "0.75rem", margin: "0 0 0.5rem" }}
+                >
+                  This thread is resolved.
+                </p>
+              )}
 
               <div
                 style={{
@@ -1174,13 +1313,15 @@ export function DocumentRoute() {
                 >
                   Cancel
                 </button>
-                <button
-                  data-testid="comment-submit"
-                  onClick={submitInlineComment}
-                  type="button"
-                >
-                  {activeThread ? "Add reply" : "Add comment"}
-                </button>
+                {canComposeInActiveThread ? (
+                  <button
+                    data-testid="comment-submit"
+                    onClick={submitInlineComment}
+                    type="button"
+                  >
+                    {activeThread ? "Add reply" : "Add comment"}
+                  </button>
+                ) : null}
               </div>
             </section>
           ) : null}
@@ -1195,21 +1336,71 @@ export function DocumentRoute() {
           <ul>
             {inlineCommentThreads.map((thread) => (
               <li key={thread.id}>
-                <strong>{thread.status === "resolved" ? "Resolved" : "Open"}</strong>{" "}
-                <span>
-                  ({thread.startOffsetUtf16}-{thread.endOffsetUtf16})
-                </span>
-                {thread.messages.map((message) => (
-                  <article key={message.id}>
-                    <p style={{ marginBottom: "0.125rem" }}>
-                      <strong>{message.authorName}</strong>{" "}
-                      <time dateTime={message.createdAt}>
-                        {message.createdAt}
-                      </time>
-                    </p>
-                    <p style={{ marginTop: 0 }}>{message.bodyMd}</p>
-                  </article>
-                ))}
+                <div
+                  style={{
+                    alignItems: "center",
+                    display: "flex",
+                    gap: "0.5rem",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  <strong>{thread.status === "resolved" ? "Resolved" : "Open"}</strong>{" "}
+                  <span>
+                    ({thread.startOffsetUtf16}-{thread.endOffsetUtf16})
+                  </span>
+                  <button
+                    data-testid={
+                      thread.status === "resolved"
+                        ? `comment-thread-reopen-${thread.id}`
+                        : `comment-thread-resolve-${thread.id}`
+                    }
+                    onClick={() =>
+                      thread.status === "resolved"
+                        ? reopenThread(thread.id)
+                        : resolveThread(thread.id)
+                    }
+                    type="button"
+                  >
+                    {thread.status === "resolved" ? "Reopen" : "Resolve"}
+                  </button>
+                </div>
+                {thread.status === "resolved" ? (
+                  <div
+                    data-testid={`comment-thread-collapsed-${thread.id}`}
+                    style={{
+                      alignItems: "center",
+                      color: "#6b7280",
+                      display: "inline-flex",
+                      fontSize: "0.75rem",
+                      gap: "0.375rem",
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      data-testid={`comment-thread-collapsed-dot-${thread.id}`}
+                      style={{
+                        background: "#6b7280",
+                        borderRadius: "9999px",
+                        display: "inline-block",
+                        height: "0.4rem",
+                        width: "0.4rem",
+                      }}
+                    />
+                    Collapsed in margin
+                  </div>
+                ) : (
+                  thread.messages.map((message) => (
+                    <article key={message.id}>
+                      <p style={{ marginBottom: "0.125rem" }}>
+                        <strong>{message.authorName}</strong>{" "}
+                        <time dateTime={message.createdAt}>
+                          {message.createdAt}
+                        </time>
+                      </p>
+                      <p style={{ marginTop: 0 }}>{message.bodyMd}</p>
+                    </article>
+                  ))
+                )}
               </li>
             ))}
           </ul>
