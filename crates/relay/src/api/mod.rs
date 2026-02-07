@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod comments;
 pub mod documents;
+pub mod members;
 pub mod search;
 pub mod workspaces;
 
@@ -48,6 +49,8 @@ use crate::{
 
 const DEFAULT_PAGE_SIZE: usize = 50;
 const MAX_PAGE_SIZE: usize = 100;
+const DEFAULT_INVITE_EXPIRY_HOURS: u32 = 72;
+const MAX_INVITE_EXPIRY_HOURS: u32 = 720; // 30 days
 const REDEEM_RATE_LIMIT_MAX: u32 = 5;
 const REDEEM_RATE_LIMIT_WINDOW_SECS: u64 = 900; // 15 minutes
 
@@ -697,24 +700,24 @@ fn build_router_with_store(
         )
         .route(
             "/v1/workspaces/{workspace_id}/members",
-            get(list_members).route_layer(members_viewer_layer),
+            get(members::list_members).route_layer(members_viewer_layer),
         )
         .route(
             "/v1/workspaces/{workspace_id}/members/{member_id}",
-            patch(update_member).route_layer(members_owner_layer),
+            patch(members::update_member).route_layer(members_owner_layer),
         )
         .route(
             "/v1/workspaces/{workspace_id}/members/{member_id}",
-            delete(delete_member).route_layer(members_delete_owner_layer),
+            delete(members::delete_member).route_layer(members_delete_owner_layer),
         )
         .route(
             "/v1/workspaces/{workspace_id}/invites",
-            post(create_invite).route_layer(middleware::from_fn_with_state(
+            post(members::create_invite).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_workspace_owner_role,
             )),
         )
-        .route("/v1/invites/{token}/accept", post(accept_invite))
+        .route("/v1/invites/{token}/accept", post(members::accept_invite))
         .with_state(state.clone())
         .route_layer(middleware::from_fn_with_state(jwt_service, require_bearer_auth))
         .merge(
@@ -786,100 +789,6 @@ async fn revoke_share_link(
 ) -> Result<StatusCode, ApiError> {
     state.store.revoke_share_link(workspace_id, share_link_id).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn list_members(
-    State(state): State<ApiState>,
-    Path(workspace_id): Path<Uuid>,
-    Query(query): Query<ListMembersQuery>,
-) -> Result<Json<MembersPageEnvelope>, ApiError> {
-    let limit = normalize_limit(query.limit);
-    let cursor = match query.cursor {
-        Some(raw_cursor) => Some(parse_member_cursor(&raw_cursor)?),
-        None => None,
-    };
-
-    let page = state.store.list_members(workspace_id, limit, cursor).await?;
-
-    Ok(Json(MembersPageEnvelope {
-        items: page.items.into_iter().map(MemberRecord::into_member).collect(),
-        next_cursor: page.next_cursor,
-    }))
-}
-
-async fn update_member(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Path((workspace_id, member_id)): Path<(Uuid, Uuid)>,
-    headers: HeaderMap,
-    Json(payload): Json<UpdateMemberRequest>,
-) -> Result<Json<MemberEnvelope>, ApiError> {
-    validate_member_update(&payload)?;
-
-    if member_id == user.user_id {
-        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot modify your own membership"));
-    }
-
-    let if_match = extract_if_match(&headers)?;
-    let record = state.store.update_member(workspace_id, member_id, if_match, payload).await?;
-
-    Ok(Json(MemberEnvelope { member: record.into_member() }))
-}
-
-async fn delete_member(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Path((workspace_id, member_id)): Path<(Uuid, Uuid)>,
-    headers: HeaderMap,
-) -> Result<StatusCode, ApiError> {
-    if member_id == user.user_id {
-        return Err(ApiError::bad_request("VALIDATION_ERROR", "cannot remove your own membership"));
-    }
-
-    let if_match = extract_if_match(&headers)?;
-    state.store.delete_member(workspace_id, member_id, if_match).await?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-const DEFAULT_INVITE_EXPIRY_HOURS: u32 = 72;
-const MAX_INVITE_EXPIRY_HOURS: u32 = 720; // 30 days
-
-async fn create_invite(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Path(workspace_id): Path<Uuid>,
-    Json(payload): Json<CreateInviteRequest>,
-) -> Result<(StatusCode, Json<InviteEnvelope>), ApiError> {
-    validate_invite_request(&payload)?;
-
-    let expiry_hours = payload.expires_in_hours.unwrap_or(DEFAULT_INVITE_EXPIRY_HOURS);
-    let expires_at = Utc::now() + chrono::Duration::hours(i64::from(expiry_hours));
-
-    let token = generate_share_link_token();
-    let token_hash = hash_share_link_token(&token);
-
-    let record = state
-        .store
-        .create_invite(workspace_id, user.user_id, payload, token_hash, expires_at)
-        .await?;
-
-    let invite = record.into_invite();
-    let envelope = InviteEnvelope { invite };
-
-    Ok((StatusCode::CREATED, Json(envelope)))
-}
-
-async fn accept_invite(
-    State(state): State<ApiState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Path(token): Path<String>,
-) -> Result<Json<InviteEnvelope>, ApiError> {
-    let token_hash = hash_share_link_token(&token);
-
-    let record = state.store.accept_invite(token_hash, user.user_id).await?;
-
-    Ok(Json(InviteEnvelope { invite: record.into_invite() }))
 }
 
 async fn redeem_share_link(
