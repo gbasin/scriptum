@@ -40,6 +40,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate npm publish credentials
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "::error::Missing Actions secret NPM_TOKEN. Configure the repository secret before running Release."
+            exit 1
+          fi
+
       - name: Version / publish packages
         id: changesets
         uses: changesets/action@v1

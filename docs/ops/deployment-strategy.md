@@ -63,3 +63,20 @@ Run workflow manually:
 4. Execute workflow.
 
 The workflow uses environment stages (`relay-canary-5`, `relay-rollout-50`, `relay-rollout-100`, and ring environments) so teams can enforce approvals and observation timing.
+
+## Release Workflow Secrets
+
+The `Release` workflow publishes npm packages via `changesets/action` and requires an `NPM_TOKEN` repository secret.
+
+### Configure `NPM_TOKEN`
+
+1. Create an npm automation or granular access token with publish permissions for the `@scriptum` scope.
+2. In GitHub, open `Settings` > `Secrets and variables` > `Actions`.
+3. Create a new repository secret named `NPM_TOKEN`.
+4. Paste the npm token value and save.
+
+### Verify
+
+1. Trigger the `Release` workflow (`workflow_dispatch`) or push to `main`.
+2. Confirm the `Validate npm publish credentials` step passes.
+3. Confirm package publish step no longer fails with `ENEEDAUTH`.
