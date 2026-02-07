@@ -52,22 +52,38 @@ describe("SettingsRoute", () => {
       );
     });
 
-    expect(container.querySelector("[data-testid=\"settings-tab-general\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-tab-gitSync\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-tab-agents\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-tab-permissions\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-tab-appearance\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-form-general\"]")).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-tab-general"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-tab-gitSync"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-tab-agents"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-tab-permissions"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-tab-appearance"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-form-general"]'),
+    ).not.toBeNull();
 
     const appearanceTab = container.querySelector(
-      "[data-testid=\"settings-tab-appearance\"]",
+      '[data-testid="settings-tab-appearance"]',
     ) as HTMLButtonElement | null;
     act(() => {
       appearanceTab?.click();
     });
 
-    expect(container.querySelector("[data-testid=\"settings-form-general\"]")).toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-form-appearance\"]")).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-form-general"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="settings-form-appearance"]'),
+    ).not.toBeNull();
 
     act(() => {
       root.unmount();
@@ -89,14 +105,14 @@ describe("SettingsRoute", () => {
     });
 
     const gitSyncTab = container.querySelector(
-      "[data-testid=\"settings-tab-gitSync\"]",
+      '[data-testid="settings-tab-gitSync"]',
     ) as HTMLButtonElement | null;
     act(() => {
       gitSyncTab?.click();
     });
 
     const gitSyncEnabled = container.querySelector(
-      "[data-testid=\"settings-git-sync-enabled\"]",
+      '[data-testid="settings-git-sync-enabled"]',
     ) as HTMLInputElement | null;
     expect(gitSyncEnabled?.checked).toBe(true);
     act(() => {
@@ -105,7 +121,9 @@ describe("SettingsRoute", () => {
 
     const persistedWorkspace = useWorkspaceStore.getState().activeWorkspace;
     expect(persistedWorkspace?.config?.gitSync.enabled).toBe(false);
-    expect(persistedWorkspace?.config?.gitSync.autoCommitIntervalSeconds).toBe(30);
+    expect(persistedWorkspace?.config?.gitSync.autoCommitIntervalSeconds).toBe(
+      30,
+    );
 
     act(() => {
       root.unmount();

@@ -54,9 +54,11 @@ function itemSearchText(item: CommandPaletteItem): string {
 function recentDocuments(
   documents: Document[],
   openDocumentIds: string[],
-  activeWorkspaceId: string | null
+  activeWorkspaceId: string | null,
 ): Document[] {
-  const documentById = new Map(documents.map((document) => [document.id, document]));
+  const documentById = new Map(
+    documents.map((document) => [document.id, document]),
+  );
   const seen = new Set<string>();
   const recent: Document[] = [];
 
@@ -86,16 +88,18 @@ function recentDocuments(
 }
 
 export function buildCommandPaletteItems(
-  args: BuildCommandPaletteItemsArgs
+  args: BuildCommandPaletteItemsArgs,
 ): CommandPaletteItem[] {
   const workspaceDocuments = args.activeWorkspaceId
-    ? args.documents.filter((document) => document.workspaceId === args.activeWorkspaceId)
+    ? args.documents.filter(
+        (document) => document.workspaceId === args.activeWorkspaceId,
+      )
     : args.documents;
 
   const recent = recentDocuments(
     workspaceDocuments,
     args.openDocumentIds,
-    args.activeWorkspaceId
+    args.activeWorkspaceId,
   );
 
   const recentItems = recent.map((document) => ({
@@ -161,7 +165,7 @@ export function buildCommandPaletteItems(
 
 export function filterCommandPaletteItems(
   items: CommandPaletteItem[],
-  query: string
+  query: string,
 ): CommandPaletteItem[] {
   const tokens = normalizeQuery(query);
   if (tokens.length === 0) {
@@ -177,7 +181,7 @@ export function filterCommandPaletteItems(
 export function nextPaletteIndex(
   currentIndex: number,
   direction: "up" | "down",
-  itemCount: number
+  itemCount: number,
 ): number {
   if (itemCount <= 0) {
     return -1;
@@ -226,12 +230,12 @@ export function CommandPalette({
         openDocumentIds,
         workspaces,
       }),
-    [activeWorkspaceId, documents, openDocumentIds, workspaces]
+    [activeWorkspaceId, documents, openDocumentIds, workspaces],
   );
 
   const filteredItems = useMemo(
     () => filterCommandPaletteItems(items, query),
-    [items, query]
+    [items, query],
   );
 
   useEffect(() => {
@@ -254,7 +258,7 @@ export function CommandPalette({
 
       closePalette();
     },
-    [closePalette, navigate, onCreateWorkspace]
+    [closePalette, navigate, onCreateWorkspace],
   );
 
   useEffect(() => {
@@ -281,7 +285,7 @@ export function CommandPalette({
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setActiveIndex((previous) =>
-          nextPaletteIndex(previous, "down", filteredItems.length)
+          nextPaletteIndex(previous, "down", filteredItems.length),
         );
         return;
       }
@@ -289,7 +293,7 @@ export function CommandPalette({
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setActiveIndex((previous) =>
-          nextPaletteIndex(previous, "up", filteredItems.length)
+          nextPaletteIndex(previous, "up", filteredItems.length),
         );
         return;
       }
@@ -308,7 +312,10 @@ export function CommandPalette({
   }, [activeIndex, closePalette, filteredItems, isOpen, runItem]);
 
   return (
-    <section aria-label="Command palette section" data-testid="command-palette-section">
+    <section
+      aria-label="Command palette section"
+      data-testid="command-palette-section"
+    >
       <button
         aria-expanded={isOpen}
         aria-label="Open command palette"
@@ -329,7 +336,10 @@ export function CommandPalette({
         type="button"
       >
         <span>Search files, commands, recent docs</span>
-        <span aria-hidden="true" style={{ color: "#6b7280", fontFamily: "monospace" }}>
+        <span
+          aria-hidden="true"
+          style={{ color: "#6b7280", fontFamily: "monospace" }}
+        >
           Cmd+K
         </span>
       </button>
@@ -418,7 +428,8 @@ export function CommandPalette({
                     data-testid={`command-palette-item-${item.id}`}
                     onClick={() => runItem(item)}
                     style={{
-                      background: index === activeIndex ? "#eff6ff" : "transparent",
+                      background:
+                        index === activeIndex ? "#eff6ff" : "transparent",
                       border: "none",
                       borderRadius: "4px",
                       cursor: "pointer",

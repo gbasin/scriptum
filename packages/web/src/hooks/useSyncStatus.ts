@@ -29,7 +29,9 @@ export interface UseSyncStatusResult {
   error: string | null;
 }
 
-function normalizePendingChangesCount(value: number | undefined): number | undefined {
+function normalizePendingChangesCount(
+  value: number | undefined,
+): number | undefined {
   if (value === undefined || Number.isNaN(value)) {
     return undefined;
   }
@@ -64,10 +66,14 @@ function deriveSyncStatus(
   return "synced";
 }
 
-export function useSyncStatus(options: UseSyncStatusOptions): UseSyncStatusResult {
+export function useSyncStatus(
+  options: UseSyncStatusOptions,
+): UseSyncStatusResult {
   const store = options.store ?? useSyncStore;
   const provider = options.provider;
-  const pendingChangesCountInput = normalizePendingChangesCount(options.pendingChangesCount);
+  const pendingChangesCountInput = normalizePendingChangesCount(
+    options.pendingChangesCount,
+  );
 
   const storeStatus = store((state) => state.status);
   const lastSyncedAt = store((state) => state.lastSyncedAt);
@@ -144,7 +150,12 @@ export function useSyncStatus(options: UseSyncStatusOptions): UseSyncStatusResul
   }, [provider, store]);
 
   return {
-    status: deriveSyncStatus(storeStatus, pendingChangesCount, reconnectProgress, error),
+    status: deriveSyncStatus(
+      storeStatus,
+      pendingChangesCount,
+      reconnectProgress,
+      error,
+    ),
     pendingChangesCount,
     lastSyncedAt,
     reconnectProgress,

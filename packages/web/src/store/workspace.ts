@@ -5,8 +5,8 @@ import type {
   WorkspaceDensity,
   WorkspaceTheme,
 } from "@scriptum/shared";
+import type * as Y from "yjs";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
-import * as Y from "yjs";
 
 const DEFAULT_WORKSPACES_ARRAY_NAME = "workspaces";
 const DEFAULT_WORKSPACE_META_MAP_NAME = "workspaceMeta";
@@ -103,7 +103,7 @@ function defaultWorkspaceConfig(workspaceName: string): WorkspaceConfig {
 
 function normalizeWorkspaceConfig(
   value: unknown,
-  workspaceName: string
+  workspaceName: string,
 ): WorkspaceConfig | undefined {
   const record = asRecord(value);
   if (!record) {
@@ -217,28 +217,28 @@ function normalizeWorkspaces(values: readonly unknown[]): Workspace[] {
 }
 
 function resolveWorkspaceSnapshot(
-  snapshot: WorkspaceSnapshot
+  snapshot: WorkspaceSnapshot,
 ): ResolvedWorkspaceSnapshot {
   const workspaces = snapshot.workspaces.slice();
   const workspaceById = new Map(
-    workspaces.map((workspace) => [workspace.id, workspace])
+    workspaces.map((workspace) => [workspace.id, workspace]),
   );
   const activeWorkspaceId =
     snapshot.activeWorkspaceId && workspaceById.has(snapshot.activeWorkspaceId)
       ? snapshot.activeWorkspaceId
-      : workspaces[0]?.id ?? null;
+      : (workspaces[0]?.id ?? null);
 
   return {
     workspaces,
     activeWorkspaceId,
     activeWorkspace: activeWorkspaceId
-      ? workspaceById.get(activeWorkspaceId) ?? null
+      ? (workspaceById.get(activeWorkspaceId) ?? null)
       : null,
   };
 }
 
 export function createWorkspaceStore(
-  initial: Partial<WorkspaceSnapshot> = {}
+  initial: Partial<WorkspaceSnapshot> = {},
 ): WorkspaceStore {
   return create<WorkspaceStoreState>()((set, get) => ({
     ...resolveWorkspaceSnapshot({
@@ -251,18 +251,18 @@ export function createWorkspaceStore(
         resolveWorkspaceSnapshot({
           workspaces,
           activeWorkspaceId: previous.activeWorkspaceId,
-        })
+        }),
       );
     },
     upsertWorkspace: (workspace) => {
       const previous = get();
       const index = previous.workspaces.findIndex(
-        (candidate) => candidate.id === workspace.id
+        (candidate) => candidate.id === workspace.id,
       );
       const workspaces =
         index >= 0
           ? previous.workspaces.map((candidate) =>
-              candidate.id === workspace.id ? workspace : candidate
+              candidate.id === workspace.id ? workspace : candidate,
             )
           : [...previous.workspaces, workspace];
 
@@ -270,19 +270,19 @@ export function createWorkspaceStore(
         resolveWorkspaceSnapshot({
           workspaces,
           activeWorkspaceId: previous.activeWorkspaceId ?? workspace.id,
-        })
+        }),
       );
     },
     removeWorkspace: (workspaceId) => {
       const previous = get();
       const workspaces = previous.workspaces.filter(
-        (workspace) => workspace.id !== workspaceId
+        (workspace) => workspace.id !== workspaceId,
       );
       set(
         resolveWorkspaceSnapshot({
           workspaces,
           activeWorkspaceId: previous.activeWorkspaceId,
-        })
+        }),
       );
     },
     setActiveWorkspaceId: (workspaceId) => {
@@ -291,7 +291,7 @@ export function createWorkspaceStore(
         resolveWorkspaceSnapshot({
           workspaces: previous.workspaces,
           activeWorkspaceId: workspaceId,
-        })
+        }),
       );
     },
     reset: () =>
@@ -299,7 +299,7 @@ export function createWorkspaceStore(
         resolveWorkspaceSnapshot({
           workspaces: [],
           activeWorkspaceId: null,
-        })
+        }),
       ),
   }));
 }
@@ -308,14 +308,14 @@ export const useWorkspaceStore = createWorkspaceStore();
 
 export function bindWorkspaceStoreToYjs(
   doc: Y.Doc,
-  options: WorkspaceYjsBindingOptions = {}
+  options: WorkspaceYjsBindingOptions = {},
 ): () => void {
   const store = options.store ?? useWorkspaceStore;
   const workspacesArray = doc.getArray<unknown>(
-    options.workspacesArrayName ?? DEFAULT_WORKSPACES_ARRAY_NAME
+    options.workspacesArrayName ?? DEFAULT_WORKSPACES_ARRAY_NAME,
   );
   const workspaceMeta = doc.getMap<unknown>(
-    options.workspaceMetaMapName ?? DEFAULT_WORKSPACE_META_MAP_NAME
+    options.workspaceMetaMapName ?? DEFAULT_WORKSPACE_META_MAP_NAME,
   );
   const activeWorkspaceIdKey =
     options.activeWorkspaceIdKey ?? DEFAULT_ACTIVE_WORKSPACE_ID_KEY;
@@ -324,13 +324,15 @@ export function bindWorkspaceStoreToYjs(
     const workspaces = normalizeWorkspaces(workspacesArray.toArray());
     const activeWorkspaceIdValue = workspaceMeta.get(activeWorkspaceIdKey);
     const activeWorkspaceId =
-      typeof activeWorkspaceIdValue === "string" ? activeWorkspaceIdValue : null;
+      typeof activeWorkspaceIdValue === "string"
+        ? activeWorkspaceIdValue
+        : null;
 
     store.setState(
       resolveWorkspaceSnapshot({
         workspaces,
         activeWorkspaceId,
-      })
+      }),
     );
   };
 

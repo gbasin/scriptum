@@ -4,9 +4,11 @@ import { isFixtureModeEnabled, setupFixtureMode } from "./setup";
 function createFakeDocument() {
   const styles: Array<{ id: string; textContent: string | null }> = [];
   const fakeHead = {
-    appendChild: vi.fn((element: { id: string; textContent: string | null }) => {
-      styles.push(element);
-    }),
+    appendChild: vi.fn(
+      (element: { id: string; textContent: string | null }) => {
+        styles.push(element);
+      },
+    ),
   };
   const fakeDocumentElement = {
     setAttribute: vi.fn(),
@@ -29,11 +31,18 @@ function createFakeDocument() {
 describe("isFixtureModeEnabled", () => {
   it("enables fixture mode in test mode or explicit env flag", () => {
     expect(isFixtureModeEnabled({ MODE: "test" })).toBe(true);
-    expect(isFixtureModeEnabled({ VITE_SCRIPTUM_FIXTURE_MODE: "1" })).toBe(true);
-    expect(isFixtureModeEnabled({ VITE_SCRIPTUM_FIXTURE_MODE: "true" })).toBe(true);
-    expect(isFixtureModeEnabled({ MODE: "production", VITE_SCRIPTUM_FIXTURE_MODE: "0" })).toBe(
-      false
+    expect(isFixtureModeEnabled({ VITE_SCRIPTUM_FIXTURE_MODE: "1" })).toBe(
+      true,
     );
+    expect(isFixtureModeEnabled({ VITE_SCRIPTUM_FIXTURE_MODE: "true" })).toBe(
+      true,
+    );
+    expect(
+      isFixtureModeEnabled({
+        MODE: "production",
+        VITE_SCRIPTUM_FIXTURE_MODE: "0",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -55,10 +64,12 @@ describe("setupFixtureMode", () => {
     expect(applied).toBe(true);
     expect(fakeWindow.Date.now()).toBe(1_700_000_000_000);
     expect(styles).toHaveLength(1);
-    expect(styles[0].textContent).toContain("--scriptum-test-viewport-width: 1440px;");
+    expect(styles[0].textContent).toContain(
+      "--scriptum-test-viewport-width: 1440px;",
+    );
     expect(document.documentElement.setAttribute).toHaveBeenCalledWith(
       "data-scriptum-fixture-mode",
-      "true"
+      "true",
     );
   });
 

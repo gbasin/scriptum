@@ -4,7 +4,11 @@ import { nameToColor } from "@scriptum/editor";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { usePresence, type PresenceCursor, type UsePresenceResult } from "./usePresence";
+import {
+  type PresenceCursor,
+  type UsePresenceResult,
+  usePresence,
+} from "./usePresence";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -28,7 +32,10 @@ class FakeAwareness {
     this.handlers.delete(handler);
   });
   readonly setLocalStateField = vi.fn((field: string, value: unknown) => {
-    const current = (this.states.get(this.clientID) ?? {}) as Record<string, unknown>;
+    const current = (this.states.get(this.clientID) ?? {}) as Record<
+      string,
+      unknown
+    >;
     this.states.set(this.clientID, { ...current, [field]: value });
     this.emitChange();
   });
@@ -167,7 +174,10 @@ describe("usePresence", () => {
       type: "agent",
     });
     expect(awareness.setLocalStateField).toHaveBeenCalledWith("cursor", cursor);
-    expect(awareness.setLocalStateField).toHaveBeenCalledWith("viewport", viewport);
+    expect(awareness.setLocalStateField).toHaveBeenCalledWith(
+      "viewport",
+      viewport,
+    );
     expect(harness.latest().localPeer?.cursor).toEqual(cursor);
 
     harness.unmount();

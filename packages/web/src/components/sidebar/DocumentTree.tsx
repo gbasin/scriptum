@@ -1,8 +1,8 @@
 import type { Document } from "@scriptum/shared";
 import {
   type ChangeEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -236,7 +236,9 @@ function TreeNodeItem({
     onContextMenu(event, node.document);
   };
 
-  const handleRenameInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+  const handleRenameInputKeyDown = (
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ) => {
     if (!node.document) {
       return;
     }
@@ -255,10 +257,7 @@ function TreeNodeItem({
 
   if (isEditing && node.document) {
     return (
-      <li
-        data-testid={`tree-node-${node.fullPath}`}
-        role="treeitem"
-      >
+      <li data-testid={`tree-node-${node.fullPath}`} role="treeitem">
         <div
           style={{
             alignItems: "center",
@@ -316,7 +315,11 @@ function TreeNodeItem({
           type="button"
         >
           <span aria-hidden="true" style={{ marginRight: "4px" }}>
-            {isFolder ? (isExpanded ? "\u{1F4C2}" : "\u{1F4C1}") : fileIcon(node.name)}
+            {isFolder
+              ? isExpanded
+                ? "\u{1F4C2}"
+                : "\u{1F4C1}"
+              : fileIcon(node.name)}
           </span>
           {node.name}
         </button>
@@ -360,10 +363,16 @@ export function DocumentTree({
 }: DocumentTreeProps) {
   const tree = useMemo(() => buildTree(documents), [documents]);
   const [expanded, setExpanded] = useState<Set<string>>(() => {
-    return new Set(tree.filter((node) => node.children.length > 0).map((node) => node.fullPath));
+    return new Set(
+      tree
+        .filter((node) => node.children.length > 0)
+        .map((node) => node.fullPath),
+    );
   });
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
+  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(
+    null,
+  );
   const [editingPath, setEditingPath] = useState("");
   const consumedPendingRenameIdRef = useRef<string | null>(null);
 
@@ -400,9 +409,12 @@ export function DocumentTree({
     });
   }, []);
 
-  const handleContextMenu = useCallback((event: MouseEvent, document: Document) => {
-    setContextMenu({ document, x: event.clientX, y: event.clientY });
-  }, []);
+  const handleContextMenu = useCallback(
+    (event: MouseEvent, document: Document) => {
+      setContextMenu({ document, x: event.clientX, y: event.clientY });
+    },
+    [],
+  );
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 

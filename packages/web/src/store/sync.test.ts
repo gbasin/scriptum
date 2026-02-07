@@ -75,7 +75,9 @@ describe("sync store", () => {
 
   it("tracks reconnect progress", () => {
     const store = createSyncStore();
-    store.getState().setReconnectProgress({ syncedUpdates: 847, totalUpdates: 1203 });
+    store
+      .getState()
+      .setReconnectProgress({ syncedUpdates: 847, totalUpdates: 1203 });
     expect(store.getState().reconnectProgress).toEqual({
       syncedUpdates: 847,
       totalUpdates: 1203,
@@ -90,7 +92,9 @@ describe("sync store", () => {
     store.getState().setOnline();
     store.getState().setLastSyncedAt("2026-01-15T10:00:00Z");
     store.getState().setPendingChanges(3);
-    store.getState().setReconnectProgress({ syncedUpdates: 1, totalUpdates: 5 });
+    store
+      .getState()
+      .setReconnectProgress({ syncedUpdates: 1, totalUpdates: 5 });
 
     store.getState().reset();
     expect(store.getState().status).toBe("offline");
@@ -122,7 +126,9 @@ describe("sync store", () => {
     expect(store.getState().reconnectAttempt).toBe(0);
     store.getState().setLastSyncedAt("2026-01-15T10:00:00Z");
     store.getState().setPendingChanges(2);
-    store.getState().setReconnectProgress({ syncedUpdates: 2, totalUpdates: 10 });
+    store
+      .getState()
+      .setReconnectProgress({ syncedUpdates: 2, totalUpdates: 10 });
 
     // Disconnect
     store.getState().setOffline("server unreachable");

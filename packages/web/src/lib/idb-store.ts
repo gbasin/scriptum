@@ -152,9 +152,7 @@ function createStore(db: IDBDatabase): IdbCrdtStore {
       const transaction = tx(UPDATE_QUEUE_STORE, "readonly");
       const store = transaction.objectStore(UPDATE_QUEUE_STORE);
       const index = store.index("byDocId");
-      const results = await wrapRequest<UpdateRecord[]>(
-        index.getAll(docId),
-      );
+      const results = await wrapRequest<UpdateRecord[]>(index.getAll(docId));
       // Already ordered by auto-increment key.
       return results.map((record) => record.update);
     },
@@ -163,9 +161,7 @@ function createStore(db: IDBDatabase): IdbCrdtStore {
       const transaction = tx(UPDATE_QUEUE_STORE, "readwrite");
       const store = transaction.objectStore(UPDATE_QUEUE_STORE);
       const index = store.index("byDocId");
-      const keys = await wrapRequest<IDBValidKey[]>(
-        index.getAllKeys(docId),
-      );
+      const keys = await wrapRequest<IDBValidKey[]>(index.getAllKeys(docId));
       for (const key of keys) {
         store.delete(key);
       }
@@ -173,19 +169,14 @@ function createStore(db: IDBDatabase): IdbCrdtStore {
     },
 
     async deleteDocument(docId: string): Promise<void> {
-      const transaction = tx(
-        [SNAPSHOT_STORE, UPDATE_QUEUE_STORE],
-        "readwrite",
-      );
+      const transaction = tx([SNAPSHOT_STORE, UPDATE_QUEUE_STORE], "readwrite");
       const snapshotStore = transaction.objectStore(SNAPSHOT_STORE);
       const updateStore = transaction.objectStore(UPDATE_QUEUE_STORE);
       const index = updateStore.index("byDocId");
 
       snapshotStore.delete(docId);
 
-      const keys = await wrapRequest<IDBValidKey[]>(
-        index.getAllKeys(docId),
-      );
+      const keys = await wrapRequest<IDBValidKey[]>(index.getAllKeys(docId));
       for (const key of keys) {
         updateStore.delete(key);
       }

@@ -19,7 +19,11 @@ interface SyncBadgeConfig {
 
 const SYNC_BADGE: Record<SyncState, SyncBadgeConfig> = {
   synced: { label: "Synced", dotColor: "#16a34a", colorName: "green" },
-  reconnecting: { label: "Reconnecting", dotColor: "#eab308", colorName: "yellow" },
+  reconnecting: {
+    label: "Reconnecting",
+    dotColor: "#eab308",
+    colorName: "yellow",
+  },
   offline: { label: "Offline", dotColor: "#dc2626", colorName: "red" },
   error: { label: "Error", dotColor: "#dc2626", colorName: "red" },
 };
@@ -58,7 +62,9 @@ export function StatusBar({
         paddingTop: "0.5rem",
       }}
     >
-      <span style={{ alignItems: "center", display: "inline-flex", gap: "0.5rem" }}>
+      <span
+        style={{ alignItems: "center", display: "inline-flex", gap: "0.5rem" }}
+      >
         <span
           aria-hidden="true"
           data-sync-color={badge.colorName}
@@ -75,10 +81,14 @@ export function StatusBar({
           Sync: {badge.label}
         </span>
       </span>
-      <span data-testid="status-cursor">Ln {line}, Col {col}</span>
+      <span data-testid="status-cursor">
+        Ln {line}, Col {col}
+      </span>
       <span data-testid="status-editor-count">Editors: {activeEditors}</span>
       {pendingUpdates > 0 ? (
-        <span data-testid="status-pending-updates">Pending: {pendingUpdates}</span>
+        <span data-testid="status-pending-updates">
+          Pending: {pendingUpdates}
+        </span>
       ) : null}
       {showReconnectProgress ? (
         <span data-testid="status-reconnect-progress">

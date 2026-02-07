@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ComponentProps } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  type BacklinkEntry,
   Backlinks,
   normalizeBacklinksResponse,
-  type BacklinkEntry,
 } from "./Backlinks";
 
 declare global {
@@ -86,7 +86,9 @@ describe("Backlinks", () => {
 
   it("renders empty state when there are no backlinks", async () => {
     const fetchBacklinks = vi
-      .fn<(workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>>()
+      .fn<
+        (workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>
+      >()
       .mockResolvedValue([]);
 
     const harness = renderBacklinks({
@@ -100,15 +102,19 @@ describe("Backlinks", () => {
     });
 
     expect(fetchBacklinks).toHaveBeenCalledWith("ws-main", "doc-main");
-    expect(harness.container.querySelector("[data-testid=\"backlinks-empty\"]")?.textContent)
-      .toContain("No documents link to this page.");
+    expect(
+      harness.container.querySelector('[data-testid="backlinks-empty"]')
+        ?.textContent,
+    ).toContain("No documents link to this page.");
 
     harness.unmount();
   });
 
   it("renders backlinks and notifies selection callback", async () => {
     const fetchBacklinks = vi
-      .fn<(workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>>()
+      .fn<
+        (workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>
+      >()
       .mockResolvedValue([
         {
           docId: "doc-source",
@@ -134,10 +140,12 @@ describe("Backlinks", () => {
     expect(harness.container.textContent).toContain("Overview");
     expect(harness.container.textContent).toContain("docs/overview.md");
     expect(harness.container.textContent).toContain("[[Auth]]");
-    expect(harness.container.textContent).toContain("Reference to [[Auth]] section.");
+    expect(harness.container.textContent).toContain(
+      "Reference to [[Auth]] section.",
+    );
 
     const button = harness.container.querySelector(
-      "[data-testid=\"backlink-item-doc-source\"]",
+      '[data-testid="backlink-item-doc-source"]',
     ) as HTMLButtonElement | null;
     expect(button).not.toBeNull();
 
@@ -151,7 +159,9 @@ describe("Backlinks", () => {
 
   it("refetches backlinks when refresh token changes", async () => {
     const fetchBacklinks = vi
-      .fn<(workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>>()
+      .fn<
+        (workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>
+      >()
       .mockResolvedValue([]);
 
     const harness = renderBacklinks({

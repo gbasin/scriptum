@@ -50,7 +50,10 @@ function setAuthenticated(store: AuthStore, session: AuthSession): void {
   });
 }
 
-function setUnauthenticated(store: AuthStore, error: string | null = null): void {
+function setUnauthenticated(
+  store: AuthStore,
+  error: string | null = null,
+): void {
   store.setState({
     status: "unauthenticated",
     user: null,

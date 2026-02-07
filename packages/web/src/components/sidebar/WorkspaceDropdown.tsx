@@ -1,5 +1,5 @@
 import type { Workspace } from "@scriptum/shared";
-import { type ChangeEvent } from "react";
+import type { ChangeEvent } from "react";
 
 const LAST_ACCESSED_FORMATTER = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
@@ -20,7 +20,7 @@ export interface WorkspaceDropdownProps {
 }
 
 export function formatLastAccessedLabel(
-  lastAccessedAt: string | null | undefined
+  lastAccessedAt: string | null | undefined,
 ): string {
   if (!lastAccessedAt) {
     return "Last accessed unknown";
@@ -126,4 +126,3 @@ export function WorkspaceDropdown({
     </section>
   );
 }
-

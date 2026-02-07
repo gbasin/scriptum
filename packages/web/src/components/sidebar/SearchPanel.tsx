@@ -142,7 +142,11 @@ function uniqueSorted(values: readonly string[]): string[] {
   );
 }
 
-export function SearchPanel({ onClose, onResultSelect, results }: SearchPanelProps) {
+export function SearchPanel({
+  onClose,
+  onResultSelect,
+  results,
+}: SearchPanelProps) {
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [authorFilter, setAuthorFilter] = useState<string | null>(null);

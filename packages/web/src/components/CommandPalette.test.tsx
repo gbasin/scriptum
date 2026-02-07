@@ -66,7 +66,10 @@ describe("buildCommandPaletteItems", () => {
       activeWorkspaceId: "ws-1",
       documents,
       openDocumentIds: ["doc-b", "doc-a", "doc-c"],
-      workspaces: [makeWorkspace("ws-1", "Alpha"), makeWorkspace("ws-2", "Beta")],
+      workspaces: [
+        makeWorkspace("ws-1", "Alpha"),
+        makeWorkspace("ws-2", "Beta"),
+      ],
     });
 
     expect(items.slice(0, 4).map((item) => item.id)).toEqual([
@@ -76,7 +79,9 @@ describe("buildCommandPaletteItems", () => {
       "file:doc-c",
     ]);
     expect(items.some((item) => item.id === "file:doc-b")).toBe(false);
-    expect(items.some((item) => item.id === "command:create-workspace")).toBe(true);
+    expect(items.some((item) => item.id === "command:create-workspace")).toBe(
+      true,
+    );
     expect(items.some((item) => item.id === "command:settings")).toBe(true);
   });
 });
@@ -85,7 +90,9 @@ describe("filterCommandPaletteItems", () => {
   it("applies case-insensitive multi-token filtering", () => {
     const items = buildCommandPaletteItems({
       activeWorkspaceId: "ws-1",
-      documents: [makeDocument({ id: "doc-a", path: "docs/a.md", workspaceId: "ws-1" })],
+      documents: [
+        makeDocument({ id: "doc-a", path: "docs/a.md", workspaceId: "ws-1" }),
+      ],
       openDocumentIds: [],
       workspaces: [makeWorkspace("ws-1", "Alpha")],
     });
@@ -157,7 +164,9 @@ describe("CommandPalette", () => {
         }),
       );
     });
-    expect(container.querySelector("[data-testid=\"command-palette\"]")).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="command-palette"]'),
+    ).not.toBeNull();
 
     act(() => {
       window.dispatchEvent(
@@ -166,7 +175,7 @@ describe("CommandPalette", () => {
     });
 
     const createItemSelector =
-      "[data-testid=\"command-palette-item-command:create-workspace\"]";
+      '[data-testid="command-palette-item-command:create-workspace"]';
 
     let createItem = container.querySelector(createItemSelector);
     if (createItem?.getAttribute("aria-selected") !== "true") {
@@ -202,7 +211,9 @@ describe("CommandPalette", () => {
     });
 
     expect(onCreateWorkspace).toHaveBeenCalledTimes(1);
-    expect(container.querySelector("[data-testid=\"command-palette\"]")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="command-palette"]'),
+    ).toBeNull();
 
     act(() => {
       root.unmount();

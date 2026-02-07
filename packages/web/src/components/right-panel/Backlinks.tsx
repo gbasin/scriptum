@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { getAccessToken } from "../../lib/auth";
 
-const RELAY_URL = import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
+const RELAY_URL =
+  import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
 
 export interface BacklinkEntry {
   docId: string;
@@ -15,7 +16,10 @@ export interface BacklinksProps {
   workspaceId: string;
   documentId: string;
   refreshToken?: string | number;
-  fetchBacklinks?: (workspaceId: string, documentId: string) => Promise<BacklinkEntry[]>;
+  fetchBacklinks?: (
+    workspaceId: string,
+    documentId: string,
+  ) => Promise<BacklinkEntry[]>;
   onBacklinkSelect?: (sourceDocumentId: string) => void;
 }
 
@@ -33,7 +37,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function readString(record: Record<string, unknown> | null, keys: readonly string[]): string | null {
+function readString(
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
   if (!record) {
     return null;
   }
@@ -153,11 +160,17 @@ export function Backlinks({
   }, [loadBacklinks, refreshToken]);
 
   return (
-    <section aria-label="Incoming backlinks panel" data-testid="backlinks-panel">
+    <section
+      aria-label="Incoming backlinks panel"
+      data-testid="backlinks-panel"
+    >
       <h3 style={{ margin: "0 0 0.5rem" }}>Backlinks</h3>
 
       {loading ? (
-        <p data-testid="backlinks-loading" style={{ color: "#6b7280", margin: 0 }}>
+        <p
+          data-testid="backlinks-loading"
+          style={{ color: "#6b7280", margin: 0 }}
+        >
           Loading backlinks...
         </p>
       ) : null}
@@ -177,7 +190,10 @@ export function Backlinks({
       ) : null}
 
       {!loading && !error && backlinks.length === 0 ? (
-        <p data-testid="backlinks-empty" style={{ color: "#6b7280", margin: 0 }}>
+        <p
+          data-testid="backlinks-empty"
+          style={{ color: "#6b7280", margin: 0 }}
+        >
           No documents link to this page.
         </p>
       ) : null}
@@ -209,19 +225,31 @@ export function Backlinks({
               </button>
               <p
                 data-testid={`backlink-path-${backlink.docId}`}
-                style={{ color: "#4b5563", fontSize: "0.78rem", margin: "0.15rem 0 0" }}
+                style={{
+                  color: "#4b5563",
+                  fontSize: "0.78rem",
+                  margin: "0.15rem 0 0",
+                }}
               >
                 {backlink.path}
               </p>
               <p
                 data-testid={`backlink-link-${backlink.docId}`}
-                style={{ color: "#111827", fontSize: "0.78rem", margin: "0.15rem 0 0" }}
+                style={{
+                  color: "#111827",
+                  fontSize: "0.78rem",
+                  margin: "0.15rem 0 0",
+                }}
               >
                 {backlink.linkText}
               </p>
               <p
                 data-testid={`backlink-snippet-${backlink.docId}`}
-                style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0.15rem 0 0" }}
+                style={{
+                  color: "#6b7280",
+                  fontSize: "0.8rem",
+                  margin: "0.15rem 0 0",
+                }}
               >
                 {backlink.snippet}
               </p>

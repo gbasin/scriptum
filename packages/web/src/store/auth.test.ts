@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuthUser, OAuthCallbackResult, RefreshResult } from "../auth/client";
+import type {
+  AuthUser,
+  OAuthCallbackResult,
+  RefreshResult,
+} from "../auth/client";
 import { AuthClient, AuthClientError } from "../auth/client";
 import * as storage from "../auth/storage";
 import { installMockLocalStorage } from "../test/mock-local-storage";
@@ -107,7 +111,9 @@ describe("auth store", () => {
     });
 
     const store = createAuthStore();
-    await store.getState().startLogin(client, "http://localhost:3000/auth-callback");
+    await store
+      .getState()
+      .startLogin(client, "http://localhost:3000/auth-callback");
 
     // Restore.
     if (origHref) {
@@ -136,7 +142,9 @@ describe("auth store", () => {
     );
 
     const store = createAuthStore();
-    await store.getState().startLogin(client, "http://localhost:3000/auth-callback");
+    await store
+      .getState()
+      .startLogin(client, "http://localhost:3000/auth-callback");
 
     expect(store.getState().error).toBe("Login failed (429)");
   });
@@ -161,7 +169,9 @@ describe("auth store", () => {
     vi.spyOn(client, "exchangeCode").mockResolvedValue(callbackResult);
 
     const store = createAuthStore();
-    await store.getState().handleCallback(client, "github-code", "callback-state");
+    await store
+      .getState()
+      .handleCallback(client, "github-code", "callback-state");
 
     expect(store.getState().status).toBe("authenticated");
     expect(store.getState().accessToken).toBe("at-new");
@@ -244,7 +254,10 @@ describe("auth store", () => {
 
   it("refreshAccessToken: returns false with no refresh token", async () => {
     const client = new AuthClient({ baseUrl: "http://relay" });
-    const store = createAuthStore({ status: "authenticated", refreshToken: null });
+    const store = createAuthStore({
+      status: "authenticated",
+      refreshToken: null,
+    });
 
     const ok = await store.getState().refreshAccessToken(client);
     expect(ok).toBe(false);

@@ -43,12 +43,20 @@ afterEach(() => {
 describe("collectWorkspaceTags", () => {
   it("collects unique non-empty tags in sorted order", () => {
     const documents = [
-      makeDocument({ id: "doc-a", path: "docs/a.md", tags: ["sync", "agents"] }),
+      makeDocument({
+        id: "doc-a",
+        path: "docs/a.md",
+        tags: ["sync", "agents"],
+      }),
       makeDocument({ id: "doc-b", path: "docs/b.md", tags: ["agents", ""] }),
       makeDocument({ id: "doc-c", path: "docs/c.md", tags: ["review"] }),
     ];
 
-    expect(collectWorkspaceTags(documents)).toEqual(["agents", "review", "sync"]);
+    expect(collectWorkspaceTags(documents)).toEqual([
+      "agents",
+      "review",
+      "sync",
+    ]);
   });
 });
 
@@ -59,15 +67,18 @@ describe("filterDocumentsByTag", () => {
       makeDocument({ id: "doc-b", path: "docs/b.md", tags: ["review"] }),
     ];
 
-    expect(filterDocumentsByTag(documents, null).map((document) => document.id)).toEqual([
-      "doc-a",
-      "doc-b",
-    ]);
+    expect(
+      filterDocumentsByTag(documents, null).map((document) => document.id),
+    ).toEqual(["doc-a", "doc-b"]);
   });
 
   it("returns only documents matching the selected tag", () => {
     const documents = [
-      makeDocument({ id: "doc-a", path: "docs/a.md", tags: ["sync", "agents"] }),
+      makeDocument({
+        id: "doc-a",
+        path: "docs/a.md",
+        tags: ["sync", "agents"],
+      }),
       makeDocument({ id: "doc-b", path: "docs/b.md", tags: ["review"] }),
       makeDocument({ id: "doc-c", path: "docs/c.md", tags: ["agents"] }),
     ];
@@ -98,7 +109,7 @@ describe("TagsList", () => {
     expect(html).toContain("sidebar-tags-list");
     expect(html).toContain(">sync<");
     expect(html).toContain(`sidebar-tag-chip-${tagChipTestId("sync")}`);
-    expect(html).toContain("aria-pressed=\"true\"");
+    expect(html).toContain('aria-pressed="true"');
   });
 
   it("emits selected and cleared tag values on chip clicks", () => {

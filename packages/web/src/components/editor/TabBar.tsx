@@ -31,7 +31,10 @@ export function TabBar({
       }}
     >
       {tabs.length === 0 ? (
-        <div data-testid="tab-bar-empty" style={{ color: "#6b7280", padding: "0.35rem 0.5rem" }}>
+        <div
+          data-testid="tab-bar-empty"
+          style={{ color: "#6b7280", padding: "0.35rem 0.5rem" }}
+        >
           No open documents
         </div>
       ) : (
@@ -46,7 +49,9 @@ export function TabBar({
                 alignItems: "center",
                 background: isActive ? "#ffffff" : "#f8fafc",
                 border: `1px solid ${isActive ? "#94a3b8" : "#e2e8f0"}`,
-                borderBottom: isActive ? "1px solid #ffffff" : "1px solid #e2e8f0",
+                borderBottom: isActive
+                  ? "1px solid #ffffff"
+                  : "1px solid #e2e8f0",
                 borderRadius: "0.35rem 0.35rem 0 0",
                 display: "inline-flex",
                 gap: "0.35rem",
@@ -96,4 +101,3 @@ export function TabBar({
     </nav>
   );
 }
-

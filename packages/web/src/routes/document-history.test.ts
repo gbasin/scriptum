@@ -3,8 +3,8 @@ import {
   buildAuthorshipSegments,
   createTimelineSnapshotEntry,
   deriveTimelineSnapshotEntry,
-  timelineAuthorFromPeer,
   type TimelineAuthor,
+  timelineAuthorFromPeer,
 } from "./document";
 
 function author(id: string, name: string, color: string): TimelineAuthor {
@@ -57,7 +57,10 @@ describe("document history attribution helpers", () => {
   });
 
   it("converts peer presence to deterministic timeline author metadata", () => {
-    const remote = timelineAuthorFromPeer({ name: "Claude Agent", type: "agent" });
+    const remote = timelineAuthorFromPeer({
+      name: "Claude Agent",
+      type: "agent",
+    });
 
     expect(remote).toEqual({
       color: expect.any(String),

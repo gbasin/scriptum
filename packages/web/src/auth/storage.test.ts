@@ -5,9 +5,9 @@ import {
   clearSession,
   loadOAuthFlow,
   loadSession,
+  type StoredSession,
   saveOAuthFlow,
   saveSession,
-  type StoredSession,
 } from "./storage";
 
 describe("auth storage", () => {

@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { PeerPresence } from "../store/presence";
 import { AvatarStack, colorForName, initialsForName } from "./AvatarStack";
 
-function makePeer(name: string, type: "human" | "agent" = "human"): PeerPresence {
+function makePeer(
+  name: string,
+  type: "human" | "agent" = "human",
+): PeerPresence {
   return {
     name,
     type,
@@ -56,18 +59,14 @@ describe("initialsForName", () => {
 
 describe("AvatarStack", () => {
   it("renders nothing when no peers", () => {
-    const html = renderToString(
-      <AvatarStack peers={[]} />
-    );
+    const html = renderToString(<AvatarStack peers={[]} />);
     // Returns null → empty string in SSR
     expect(html).toBe("");
   });
 
   it("renders avatars for each peer", () => {
     const peers = [makePeer("alice"), makePeer("bob")];
-    const html = renderToString(
-      <AvatarStack peers={peers} />
-    );
+    const html = renderToString(<AvatarStack peers={peers} />);
 
     expect(html).toContain('data-testid="avatar-stack"');
     expect(html).toContain('data-testid="avatar-alice"');
@@ -78,9 +77,7 @@ describe("AvatarStack", () => {
 
   it("sorts peers alphabetically by name", () => {
     const peers = [makePeer("charlie"), makePeer("alice"), makePeer("bob")];
-    const html = renderToString(
-      <AvatarStack peers={peers} />
-    );
+    const html = renderToString(<AvatarStack peers={peers} />);
 
     // All three should be present
     expect(html).toContain("avatar-alice");
@@ -95,9 +92,7 @@ describe("AvatarStack", () => {
       makePeer("charlie"),
       makePeer("diana"),
     ];
-    const html = renderToString(
-      <AvatarStack maxVisible={2} peers={peers} />
-    );
+    const html = renderToString(<AvatarStack maxVisible={2} peers={peers} />);
 
     // Should show 2 visible + overflow
     expect(html).toContain('data-testid="avatar-overflow"');
@@ -106,18 +101,14 @@ describe("AvatarStack", () => {
 
   it("does not show overflow when peers fit within maxVisible", () => {
     const peers = [makePeer("alice"), makePeer("bob")];
-    const html = renderToString(
-      <AvatarStack maxVisible={5} peers={peers} />
-    );
+    const html = renderToString(<AvatarStack maxVisible={5} peers={peers} />);
 
     expect(html).not.toContain("avatar-overflow");
   });
 
   it("applies agent border style for agent peers", () => {
     const peers = [makePeer("claude-agent", "agent")];
-    const html = renderToString(
-      <AvatarStack peers={peers} />
-    );
+    const html = renderToString(<AvatarStack peers={peers} />);
 
     expect(html).toContain("avatar-claude-agent");
     // Agent border color
@@ -127,9 +118,7 @@ describe("AvatarStack", () => {
 
   it("uses ARIA roles for accessibility", () => {
     const peers = [makePeer("alice")];
-    const html = renderToString(
-      <AvatarStack peers={peers} />
-    );
+    const html = renderToString(<AvatarStack peers={peers} />);
 
     expect(html).toContain('role="group"');
     expect(html).toContain('aria-label="Online users"');
@@ -137,9 +126,7 @@ describe("AvatarStack", () => {
 
   it("respects custom size", () => {
     const peers = [makePeer("alice")];
-    const html = renderToString(
-      <AvatarStack peers={peers} size={48} />
-    );
+    const html = renderToString(<AvatarStack peers={peers} size={48} />);
 
     expect(html).toContain("height:48px");
     expect(html).toContain("width:48px");

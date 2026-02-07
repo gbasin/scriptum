@@ -29,7 +29,7 @@ describe("TimelineSlider", () => {
         }}
         value={2}
         viewMode="authorship"
-      />
+      />,
     );
     const normalized = html.replaceAll("<!-- -->", "");
 
@@ -66,12 +66,12 @@ describe("TimelineSlider", () => {
           onViewModeChange={onViewModeChange}
           value={1}
           viewMode="authorship"
-        />
+        />,
       );
     });
 
     const diffButton = container.querySelector(
-      "[data-testid=\"history-view-toggle-diff\"]"
+      '[data-testid="history-view-toggle-diff"]',
     ) as HTMLButtonElement | null;
     expect(diffButton).not.toBeNull();
     act(() => {
@@ -89,12 +89,12 @@ describe("TimelineSlider", () => {
           onViewModeChange={onViewModeChange}
           value={1}
           viewMode="diff"
-        />
+        />,
       );
     });
 
     const modeLabel = container.querySelector(
-      "[data-testid=\"history-view-mode-label\"]"
+      '[data-testid="history-view-mode-label"]',
     );
     expect(modeLabel?.textContent).toContain("Diff from current");
 

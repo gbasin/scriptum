@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ComponentProps } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildInlineDiffSegments, DiffView, type AuthorshipRange } from "./DiffView";
+import {
+  type AuthorshipRange,
+  buildInlineDiffSegments,
+  DiffView,
+} from "./DiffView";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -65,24 +69,30 @@ describe("DiffView", () => {
       viewMode: "authorship",
     });
 
-    expect(harness.container.textContent).toContain("Author-colored highlights");
+    expect(harness.container.textContent).toContain(
+      "Author-colored highlights",
+    );
     expect(
       harness.container.querySelector(
-        "[data-testid=\"history-diffview-author-Alice\"]",
+        '[data-testid="history-diffview-author-Alice"]',
       )?.textContent,
     ).toContain("Alice");
     expect(
       harness.container.querySelector(
-        "[data-testid=\"history-diffview-author-Bob\"]",
+        '[data-testid="history-diffview-author-Bob"]',
       )?.textContent,
     ).toContain("Bob");
 
     const editor = harness.container.querySelector(
-      "[data-testid=\"history-diffview-editor\"]",
+      '[data-testid="history-diffview-editor"]',
     );
     expect(editor?.textContent).toContain("Hello world");
-    expect(harness.container.querySelector("[data-author=\"Alice\"]")).not.toBeNull();
-    expect(harness.container.querySelector("[data-author=\"Bob\"]")).not.toBeNull();
+    expect(
+      harness.container.querySelector('[data-author="Alice"]'),
+    ).not.toBeNull();
+    expect(
+      harness.container.querySelector('[data-author="Bob"]'),
+    ).not.toBeNull();
 
     harness.unmount();
   });
@@ -96,12 +106,12 @@ describe("DiffView", () => {
     });
 
     expect(harness.container.textContent).toContain("Diff from current");
-    expect(harness.container.querySelector("[data-kind=\"removed\"]")?.textContent).toBe(
-      "world",
-    );
-    expect(harness.container.querySelector("[data-kind=\"added\"]")?.textContent).toBe(
-      "Scriptum",
-    );
+    expect(
+      harness.container.querySelector('[data-kind="removed"]')?.textContent,
+    ).toBe("world");
+    expect(
+      harness.container.querySelector('[data-kind="added"]')?.textContent,
+    ).toBe("Scriptum");
 
     harness.unmount();
   });
@@ -115,8 +125,9 @@ describe("DiffView", () => {
     });
 
     expect(
-      harness.container.querySelector("[data-testid=\"history-diffview-diff-empty\"]")
-        ?.textContent,
+      harness.container.querySelector(
+        '[data-testid="history-diffview-diff-empty"]',
+      )?.textContent,
     ).toContain("Selected snapshot matches current version.");
 
     harness.unmount();

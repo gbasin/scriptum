@@ -1,7 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Breadcrumb, buildBreadcrumbSegments } from "./Breadcrumb";
-import { TabBar, type OpenDocumentTab } from "./TabBar";
+import { type OpenDocumentTab, TabBar } from "./TabBar";
 
 const OPEN_TABS: OpenDocumentTab[] = [
   {
@@ -24,7 +24,7 @@ describe("TabBar", () => {
         onCloseTab={() => undefined}
         onSelectTab={() => undefined}
         tabs={OPEN_TABS}
-      />
+      />,
     );
 
     expect(html).toContain("tab-bar");
@@ -35,9 +35,7 @@ describe("TabBar", () => {
   });
 
   it("renders empty state when no tabs are open", () => {
-    const html = renderToString(
-      <TabBar activeDocumentId={null} tabs={[]} />
-    );
+    const html = renderToString(<TabBar activeDocumentId={null} tabs={[]} />);
     expect(html).toContain("No open documents");
     expect(html).toContain("tab-bar-empty");
   });
@@ -54,7 +52,10 @@ describe("Breadcrumb", () => {
 
   it("renders workspace root and path segments", () => {
     const html = renderToString(
-      <Breadcrumb path="docs/guides/start.md" workspaceLabel="Workspace Alpha" />
+      <Breadcrumb
+        path="docs/guides/start.md"
+        workspaceLabel="Workspace Alpha"
+      />,
     );
 
     expect(html).toContain("Document breadcrumb");
@@ -64,4 +65,3 @@ describe("Breadcrumb", () => {
     expect(html).toContain("start.md");
   });
 });
-

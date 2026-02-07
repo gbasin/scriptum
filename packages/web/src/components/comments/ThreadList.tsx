@@ -1,5 +1,5 @@
 import type { CommentMessage, CommentThread } from "@scriptum/shared";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import {
   addCommentMessage,
   reopenCommentThread,
@@ -142,8 +142,16 @@ export function ThreadList({
     try {
       const nextThread =
         nextStatus === "resolved"
-          ? await resolveThread(workspaceId, localThread.id, localThread.version)
-          : await reopenThread(workspaceId, localThread.id, localThread.version);
+          ? await resolveThread(
+              workspaceId,
+              localThread.id,
+              localThread.version,
+            )
+          : await reopenThread(
+              workspaceId,
+              localThread.id,
+              localThread.version,
+            );
       setLocalThread(nextThread);
       onThreadUpdated?.(nextThread);
     } catch {
@@ -172,7 +180,9 @@ export function ThreadList({
           }
           disabled={pending}
           onClick={() =>
-            void transitionThread(localThread.status === "resolved" ? "open" : "resolved")
+            void transitionThread(
+              localThread.status === "resolved" ? "open" : "resolved",
+            )
           }
           type="button"
         >
@@ -183,14 +193,21 @@ export function ThreadList({
       {localThread.status === "resolved" ? (
         <p
           data-testid="thread-list-resolved-note"
-          style={{ color: "#6b7280", fontSize: "0.75rem", margin: "0 0 0.5rem" }}
+          style={{
+            color: "#6b7280",
+            fontSize: "0.75rem",
+            margin: "0 0 0.5rem",
+          }}
         >
           This thread is resolved.
         </p>
       ) : null}
 
       {localThread.status === "open" && messages.length === 0 ? (
-        <p data-testid="thread-list-empty" style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}>
+        <p
+          data-testid="thread-list-empty"
+          style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}
+        >
           No replies yet.
         </p>
       ) : null}
@@ -198,7 +215,13 @@ export function ThreadList({
       {localThread.status === "open" && messages.length > 0 ? (
         <ol
           data-testid="thread-list-messages"
-          style={{ listStyle: "none", margin: "0 0 0.5rem", maxHeight: "12rem", overflowY: "auto", padding: 0 }}
+          style={{
+            listStyle: "none",
+            margin: "0 0 0.5rem",
+            maxHeight: "12rem",
+            overflowY: "auto",
+            padding: 0,
+          }}
         >
           {messages.map((message) => (
             <li
@@ -246,13 +269,26 @@ export function ThreadList({
       ) : null}
 
       {errorMessage ? (
-        <p data-testid="thread-list-error" style={{ color: "#b91c1c", fontSize: "0.75rem", margin: "0.5rem 0 0" }}>
+        <p
+          data-testid="thread-list-error"
+          style={{
+            color: "#b91c1c",
+            fontSize: "0.75rem",
+            margin: "0.5rem 0 0",
+          }}
+        >
           {errorMessage}
         </p>
       ) : null}
 
       {canReply ? (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.5rem" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            marginTop: "0.5rem",
+          }}
+        >
           <button
             data-testid="thread-list-reply-submit"
             disabled={pending || replyBody.trim().length === 0}

@@ -49,4 +49,3 @@ export function Breadcrumb({ path, workspaceLabel }: BreadcrumbProps) {
     </nav>
   );
 }
-

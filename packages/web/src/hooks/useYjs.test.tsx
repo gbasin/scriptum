@@ -11,7 +11,7 @@ vi.mock("@scriptum/editor", () => ({
   createCollaborationProvider: createCollaborationProviderMock,
 }));
 
-import { useYjs, type UseYjsOptions, type UseYjsResult } from "./useYjs";
+import { type UseYjsOptions, type UseYjsResult, useYjs } from "./useYjs";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -23,7 +23,8 @@ type ProviderStatus = "connected" | "disconnected";
 class FakeSocketProvider {
   readonly awareness = {} as unknown as { __brand: "awareness" };
 
-  private statusHandler: ((event: { status: ProviderStatus }) => void) | null = null;
+  private statusHandler: ((event: { status: ProviderStatus }) => void) | null =
+    null;
   private connectImpl: () => void = () => {
     this.emitStatus("connected");
   };
@@ -38,9 +39,14 @@ class FakeSocketProvider {
 
   destroy = vi.fn();
 
-  on = vi.fn((_event: "status", handler: (event: { status: ProviderStatus }) => void) => {
-    this.statusHandler = handler;
-  });
+  on = vi.fn(
+    (
+      _event: "status",
+      handler: (event: { status: ProviderStatus }) => void,
+    ) => {
+      this.statusHandler = handler;
+    },
+  );
 
   emitStatus(status: ProviderStatus): void {
     this.statusHandler?.({ status });
@@ -128,10 +134,12 @@ describe("useYjs", () => {
 
   it("creates and connects a collaboration provider for the document", () => {
     let fakeProvider: FakeCollaborationProvider | null = null;
-    createCollaborationProviderMock.mockImplementation((input: { doc: Y.Doc }) => {
-      fakeProvider = new FakeCollaborationProvider(input.doc);
-      return fakeProvider as unknown as object;
-    });
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        return fakeProvider as unknown as object;
+      },
+    );
 
     const harness = renderUseYjs({
       daemonWsUrl: "ws://127.0.0.1:39091/yjs",
@@ -160,10 +168,12 @@ describe("useYjs", () => {
 
   it("disconnects and destroys provider resources on unmount", () => {
     let fakeProvider: FakeCollaborationProvider | null = null;
-    createCollaborationProviderMock.mockImplementation((input: { doc: Y.Doc }) => {
-      fakeProvider = new FakeCollaborationProvider(input.doc);
-      return fakeProvider as unknown as object;
-    });
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        return fakeProvider as unknown as object;
+      },
+    );
 
     const harness = renderUseYjs({
       daemonWsUrl: "ws://127.0.0.1:39091/yjs",
@@ -185,10 +195,12 @@ describe("useYjs", () => {
     vi.useFakeTimers();
 
     let fakeProvider: FakeCollaborationProvider | null = null;
-    createCollaborationProviderMock.mockImplementation((input: { doc: Y.Doc }) => {
-      fakeProvider = new FakeCollaborationProvider(input.doc);
-      return fakeProvider as unknown as object;
-    });
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        return fakeProvider as unknown as object;
+      },
+    );
 
     const harness = renderUseYjs({
       daemonWsUrl: "ws://127.0.0.1:39091/yjs",
@@ -217,13 +229,15 @@ describe("useYjs", () => {
 
   it("sets error status when provider connect throws", () => {
     let fakeProvider: FakeCollaborationProvider | null = null;
-    createCollaborationProviderMock.mockImplementation((input: { doc: Y.Doc }) => {
-      fakeProvider = new FakeCollaborationProvider(input.doc);
-      fakeProvider.provider.setConnectImpl(() => {
-        throw new Error("connect failed");
-      });
-      return fakeProvider as unknown as object;
-    });
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        fakeProvider.provider.setConnectImpl(() => {
+          throw new Error("connect failed");
+        });
+        return fakeProvider as unknown as object;
+      },
+    );
 
     const harness = renderUseYjs({
       daemonWsUrl: "ws://127.0.0.1:39091/yjs",
@@ -239,9 +253,11 @@ describe("useYjs", () => {
   });
 
   it("uses relay websocket url for web runtime", () => {
-    createCollaborationProviderMock.mockImplementation((input: { doc: Y.Doc }) => {
-      return new FakeCollaborationProvider(input.doc) as unknown as object;
-    });
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        return new FakeCollaborationProvider(input.doc) as unknown as object;
+      },
+    );
 
     const harness = renderUseYjs({
       daemonWsUrl: "ws://127.0.0.1:39091/yjs",

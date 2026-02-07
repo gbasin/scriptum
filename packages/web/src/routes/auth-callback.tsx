@@ -6,7 +6,8 @@ import { AuthClient } from "../auth/client";
 import { useAuthStore } from "../store/auth";
 import { isFixtureModeEnabled } from "../test/setup";
 
-const RELAY_URL = import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
+const RELAY_URL =
+  import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
 
 export function AuthCallbackRoute() {
   const [searchParams] = useSearchParams();

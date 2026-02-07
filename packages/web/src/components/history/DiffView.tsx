@@ -1,6 +1,6 @@
 import { markdown } from "@codemirror/lang-markdown";
-import { Decoration, EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
+import { Decoration, EditorView } from "@codemirror/view";
 import { nameToColor } from "@scriptum/editor";
 import { useEffect, useMemo, useRef } from "react";
 
@@ -327,7 +327,10 @@ export function DiffView({
             ))}
           </div>
           {historicalContent.length === 0 ? (
-            <p data-testid="history-diffview-authorship-empty" style={{ margin: 0 }}>
+            <p
+              data-testid="history-diffview-authorship-empty"
+              style={{ margin: 0 }}
+            >
               No content yet.
             </p>
           ) : null}

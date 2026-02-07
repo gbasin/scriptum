@@ -54,7 +54,10 @@ function fixtureCss(viewport: FixtureViewport): string {
 `.trim();
 }
 
-function installFixtureStyle(targetDocument: Document, viewport: FixtureViewport): void {
+function installFixtureStyle(
+  targetDocument: Document,
+  viewport: FixtureViewport,
+): void {
   const existing = targetDocument.getElementById(FIXTURE_STYLE_ID);
   if (existing) {
     return;
@@ -67,13 +70,15 @@ function installFixtureStyle(targetDocument: Document, viewport: FixtureViewport
 }
 
 export function isFixtureModeEnabled(
-  env: Record<string, unknown> = import.meta.env as Record<string, unknown>
+  env: Record<string, unknown> = import.meta.env as Record<string, unknown>,
 ): boolean {
   const explicitFlag = env.VITE_SCRIPTUM_FIXTURE_MODE;
   return env.MODE === "test" || explicitFlag === "1" || explicitFlag === "true";
 }
 
-export function setupFixtureMode(options: SetupFixtureModeOptions = {}): boolean {
+export function setupFixtureMode(
+  options: SetupFixtureModeOptions = {},
+): boolean {
   if (!isFixtureModeEnabled(options.env)) {
     return false;
   }
@@ -92,8 +97,9 @@ export function setupFixtureMode(options: SetupFixtureModeOptions = {}): boolean
   const fixedNowMs = options.fixedNowMs ?? DEFAULT_FIXED_NOW_MS;
   const viewport = options.viewport ?? DEFAULT_VIEWPORT;
 
-  targetWindow.__SCRIPTUM_ORIGINAL_DATE_NOW__ ??=
-    targetWindow.Date.now.bind(targetWindow.Date);
+  targetWindow.__SCRIPTUM_ORIGINAL_DATE_NOW__ ??= targetWindow.Date.now.bind(
+    targetWindow.Date,
+  );
   targetWindow.Date.now = () => fixedNowMs;
   targetWindow.__SCRIPTUM_FIXED_NOW__ = fixedNowMs;
 
@@ -101,7 +107,7 @@ export function setupFixtureMode(options: SetupFixtureModeOptions = {}): boolean
     installFixtureStyle(targetWindow.document, viewport);
     targetWindow.document.documentElement.setAttribute(
       "data-scriptum-fixture-mode",
-      "true"
+      "true",
     );
   }
 

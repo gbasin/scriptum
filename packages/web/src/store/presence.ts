@@ -1,5 +1,5 @@
+import type * as Y from "yjs";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
-import * as Y from "yjs";
 
 const DEFAULT_PRESENCE_MAP_NAME = "presence";
 
@@ -101,7 +101,12 @@ function normalizePeer(value: unknown): PeerPresence | null {
   const lastSeenAt = asString(peer.lastSeenAt);
   const color = asString(peer.color);
 
-  if (!name || (type !== "human" && type !== "agent") || !lastSeenAt || !color) {
+  if (
+    !name ||
+    (type !== "human" && type !== "agent") ||
+    !lastSeenAt ||
+    !color
+  ) {
     return null;
   }
 
@@ -125,7 +130,7 @@ function normalizePeers(values: readonly unknown[]): PeerPresence[] {
 }
 
 function resolvePresenceSnapshot(
-  snapshot: PresenceSnapshot
+  snapshot: PresenceSnapshot,
 ): ResolvedPresenceSnapshot {
   const peers = snapshot.peers.slice();
   const localPeerName = snapshot.localPeerName;
@@ -142,7 +147,7 @@ function resolvePresenceSnapshot(
 }
 
 export function createPresenceStore(
-  initial: Partial<PresenceSnapshot> = {}
+  initial: Partial<PresenceSnapshot> = {},
 ): PresenceStore {
   return create<PresenceStoreState>()((set, get) => ({
     ...resolvePresenceSnapshot({
@@ -155,18 +160,18 @@ export function createPresenceStore(
         resolvePresenceSnapshot({
           peers,
           localPeerName: previous.localPeerName,
-        })
+        }),
       );
     },
     upsertPeer: (peer) => {
       const previous = get();
       const index = previous.peers.findIndex(
-        (candidate) => candidate.name === peer.name
+        (candidate) => candidate.name === peer.name,
       );
       const peers =
         index >= 0
           ? previous.peers.map((candidate) =>
-              candidate.name === peer.name ? peer : candidate
+              candidate.name === peer.name ? peer : candidate,
             )
           : [...previous.peers, peer];
 
@@ -174,7 +179,7 @@ export function createPresenceStore(
         resolvePresenceSnapshot({
           peers,
           localPeerName: previous.localPeerName,
-        })
+        }),
       );
     },
     removePeer: (name) => {
@@ -184,7 +189,7 @@ export function createPresenceStore(
         resolvePresenceSnapshot({
           peers,
           localPeerName: previous.localPeerName,
-        })
+        }),
       );
     },
     setLocalPeerName: (name) => {
@@ -193,7 +198,7 @@ export function createPresenceStore(
         resolvePresenceSnapshot({
           peers: previous.peers,
           localPeerName: name,
-        })
+        }),
       );
     },
     reset: () =>
@@ -201,7 +206,7 @@ export function createPresenceStore(
         resolvePresenceSnapshot({
           peers: [],
           localPeerName: null,
-        })
+        }),
       ),
   }));
 }
@@ -210,11 +215,11 @@ export const usePresenceStore = createPresenceStore();
 
 export function bindPresenceStoreToYjs(
   doc: Y.Doc,
-  options: PresenceYjsBindingOptions = {}
+  options: PresenceYjsBindingOptions = {},
 ): () => void {
   const store = options.store ?? usePresenceStore;
   const presenceMap = doc.getMap<unknown>(
-    options.presenceMapName ?? DEFAULT_PRESENCE_MAP_NAME
+    options.presenceMapName ?? DEFAULT_PRESENCE_MAP_NAME,
   );
 
   const syncFromYjs = () => {

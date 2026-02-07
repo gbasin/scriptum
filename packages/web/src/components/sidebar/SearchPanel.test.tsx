@@ -151,7 +151,9 @@ describe("SearchPanel", () => {
     expect(html).toContain("search-panel-query");
     expect(html).toContain("search-panel-filter-tag");
     expect(html).toContain("search-panel-filter-author");
-    expect(html).toContain("Search panel fixture with highlighted snippet context");
+    expect(html).toContain(
+      "Search panel fixture with highlighted snippet context",
+    );
   });
 
   it("invokes onResultSelect for clicked result", () => {
@@ -163,12 +165,15 @@ describe("SearchPanel", () => {
 
     act(() => {
       root.render(
-        <SearchPanel onResultSelect={onResultSelect} results={SEARCH_RESULTS} />,
+        <SearchPanel
+          onResultSelect={onResultSelect}
+          results={SEARCH_RESULTS}
+        />,
       );
     });
 
     const queryInput = container.querySelector(
-      "[data-testid=\"search-panel-query\"]",
+      '[data-testid="search-panel-query"]',
     ) as HTMLInputElement | null;
     expect(queryInput).not.toBeNull();
 
@@ -180,7 +185,7 @@ describe("SearchPanel", () => {
     });
 
     const resultButton = container.querySelector(
-      "[data-testid=\"search-panel-result-doc-a:12\"]",
+      '[data-testid="search-panel-result-doc-a:12"]',
     ) as HTMLButtonElement | null;
     expect(resultButton).not.toBeNull();
 

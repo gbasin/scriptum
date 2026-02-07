@@ -1,13 +1,11 @@
 import type { Document } from "@scriptum/shared";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import {
-  buildTree,
-  DocumentTree,
-  fileIcon,
-} from "./DocumentTree";
+import { buildTree, DocumentTree, fileIcon } from "./DocumentTree";
 
-function makeDoc(overrides: Partial<Document> & { id: string; path: string }): Document {
+function makeDoc(
+  overrides: Partial<Document> & { id: string; path: string },
+): Document {
   return {
     workspaceId: "ws-1",
     title: overrides.path.split("/").pop() ?? "",
@@ -99,11 +97,11 @@ describe("DocumentTree", () => {
         activeDocumentId="d1"
         documents={DOCUMENTS}
         onDocumentSelect={() => undefined}
-      />
+      />,
     );
 
     expect(html).toContain("Document tree");
-    expect(html).toContain("data-testid=\"document-tree\"");
+    expect(html).toContain('data-testid="document-tree"');
     expect(html).toContain("readme.md");
     expect(html).toContain("api.md");
     expect(html).toContain("changelog.md");
@@ -120,7 +118,7 @@ describe("DocumentTree", () => {
         activeDocumentId="d1"
         documents={DOCUMENTS}
         onDocumentSelect={() => undefined}
-      />
+      />,
     );
 
     // The active node should have data-active attribute and highlighted background
@@ -134,7 +132,7 @@ describe("DocumentTree", () => {
         activeDocumentId={null}
         documents={[]}
         onDocumentSelect={() => undefined}
-      />
+      />,
     );
 
     expect(html).toContain("document-tree-empty");
@@ -147,7 +145,7 @@ describe("DocumentTree", () => {
         activeDocumentId={null}
         documents={DOCUMENTS}
         onDocumentSelect={() => undefined}
-      />
+      />,
     );
 
     // Open folder icon (top-level folders auto-expand)
@@ -162,7 +160,7 @@ describe("DocumentTree", () => {
         activeDocumentId={null}
         documents={DOCUMENTS}
         onDocumentSelect={() => undefined}
-      />
+      />,
     );
 
     expect(html).toContain('role="tree"');

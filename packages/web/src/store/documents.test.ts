@@ -50,24 +50,28 @@ describe("documents store", () => {
     const store = createDocumentsStore();
     store.getState().setDocuments([DOC_ALPHA, DOC_BETA, DOC_GAMMA]);
 
-    store.getState().setOpenDocumentIds([
+    store
+      .getState()
+      .setOpenDocumentIds([
+        DOC_ALPHA.id,
+        DOC_ALPHA.id,
+        "missing-doc",
+        DOC_BETA.id,
+      ]);
+    expect(store.getState().openDocumentIds).toEqual([
       DOC_ALPHA.id,
-      DOC_ALPHA.id,
-      "missing-doc",
       DOC_BETA.id,
     ]);
-    expect(store.getState().openDocumentIds).toEqual([DOC_ALPHA.id, DOC_BETA.id]);
-    expect(store.getState().openDocuments.map((document) => document.id)).toEqual([
-      DOC_ALPHA.id,
-      DOC_BETA.id,
-    ]);
+    expect(
+      store.getState().openDocuments.map((document) => document.id),
+    ).toEqual([DOC_ALPHA.id, DOC_BETA.id]);
     expect(store.getState().activeDocumentIdByWorkspace["ws-alpha"]).toBe(
-      DOC_ALPHA.id
+      DOC_ALPHA.id,
     );
 
     store.getState().setActiveDocumentForWorkspace("ws-alpha", DOC_BETA.id);
     expect(store.getState().activeDocumentIdByWorkspace["ws-alpha"]).toBe(
-      DOC_BETA.id
+      DOC_BETA.id,
     );
 
     store.getState().removeDocument(DOC_BETA.id);
@@ -77,7 +81,7 @@ describe("documents store", () => {
     ]);
     expect(store.getState().openDocumentIds).toEqual([DOC_ALPHA.id]);
     expect(store.getState().activeDocumentIdByWorkspace["ws-alpha"]).toBe(
-      DOC_ALPHA.id
+      DOC_ALPHA.id,
     );
   });
 
@@ -88,7 +92,7 @@ describe("documents store", () => {
     const documents = doc.getArray<Document>("documents");
     const openDocumentIds = doc.getArray<string>("openDocumentIds");
     const activeDocumentByWorkspace = doc.getMap<unknown>(
-      "activeDocumentByWorkspace"
+      "activeDocumentByWorkspace",
     );
 
     doc.transact(() => {
@@ -103,7 +107,10 @@ describe("documents store", () => {
       DOC_BETA.id,
       DOC_GAMMA.id,
     ]);
-    expect(store.getState().openDocumentIds).toEqual([DOC_BETA.id, DOC_GAMMA.id]);
+    expect(store.getState().openDocumentIds).toEqual([
+      DOC_BETA.id,
+      DOC_GAMMA.id,
+    ]);
     expect(store.getState().activeDocumentIdByWorkspace).toEqual({
       "ws-alpha": DOC_BETA.id,
       "ws-beta": DOC_GAMMA.id,
@@ -133,8 +140,7 @@ describe("documents store", () => {
     ]);
     expect(store.getState().openDocumentIds).toEqual([DOC_GAMMA.id]);
     expect(store.getState().activeDocumentIdByWorkspace["ws-beta"]).toBe(
-      DOC_GAMMA.id
+      DOC_GAMMA.id,
     );
   });
 });
-

@@ -36,27 +36,22 @@ describe("WorkspaceDropdown", () => {
         onCreateWorkspace={() => undefined}
         onWorkspaceSelect={() => undefined}
         workspaces={WORKSPACES}
-      />
+      />,
     );
 
     expect(html).toContain("Workspace switcher");
     expect(html).toContain("Workspace dropdown");
     expect(html).toContain("Alpha");
     expect(html).toContain("Beta");
-    expect(html).toContain(
-      formatLastAccessedLabel("2026-01-02T09:45:00.000Z")
-    );
-    expect(html).toContain(
-      formatLastAccessedLabel("2026-01-05T11:00:00.000Z")
-    );
+    expect(html).toContain(formatLastAccessedLabel("2026-01-02T09:45:00.000Z"));
+    expect(html).toContain(formatLastAccessedLabel("2026-01-05T11:00:00.000Z"));
     expect(html).toContain("Create new workspace");
   });
 
   it("returns fallback label when timestamp is missing or invalid", () => {
     expect(formatLastAccessedLabel(undefined)).toBe("Last accessed unknown");
     expect(formatLastAccessedLabel("invalid-timestamp")).toBe(
-      "Last accessed unknown"
+      "Last accessed unknown",
     );
   });
 });
-

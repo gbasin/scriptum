@@ -21,7 +21,9 @@ function normalizeHeadingSlug(value: string): string {
   return slug.length > 0 ? slug : "section";
 }
 
-export function collectOutlineHeadings(container: HTMLElement | null): OutlineHeading[] {
+export function collectOutlineHeadings(
+  container: HTMLElement | null,
+): OutlineHeading[] {
   if (!container) {
     return [];
   }
@@ -145,7 +147,11 @@ export function Outline({ editorContainer }: OutlineProps) {
   };
 
   if (headings.length === 0) {
-    return <p data-testid="outline-empty" style={{ color: "#6b7280", margin: 0 }}>No headings in this document.</p>;
+    return (
+      <p data-testid="outline-empty" style={{ color: "#6b7280", margin: 0 }}>
+        No headings in this document.
+      </p>
+    );
   }
 
   return (

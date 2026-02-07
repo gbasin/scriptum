@@ -122,23 +122,31 @@ function assertNonNegativeInteger(value: number, label: string): void {
 }
 
 function assertReconnectProgress(
-  value: ReconnectProgress | null
+  value: ReconnectProgress | null,
 ): ReconnectProgress | null {
   if (value === null) {
     return null;
   }
 
-  assertNonNegativeInteger(value.syncedUpdates, "reconnectProgress.syncedUpdates");
-  assertNonNegativeInteger(value.totalUpdates, "reconnectProgress.totalUpdates");
+  assertNonNegativeInteger(
+    value.syncedUpdates,
+    "reconnectProgress.syncedUpdates",
+  );
+  assertNonNegativeInteger(
+    value.totalUpdates,
+    "reconnectProgress.totalUpdates",
+  );
   if (value.syncedUpdates > value.totalUpdates) {
     throw new Error(
-      "reconnectProgress.syncedUpdates must be <= reconnectProgress.totalUpdates"
+      "reconnectProgress.syncedUpdates must be <= reconnectProgress.totalUpdates",
     );
   }
   return value;
 }
 
-function withDefaults(initialState?: Partial<ScriptumTestState>): ScriptumTestState {
+function withDefaults(
+  initialState?: Partial<ScriptumTestState>,
+): ScriptumTestState {
   const merged: ScriptumTestState = {
     ...DEFAULT_STATE,
     ...initialState,
@@ -149,13 +157,14 @@ function withDefaults(initialState?: Partial<ScriptumTestState>): ScriptumTestSt
     reconnectProgress:
       initialState?.reconnectProgress ?? DEFAULT_STATE.reconnectProgress,
     gitStatus: initialState?.gitStatus ?? DEFAULT_STATE.gitStatus,
-    commentThreads: initialState?.commentThreads ?? DEFAULT_STATE.commentThreads,
+    commentThreads:
+      initialState?.commentThreads ?? DEFAULT_STATE.commentThreads,
   };
   return clone(merged);
 }
 
 export function createScriptumTestApi(
-  initialState?: Partial<ScriptumTestState>
+  initialState?: Partial<ScriptumTestState>,
 ): ScriptumTestApi {
   let state = withDefaults(initialState);
   const listeners = new Set<(value: ScriptumTestState) => void>();
@@ -239,15 +248,14 @@ export function createScriptumTestApi(
 }
 
 export function installScriptumTestApi(
-  options: InstallScriptumTestApiOptions = {}
+  options: InstallScriptumTestApiOptions = {},
 ): ScriptumTestApi | undefined {
   if (!isFixtureModeEnabled(options.env)) {
     return undefined;
   }
 
   const target =
-    options.target ??
-    (typeof window === "undefined" ? undefined : window);
+    options.target ?? (typeof window === "undefined" ? undefined : window);
   if (!target) {
     return undefined;
   }

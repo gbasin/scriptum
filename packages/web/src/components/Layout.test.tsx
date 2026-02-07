@@ -101,8 +101,10 @@ describe("Layout search panel integration", () => {
       );
     });
 
-    expect(container.querySelector("[data-testid=\"document-tree\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"search-panel\"]")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="document-tree"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="search-panel"]')).toBeNull();
 
     act(() => {
       window.dispatchEvent(
@@ -115,18 +117,22 @@ describe("Layout search panel integration", () => {
       );
     });
 
-    expect(container.querySelector("[data-testid=\"search-panel\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"document-tree\"]")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="search-panel"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="document-tree"]')).toBeNull();
 
     const closeButton = container.querySelector(
-      "[data-testid=\"search-panel-close\"]",
+      '[data-testid="search-panel-close"]',
     ) as HTMLButtonElement | null;
     act(() => {
       closeButton?.click();
     });
 
-    expect(container.querySelector("[data-testid=\"search-panel\"]")).toBeNull();
-    expect(container.querySelector("[data-testid=\"document-tree\"]")).not.toBeNull();
+    expect(container.querySelector('[data-testid="search-panel"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="document-tree"]'),
+    ).not.toBeNull();
 
     act(() => {
       root.unmount();
@@ -156,14 +162,19 @@ describe("Layout outline panel", () => {
         <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
           <Routes>
             <Route element={<Layout />}>
-              <Route path="/workspace/:workspaceId" element={<OutlineFixture />} />
+              <Route
+                path="/workspace/:workspaceId"
+                element={<OutlineFixture />}
+              />
             </Route>
           </Routes>
         </MemoryRouter>,
       );
     });
 
-    const outlinePanel = container.querySelector("[data-testid=\"outline-panel\"]");
+    const outlinePanel = container.querySelector(
+      '[data-testid="outline-panel"]',
+    );
     expect(outlinePanel).not.toBeNull();
     expect(outlinePanel?.textContent).toContain("Document Summary");
     expect(outlinePanel?.textContent).toContain("Overview");
@@ -179,7 +190,9 @@ describe("Layout outline panel", () => {
     }
 
     const implementationButton = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("[data-testid^=\"outline-heading-\"]"),
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid^="outline-heading-"]',
+      ),
     ).find((button) => button.textContent?.includes("Implementation"));
     expect(implementationButton).toBeDefined();
     act(() => {
@@ -188,22 +201,24 @@ describe("Layout outline panel", () => {
     expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1);
 
     const toggleButton = container.querySelector(
-      "[data-testid=\"outline-panel-toggle\"]",
+      '[data-testid="outline-panel-toggle"]',
     ) as HTMLButtonElement | null;
     act(() => {
       toggleButton?.click();
     });
 
-    expect(container.querySelector("[data-testid=\"outline-panel\"]")).toBeNull();
+    expect(container.querySelector('[data-testid="outline-panel"]')).toBeNull();
     const reopenButton = container.querySelector(
-      "[data-testid=\"outline-panel-toggle\"]",
+      '[data-testid="outline-panel-toggle"]',
     ) as HTMLButtonElement | null;
     expect(reopenButton?.textContent).toContain("Show Outline");
 
     act(() => {
       reopenButton?.click();
     });
-    expect(container.querySelector("[data-testid=\"outline-panel\"]")).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="outline-panel"]'),
+    ).not.toBeNull();
 
     act(() => {
       root.unmount();
@@ -221,7 +236,10 @@ describe("Layout outline panel", () => {
         <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
           <Routes>
             <Route element={<Layout />}>
-              <Route path="/workspace/:workspaceId" element={<OutlineFixture />} />
+              <Route
+                path="/workspace/:workspaceId"
+                element={<OutlineFixture />}
+              />
             </Route>
           </Routes>
         </MemoryRouter>,
@@ -229,7 +247,7 @@ describe("Layout outline panel", () => {
     });
 
     const fixture = container.querySelector(
-      "[data-testid=\"outline-fixture\"]",
+      '[data-testid="outline-fixture"]',
     ) as HTMLElement | null;
     const headings = Array.from(
       fixture?.querySelectorAll<HTMLHeadingElement>("h1, h2") ?? [],
@@ -270,7 +288,9 @@ describe("Layout outline panel", () => {
     });
 
     const overviewButton = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("[data-testid^=\"outline-heading-\"]"),
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid^="outline-heading-"]',
+      ),
     ).find((button) => button.textContent?.includes("Overview"));
     expect(overviewButton?.getAttribute("data-active")).toBe("true");
 
@@ -363,10 +383,15 @@ describe("Layout backlinks panel", () => {
 
     act(() => {
       root.render(
-        <MemoryRouter initialEntries={["/workspace/ws-alpha/document/doc-auth"]}>
+        <MemoryRouter
+          initialEntries={["/workspace/ws-alpha/document/doc-auth"]}
+        >
           <Routes>
             <Route element={<Layout />}>
-              <Route path="/workspace/:workspaceId/document/:docId" element={<div />} />
+              <Route
+                path="/workspace/:workspaceId/document/:docId"
+                element={<div />}
+              />
             </Route>
           </Routes>
         </MemoryRouter>,
@@ -374,7 +399,7 @@ describe("Layout backlinks panel", () => {
     });
 
     const backlinkButton = container.querySelector(
-      "[data-testid=\"backlink-item-doc-notes\"]",
+      '[data-testid="backlink-item-doc-notes"]',
     ) as HTMLButtonElement | null;
     expect(backlinkButton?.textContent).toContain("Overview");
 
@@ -429,7 +454,9 @@ describe("Layout backlinks panel", () => {
       result.rewrittenDocuments.map((document) => [document.id, document]),
     );
     expect(rewrittenById.get("doc-1")?.bodyMd).toContain("[[security]]");
-    expect(rewrittenById.get("doc-1")?.bodyMd).toContain("[[docs/security.md]]");
+    expect(rewrittenById.get("doc-1")?.bodyMd).toContain(
+      "[[docs/security.md]]",
+    );
     expect(rewrittenById.get("doc-2")?.bodyMd).toContain(
       "[[security#Flow|Authentication flow]]",
     );

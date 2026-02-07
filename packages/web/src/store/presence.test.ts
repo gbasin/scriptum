@@ -93,7 +93,10 @@ describe("presence store", () => {
 
     expect(store.getState().peers).toHaveLength(2);
     expect(
-      store.getState().peers.map((p) => p.name).sort()
+      store
+        .getState()
+        .peers.map((p) => p.name)
+        .sort(),
     ).toEqual(["alice", "bob"]);
 
     doc.transact(() => {

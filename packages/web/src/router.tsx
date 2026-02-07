@@ -30,7 +30,11 @@ export const appRoutes: RouteObject[] = [
       { id: "settings", path: "settings", element: <SettingsRoute /> },
     ],
   },
-  { id: "auth-callback", path: "/auth-callback", element: <AuthCallbackRoute /> },
+  {
+    id: "auth-callback",
+    path: "/auth-callback",
+    element: <AuthCallbackRoute />,
+  },
 ];
 
 export function createAppRouter() {

@@ -1,6 +1,6 @@
 import {
-  createCollaborationProvider,
   type CollaborationProvider,
+  createCollaborationProvider,
   type ProviderFactory,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
@@ -11,7 +11,11 @@ const DEFAULT_DAEMON_WS_URL = "ws://127.0.0.1:39091/yjs";
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
 export type YjsRuntime = "desktop" | "web";
-export type YjsProviderStatus = "connecting" | "connected" | "disconnected" | "error";
+export type YjsProviderStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";
 
 export interface UseYjsOptions {
   docId: string;
@@ -34,16 +38,23 @@ export interface UseYjsResult {
 }
 
 function defaultDaemonWsUrl(): string {
-  return (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ?? DEFAULT_DAEMON_WS_URL;
+  return (
+    (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ??
+    DEFAULT_DAEMON_WS_URL
+  );
 }
 
 function defaultRelayWsUrl(daemonWsUrl: string): string {
-  const explicit = (import.meta.env.VITE_SCRIPTUM_RELAY_WS_URL as string | undefined)?.trim();
+  const explicit = (
+    import.meta.env.VITE_SCRIPTUM_RELAY_WS_URL as string | undefined
+  )?.trim();
   if (explicit) {
     return explicit;
   }
 
-  const relayHttpUrl = (import.meta.env.VITE_SCRIPTUM_RELAY_URL as string | undefined)?.trim();
+  const relayHttpUrl = (
+    import.meta.env.VITE_SCRIPTUM_RELAY_URL as string | undefined
+  )?.trim();
   if (!relayHttpUrl) {
     return daemonWsUrl;
   }
@@ -194,4 +205,3 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
 
   return { ydoc, ytext, provider, status };
 }
-

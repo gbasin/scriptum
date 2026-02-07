@@ -1,7 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PeerPresence } from "../../store/presence";
-import { activityStatusFromLastSeen, AgentsSection } from "./AgentsSection";
+import { AgentsSection, activityStatusFromLastSeen } from "./AgentsSection";
 
 const AGENT: PeerPresence = {
   name: "Claude Agent",
@@ -24,15 +24,23 @@ const HUMAN: PeerPresence = {
 describe("activityStatusFromLastSeen", () => {
   it("returns active when heartbeat is recent", () => {
     expect(
-      activityStatusFromLastSeen("2026-02-07T00:00:30.000Z", Date.parse("2026-02-07T00:01:00.000Z"))
+      activityStatusFromLastSeen(
+        "2026-02-07T00:00:30.000Z",
+        Date.parse("2026-02-07T00:01:00.000Z"),
+      ),
     ).toBe("active");
   });
 
   it("returns idle when heartbeat is stale or invalid", () => {
     expect(
-      activityStatusFromLastSeen("2026-02-07T00:00:00.000Z", Date.parse("2026-02-07T00:01:30.000Z"))
+      activityStatusFromLastSeen(
+        "2026-02-07T00:00:00.000Z",
+        Date.parse("2026-02-07T00:01:30.000Z"),
+      ),
     ).toBe("idle");
-    expect(activityStatusFromLastSeen("not-a-timestamp", Date.now())).toBe("idle");
+    expect(activityStatusFromLastSeen("not-a-timestamp", Date.now())).toBe(
+      "idle",
+    );
   });
 });
 
@@ -42,7 +50,7 @@ describe("AgentsSection", () => {
       <AgentsSection
         nowMs={Date.parse("2026-02-07T00:00:20.000Z")}
         peers={[HUMAN, AGENT]}
-      />
+      />,
     );
 
     expect(html).toContain("Agents");

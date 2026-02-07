@@ -45,7 +45,9 @@ function renderCursorLabel(peer: CursorLabelPeer, autoHideMs = 3_000) {
 
   return {
     queryLabel: () =>
-      container.querySelector('[data-testid="cursor-label"]') as HTMLElement | null,
+      container.querySelector(
+        '[data-testid="cursor-label"]',
+      ) as HTMLElement | null,
     render,
     unmount: () => {
       act(() => {
@@ -74,26 +76,38 @@ describe("CursorLabel", () => {
   });
 
   it("renders an agent label above the cursor with deterministic color", () => {
-    const peer = makePeer({ color: undefined, name: "Scriptum Bot", type: "agent" });
+    const peer = makePeer({
+      color: undefined,
+      name: "Scriptum Bot",
+      type: "agent",
+    });
     const harness = renderCursorLabel(peer);
 
     const label = harness.queryLabel();
     expect(label).not.toBeNull();
     expect(label?.textContent).toContain("Scriptum Bot");
-    expect(label?.querySelector('[data-testid="cursor-label-agent-icon"]')).not.toBeNull();
+    expect(
+      label?.querySelector('[data-testid="cursor-label-agent-icon"]'),
+    ).not.toBeNull();
     expect(label?.style.left).toBe("120px");
     expect(label?.style.top).toBe("48px");
     expect(label?.style.transform).toContain("translate(-50%");
-    expect(label?.style.backgroundColor).toBe(hexToRgb(nameToColor("Scriptum Bot")));
+    expect(label?.style.backgroundColor).toBe(
+      hexToRgb(nameToColor("Scriptum Bot")),
+    );
 
     harness.unmount();
   });
 
   it("does not render the agent icon for human peers", () => {
-    const harness = renderCursorLabel(makePeer({ name: "Alice", type: "human" }));
+    const harness = renderCursorLabel(
+      makePeer({ name: "Alice", type: "human" }),
+    );
     const label = harness.queryLabel();
     expect(label).not.toBeNull();
-    expect(label?.querySelector('[data-testid="cursor-label-agent-icon"]')).toBeNull();
+    expect(
+      label?.querySelector('[data-testid="cursor-label-agent-icon"]'),
+    ).toBeNull();
     harness.unmount();
   });
 

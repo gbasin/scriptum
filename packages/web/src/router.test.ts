@@ -22,9 +22,10 @@ describe("appRoutes", () => {
       "app-layout",
       "workspace",
     ]);
-    expect(
-      matchedRouteIds("/workspace/ws-123/document/doc-456")
-    ).toEqual(["app-layout", "document"]);
+    expect(matchedRouteIds("/workspace/ws-123/document/doc-456")).toEqual([
+      "app-layout",
+      "document",
+    ]);
     expect(matchedRouteIds("/settings")).toEqual(["app-layout", "settings"]);
   });
 

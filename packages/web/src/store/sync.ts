@@ -51,7 +51,7 @@ const INITIAL_SNAPSHOT: SyncSnapshot = {
 };
 
 export function createSyncStore(
-  initial: Partial<SyncSnapshot> = {}
+  initial: Partial<SyncSnapshot> = {},
 ): SyncStore {
   const initialState: SyncSnapshot = { ...INITIAL_SNAPSHOT, ...initial };
 

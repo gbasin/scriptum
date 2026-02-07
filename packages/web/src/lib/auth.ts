@@ -10,8 +10,8 @@ import { generateCodeChallenge, generateCodeVerifier } from "../auth/pkce";
 import {
   clearSession as clearStoredSessionData,
   loadSession as loadStoredSessionData,
-  saveSession as saveStoredSessionData,
   type StoredSession,
+  saveSession as saveStoredSessionData,
 } from "../auth/storage";
 
 const DEFAULT_RELAY_URL =
@@ -114,7 +114,9 @@ function parseTimestamp(iso: string): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
-export function createAuthService(options: AuthServiceOptions = {}): AuthService {
+export function createAuthService(
+  options: AuthServiceOptions = {},
+): AuthService {
   const localStorageRef = options.localStorage ?? globalThis.localStorage;
   const sessionStorageRef = options.sessionStorage ?? globalThis.sessionStorage;
   const locationRef = options.location ?? globalThis.location;
@@ -123,7 +125,8 @@ export function createAuthService(options: AuthServiceOptions = {}): AuthService
     options.accessTokenBufferMs ?? DEFAULT_ACCESS_TOKEN_BUFFER_MS;
 
   const client =
-    options.client ?? new AuthClient({ baseUrl: options.baseUrl ?? DEFAULT_RELAY_URL });
+    options.client ??
+    new AuthClient({ baseUrl: options.baseUrl ?? DEFAULT_RELAY_URL });
 
   let refreshPromise: Promise<AuthSession | null> | null = null;
 

@@ -20,7 +20,12 @@ describe("createScriptumTestApi", () => {
     api.setSyncState("offline");
     api.setPendingSyncUpdates(42);
     api.setReconnectProgress({ syncedUpdates: 847, totalUpdates: 1203 });
-    api.setGitStatus({ dirty: true, ahead: 2, behind: 1, lastCommit: "abc123" });
+    api.setGitStatus({
+      dirty: true,
+      ahead: 2,
+      behind: 1,
+      lastCommit: "abc123",
+    });
 
     const state = api.getState();
     expect(state.docContent).toBe("# Updated");
@@ -58,7 +63,7 @@ describe("createScriptumTestApi", () => {
     const api = createScriptumTestApi();
 
     expect(() => api.setCursor({ line: -1, ch: 0 })).toThrow(
-      /cursor\.line must be a non-negative integer/
+      /cursor\.line must be a non-negative integer/,
     );
   });
 
@@ -66,7 +71,7 @@ describe("createScriptumTestApi", () => {
     const api = createScriptumTestApi();
 
     expect(() =>
-      api.setReconnectProgress({ syncedUpdates: 5, totalUpdates: 3 })
+      api.setReconnectProgress({ syncedUpdates: 5, totalUpdates: 3 }),
     ).toThrow(/must be <= reconnectProgress\.totalUpdates/);
   });
 });

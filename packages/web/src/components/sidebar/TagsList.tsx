@@ -79,7 +79,9 @@ export function TagsList({ activeTag, onTagSelect, tags }: TagsListProps) {
                 <button
                   aria-pressed={isActive}
                   data-testid={`sidebar-tag-chip-${tagChipTestId(tag)}`}
-                  onClick={() => onTagSelect?.(toggleTagSelection(activeTag, tag))}
+                  onClick={() =>
+                    onTagSelect?.(toggleTagSelection(activeTag, tag))
+                  }
                   style={{
                     background: isActive ? "#dbeafe" : "#f3f4f6",
                     border: "1px solid #d1d5db",

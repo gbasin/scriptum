@@ -8,7 +8,7 @@ function makeDocument(
     path: string;
     title: string;
     workspaceId: string;
-  }
+  },
 ): Document {
   return {
     id: overrides.id,
@@ -44,7 +44,7 @@ describe("document tab helpers", () => {
       ],
       "ws-1",
       "doc-a",
-      "docs/a.md"
+      "docs/a.md",
     );
 
     expect(tabs).toEqual([
@@ -57,7 +57,12 @@ describe("document tab helpers", () => {
   });
 
   it("injects a fallback active tab when the active route doc is missing", () => {
-    const tabs = buildOpenDocumentTabs([], "ws-1", "doc-active", "docs/new-note.md");
+    const tabs = buildOpenDocumentTabs(
+      [],
+      "ws-1",
+      "doc-active",
+      "docs/new-note.md",
+    );
 
     expect(tabs).toEqual([
       {
@@ -75,7 +80,7 @@ describe("document tab helpers", () => {
         { id: "doc-2", path: "docs/2.md", title: "2.md" },
         { id: "doc-3", path: "docs/3.md", title: "3.md" },
       ],
-      "doc-2"
+      "doc-2",
     );
 
     expect(next).toBe("doc-1");
@@ -84,7 +89,7 @@ describe("document tab helpers", () => {
   it("returns null when the last tab closes", () => {
     const next = nextDocumentIdAfterClose(
       [{ id: "doc-1", path: "docs/1.md", title: "1.md" }],
-      "doc-1"
+      "doc-1",
     );
     expect(next).toBeNull();
   });

@@ -1,13 +1,10 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ComponentProps } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  CommentPopover,
-  highlightRangesFromThreads,
-} from "./CommentPopover";
+import { CommentPopover, highlightRangesFromThreads } from "./CommentPopover";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -33,7 +30,8 @@ function renderPopover(props: ComponentProps<typeof CommentPopover>) {
 
   return {
     container,
-    rerender: (nextProps: ComponentProps<typeof CommentPopover>) => render(nextProps),
+    rerender: (nextProps: ComponentProps<typeof CommentPopover>) =>
+      render(nextProps),
     unmount: () => {
       act(() => {
         root.unmount();
@@ -100,7 +98,7 @@ describe("CommentPopover", () => {
     });
 
     const button = harness.container.querySelector(
-      "[data-testid=\"comment-margin-button\"]",
+      '[data-testid="comment-margin-button"]',
     ) as HTMLButtonElement | null;
     expect(button).not.toBeNull();
 
@@ -108,10 +106,14 @@ describe("CommentPopover", () => {
       button?.click();
     });
 
-    const popover = harness.container.querySelector("[data-testid=\"comment-popover\"]");
+    const popover = harness.container.querySelector(
+      '[data-testid="comment-popover"]',
+    );
     expect(popover).not.toBeNull();
     expect(
-      harness.container.querySelector("[data-testid=\"comment-selection-preview\"]")?.textContent,
+      harness.container.querySelector(
+        '[data-testid="comment-selection-preview"]',
+      )?.textContent,
     ).toContain("Inline selection");
 
     harness.unmount();
@@ -119,9 +121,7 @@ describe("CommentPopover", () => {
 
   it("creates a comment thread through api-client callback", async () => {
     const createThread = vi
-      .fn<
-        NonNullable<ComponentProps<typeof CommentPopover>["createThread"]>
-      >()
+      .fn<NonNullable<ComponentProps<typeof CommentPopover>["createThread"]>>()
       .mockResolvedValue({
         thread: {
           id: "thread-1",
@@ -144,9 +144,10 @@ describe("CommentPopover", () => {
           editedAt: null,
         },
       });
-    const onThreadChange = vi.fn<
-      NonNullable<ComponentProps<typeof CommentPopover>["onThreadChange"]>
-    >();
+    const onThreadChange =
+      vi.fn<
+        NonNullable<ComponentProps<typeof CommentPopover>["onThreadChange"]>
+      >();
 
     const harness = renderPopover({
       workspaceId: "ws-1",
@@ -165,14 +166,14 @@ describe("CommentPopover", () => {
     });
 
     const button = harness.container.querySelector(
-      "[data-testid=\"comment-margin-button\"]",
+      '[data-testid="comment-margin-button"]',
     ) as HTMLButtonElement | null;
     act(() => {
       button?.click();
     });
 
     const input = harness.container.querySelector(
-      "[data-testid=\"comment-input\"]",
+      '[data-testid="comment-input"]',
     ) as HTMLTextAreaElement | null;
     expect(input).not.toBeNull();
 
@@ -188,7 +189,7 @@ describe("CommentPopover", () => {
     });
 
     const submit = harness.container.querySelector(
-      "[data-testid=\"comment-submit\"]",
+      '[data-testid="comment-submit"]',
     ) as HTMLButtonElement | null;
     expect(submit).not.toBeNull();
 
@@ -207,7 +208,9 @@ describe("CommentPopover", () => {
       message: "First comment",
     });
     expect(onThreadChange).toHaveBeenCalledTimes(1);
-    expect(harness.container.querySelector("[data-testid=\"thread-list\"]")).not.toBeNull();
+    expect(
+      harness.container.querySelector('[data-testid="thread-list"]'),
+    ).not.toBeNull();
 
     harness.unmount();
   });
@@ -242,7 +245,9 @@ describe("CommentPopover", () => {
     });
 
     expect(
-      harness.container.querySelector("[data-testid=\"comment-margin-resolved-dot\"]"),
+      harness.container.querySelector(
+        '[data-testid="comment-margin-resolved-dot"]',
+      ),
     ).not.toBeNull();
 
     harness.unmount();

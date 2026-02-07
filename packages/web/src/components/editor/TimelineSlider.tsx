@@ -27,7 +27,8 @@ export function TimelineSlider({
   const clampedValue = clampTimelineValue(value, clampedMax);
   const totalVersions = clampedMax + 1;
   const activeVersion = clampedValue + 1;
-  const normalizedViewMode: HistoryViewMode = viewMode === "diff" ? "diff" : "authorship";
+  const normalizedViewMode: HistoryViewMode =
+    viewMode === "diff" ? "diff" : "authorship";
 
   return (
     <section
@@ -61,7 +62,8 @@ export function TimelineSlider({
           data-testid="history-view-toggle-authorship"
           onClick={() => onViewModeChange("authorship")}
           style={{
-            background: normalizedViewMode === "authorship" ? "#dbeafe" : "#f3f4f6",
+            background:
+              normalizedViewMode === "authorship" ? "#dbeafe" : "#f3f4f6",
             border: "1px solid #93c5fd",
             borderRadius: "0.375rem",
             fontSize: "0.75rem",
@@ -92,9 +94,17 @@ export function TimelineSlider({
       <output
         aria-live="polite"
         data-testid="history-view-mode-label"
-        style={{ color: "#4b5563", display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}
+        style={{
+          color: "#4b5563",
+          display: "block",
+          fontSize: "0.75rem",
+          marginBottom: "0.25rem",
+        }}
       >
-        View: {normalizedViewMode === "authorship" ? "Colored authorship" : "Diff from current"}
+        View:{" "}
+        {normalizedViewMode === "authorship"
+          ? "Colored authorship"
+          : "Diff from current"}
       </output>
       <input
         aria-label="History timeline slider"
@@ -114,7 +124,12 @@ export function TimelineSlider({
       <output
         aria-live="polite"
         data-testid="history-timeline-position"
-        style={{ color: "#4b5563", display: "block", fontSize: "0.75rem", marginTop: "0.25rem" }}
+        style={{
+          color: "#4b5563",
+          display: "block",
+          fontSize: "0.75rem",
+          marginTop: "0.25rem",
+        }}
       >
         Version {activeVersion}/{totalVersions}
       </output>

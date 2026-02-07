@@ -4,7 +4,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSyncStore, type SyncStore } from "../store/sync";
-import { useSyncStatus, type UseSyncStatusOptions, type UseSyncStatusResult } from "./useSyncStatus";
+import {
+  type UseSyncStatusOptions,
+  type UseSyncStatusResult,
+  useSyncStatus,
+} from "./useSyncStatus";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -14,9 +18,13 @@ declare global {
 type ProviderStatus = "connected" | "disconnected";
 
 class FakeSocketProvider {
-  private statusHandler: ((event: { status: ProviderStatus }) => void) | null = null;
+  private statusHandler: ((event: { status: ProviderStatus }) => void) | null =
+    null;
 
-  on(_event: "status", handler: (event: { status: ProviderStatus }) => void): void {
+  on(
+    _event: "status",
+    handler: (event: { status: ProviderStatus }) => void,
+  ): void {
     this.statusHandler = handler;
   }
 
@@ -178,4 +186,3 @@ describe("useSyncStatus", () => {
     harness.unmount();
   });
 });
-

@@ -1,34 +1,34 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import type { Document as ScriptumDocument } from "@scriptum/shared";
 import {
+  type CommentDecorationRange,
   commentGutterExtension,
   commentHighlightExtension,
   createCollaborationProvider,
+  type DropUploadProgress,
   dragDropUploadExtension,
   livePreviewExtension,
   nameToColor,
   remoteCursorExtension,
   setCommentGutterRanges,
   setCommentHighlightRanges,
-  type CommentDecorationRange,
-  type DropUploadProgress,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
+import type { Document as ScriptumDocument } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
-import { OfflineBanner } from "../components/OfflineBanner";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
-import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
+import { type OpenDocumentTab, TabBar } from "../components/editor/TabBar";
 import {
-  TimelineSlider,
   type HistoryViewMode,
+  TimelineSlider,
 } from "../components/editor/TimelineSlider";
+import { OfflineBanner } from "../components/OfflineBanner";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
-import { usePresenceStore, type PeerPresence } from "../store/presence";
+import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
@@ -125,7 +125,7 @@ const UNKNOWN_REMOTE_TIMELINE_AUTHOR: TimelineAuthor = {
 };
 
 export function timelineAuthorFromPeer(
-  peer: Pick<ScriptumTestState["remotePeers"][number], "name" | "type">
+  peer: Pick<ScriptumTestState["remotePeers"][number], "name" | "type">,
 ): TimelineAuthor {
   return {
     color: nameToColor(peer.name),
@@ -137,7 +137,7 @@ export function timelineAuthorFromPeer(
 
 export function createTimelineSnapshotEntry(
   content: string,
-  author: TimelineAuthor
+  author: TimelineAuthor,
 ): TimelineSnapshotEntry {
   return {
     attribution: Array.from({ length: content.length }, () => author),
@@ -146,7 +146,7 @@ export function createTimelineSnapshotEntry(
 }
 
 function normalizedAttributionLength(
-  entry: TimelineSnapshotEntry
+  entry: TimelineSnapshotEntry,
 ): TimelineAuthor[] {
   if (entry.attribution.length === entry.content.length) {
     return entry.attribution;
@@ -154,14 +154,14 @@ function normalizedAttributionLength(
 
   return Array.from(
     { length: entry.content.length },
-    (_unused, index) => entry.attribution[index] ?? LOCAL_TIMELINE_AUTHOR
+    (_unused, index) => entry.attribution[index] ?? LOCAL_TIMELINE_AUTHOR,
   );
 }
 
 export function deriveTimelineSnapshotEntry(
   previousEntry: TimelineSnapshotEntry,
   nextContent: string,
-  author: TimelineAuthor
+  author: TimelineAuthor,
 ): TimelineSnapshotEntry {
   if (previousEntry.content === nextContent) {
     return {
@@ -194,21 +194,30 @@ export function deriveTimelineSnapshotEntry(
 
   const nextMiddleLength = Math.max(
     0,
-    nextContent.length - prefixLength - suffixLength
+    nextContent.length - prefixLength - suffixLength,
   );
   const prefixAttribution = previousAttribution.slice(0, prefixLength);
   const suffixAttribution =
-    suffixLength > 0 ? previousAttribution.slice(previousAttribution.length - suffixLength) : [];
-  const middleAttribution = Array.from({ length: nextMiddleLength }, () => author);
+    suffixLength > 0
+      ? previousAttribution.slice(previousAttribution.length - suffixLength)
+      : [];
+  const middleAttribution = Array.from(
+    { length: nextMiddleLength },
+    () => author,
+  );
 
   return {
-    attribution: [...prefixAttribution, ...middleAttribution, ...suffixAttribution],
+    attribution: [
+      ...prefixAttribution,
+      ...middleAttribution,
+      ...suffixAttribution,
+    ],
     content: nextContent,
   };
 }
 
 export function buildAuthorshipSegments(
-  entry: TimelineSnapshotEntry
+  entry: TimelineSnapshotEntry,
 ): AuthorshipSegment[] {
   const attribution = normalizedAttributionLength(entry);
   const { content } = entry;
@@ -240,7 +249,7 @@ export function buildAuthorshipSegments(
 
 export function buildTimelineDiffSegments(
   currentContent: string,
-  snapshotContent: string
+  snapshotContent: string,
 ): TimelineDiffSegment[] {
   if (currentContent.length === 0 && snapshotContent.length === 0) {
     return [];
@@ -271,11 +280,11 @@ export function buildTimelineDiffSegments(
   const prefix = currentContent.slice(0, prefixLength);
   const removed = currentContent.slice(
     prefixLength,
-    currentContent.length - suffixLength
+    currentContent.length - suffixLength,
   );
   const added = snapshotContent.slice(
     prefixLength,
-    snapshotContent.length - suffixLength
+    snapshotContent.length - suffixLength,
   );
   const suffix =
     suffixLength > 0
@@ -317,7 +326,7 @@ export function formatDropUploadProgress(progress: DropUploadProgress): string {
 
 export function uploadDroppedFileAsDataUrl(
   file: File,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
 ): Promise<{ url: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -349,7 +358,10 @@ function asRecord(value: unknown): UnknownRecord | null {
   return value as UnknownRecord;
 }
 
-function readNumber(record: UnknownRecord, keys: readonly string[]): number | null {
+function readNumber(
+  record: UnknownRecord,
+  keys: readonly string[],
+): number | null {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value)) {
@@ -359,7 +371,10 @@ function readNumber(record: UnknownRecord, keys: readonly string[]): number | nu
   return null;
 }
 
-function readString(record: UnknownRecord, keys: readonly string[]): string | null {
+function readString(
+  record: UnknownRecord,
+  keys: readonly string[],
+): string | null {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "string" && value.trim().length > 0) {
@@ -369,7 +384,9 @@ function readString(record: UnknownRecord, keys: readonly string[]): string | nu
   return null;
 }
 
-function normalizeInlineCommentMessages(value: unknown): InlineCommentMessage[] {
+function normalizeInlineCommentMessages(
+  value: unknown,
+): InlineCommentMessage[] {
   const rawMessages = Array.isArray(value) ? value : value ? [value] : [];
   const messages: InlineCommentMessage[] = [];
 
@@ -418,7 +435,9 @@ function normalizeInlineCommentMessages(value: unknown): InlineCommentMessage[] 
   return messages;
 }
 
-function normalizeInlineCommentThread(value: unknown): InlineCommentThread | null {
+function normalizeInlineCommentThread(
+  value: unknown,
+): InlineCommentThread | null {
   const record = asRecord(value);
   if (!record) {
     return null;
@@ -446,7 +465,7 @@ function normalizeInlineCommentThread(value: unknown): InlineCommentThread | nul
     statusRaw === "resolved" ? "resolved" : "open";
 
   const messages = normalizeInlineCommentMessages(
-    record.messages ?? record.message ?? threadRecord.messages
+    record.messages ?? record.message ?? threadRecord.messages,
   );
 
   return {
@@ -458,7 +477,9 @@ function normalizeInlineCommentThread(value: unknown): InlineCommentThread | nul
   };
 }
 
-export function normalizeInlineCommentThreads(values: unknown[]): InlineCommentThread[] {
+export function normalizeInlineCommentThreads(
+  values: unknown[],
+): InlineCommentThread[] {
   const threads: InlineCommentThread[] = [];
   const seenThreadIds = new Set<string>();
 
@@ -476,7 +497,7 @@ export function normalizeInlineCommentThreads(values: unknown[]): InlineCommentT
 }
 
 export function commentRangesFromThreads(
-  threads: readonly InlineCommentThread[]
+  threads: readonly InlineCommentThread[],
 ): CommentDecorationRange[] {
   return threads.map((thread) => ({
     from: thread.startOffsetUtf16,
@@ -489,7 +510,7 @@ export function commentRangesFromThreads(
 export function appendReplyToThread(
   threads: readonly InlineCommentThread[],
   threadId: string,
-  message: InlineCommentMessage
+  message: InlineCommentMessage,
 ): InlineCommentThread[] {
   let didAppend = false;
   const nextThreads = threads.map((thread) => {
@@ -510,7 +531,7 @@ export function updateInlineCommentMessageBody(
   threads: readonly InlineCommentThread[],
   threadId: string,
   messageId: string,
-  nextBodyMd: string
+  nextBodyMd: string,
 ): InlineCommentThread[] {
   const nextBody = nextBodyMd.trim();
   if (!nextBody) {
@@ -548,7 +569,7 @@ export function updateInlineCommentMessageBody(
 export function updateInlineCommentThreadStatus(
   threads: readonly InlineCommentThread[],
   threadId: string,
-  status: InlineCommentThread["status"]
+  status: InlineCommentThread["status"],
 ): InlineCommentThread[] {
   let didUpdate = false;
   const nextThreads = threads.map((thread) => {
@@ -587,7 +608,7 @@ export function buildOpenDocumentTabs(
   openDocuments: readonly ScriptumDocument[],
   workspaceId: string | undefined,
   activeDocumentId: string | undefined,
-  activeDocumentPath: string
+  activeDocumentPath: string,
 ): OpenDocumentTab[] {
   const workspaceOpenDocuments = workspaceId
     ? openDocuments.filter((document) => document.workspaceId === workspaceId)
@@ -598,10 +619,7 @@ export function buildOpenDocumentTabs(
     title: document.title,
   }));
 
-  if (
-    activeDocumentId &&
-    !tabs.some((tab) => tab.id === activeDocumentId)
-  ) {
+  if (activeDocumentId && !tabs.some((tab) => tab.id === activeDocumentId)) {
     tabs.unshift({
       id: activeDocumentId,
       path: activeDocumentPath,
@@ -614,7 +632,7 @@ export function buildOpenDocumentTabs(
 
 export function nextDocumentIdAfterClose(
   tabs: readonly OpenDocumentTab[],
-  closingDocumentId: string
+  closingDocumentId: string,
 ): string | null {
   const closingIndex = tabs.findIndex((tab) => tab.id === closingDocumentId);
   if (closingIndex < 0) {
@@ -638,7 +656,10 @@ function readFixtureState(): ScriptumTestState {
 }
 
 function makeClientId(prefix: string): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Math.random().toString(16).slice(2)}`;
@@ -646,12 +667,12 @@ function makeClientId(prefix: string): string {
 
 function cursorOffsetFromLineCh(
   markdown: string,
-  cursor: { line: number; ch: number }
+  cursor: { line: number; ch: number },
 ): number {
   const lines = markdown.split("\n");
   const lineIndex = Math.max(
     0,
-    Math.min(lines.length - 1, Math.floor(cursor.line))
+    Math.min(lines.length - 1, Math.floor(cursor.line)),
   );
   let offset = 0;
   for (let index = 0; index < lineIndex; index += 1) {
@@ -659,7 +680,7 @@ function cursorOffsetFromLineCh(
   }
   const column = Math.max(
     0,
-    Math.min(lines[lineIndex]?.length ?? 0, Math.floor(cursor.ch))
+    Math.min(lines[lineIndex]?.length ?? 0, Math.floor(cursor.ch)),
   );
   return offset + column;
 }
@@ -691,7 +712,7 @@ function resolveGlobalWebRtcProviderFactory():
       new (
         room: string,
         doc: unknown,
-        options: { signaling: string[]; connect: boolean }
+        options: { signaling: string[]; connect: boolean },
       ): unknown;
     };
     return new Ctor(room, doc, {
@@ -708,20 +729,19 @@ export function DocumentRoute() {
   const documents = useDocumentsStore((state) => state.documents);
   const openDocuments = useDocumentsStore((state) => state.openDocuments);
   const setActiveDocumentForWorkspace = useDocumentsStore(
-    (state) => state.setActiveDocumentForWorkspace
+    (state) => state.setActiveDocumentForWorkspace,
   );
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const [fixtureState, setFixtureState] = useState<ScriptumTestState>(() =>
-    readFixtureState()
+    readFixtureState(),
   );
   const fixtureModeEnabled =
     typeof window !== "undefined" && Boolean(window.__SCRIPTUM_TEST__);
-  const [inlineCommentThreads, setInlineCommentThreads] = useState<InlineCommentThread[]>(
-    () => normalizeInlineCommentThreads(readFixtureState().commentThreads)
-  );
-  const [activeSelection, setActiveSelection] = useState<ActiveTextSelection | null>(
-    null
-  );
+  const [inlineCommentThreads, setInlineCommentThreads] = useState<
+    InlineCommentThread[]
+  >(() => normalizeInlineCommentThreads(readFixtureState().commentThreads));
+  const [activeSelection, setActiveSelection] =
+    useState<ActiveTextSelection | null>(null);
   const [isCommentPopoverOpen, setCommentPopoverOpen] = useState(false);
   const [pendingCommentBody, setPendingCommentBody] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -732,7 +752,7 @@ export function DocumentRoute() {
     ? fixtureState.remotePeers.length + 1
     : 1;
   const [syncState, setSyncState] = useState<ScriptumTestState["syncState"]>(
-    fixtureModeEnabled ? fixtureState.syncState : "reconnecting"
+    fixtureModeEnabled ? fixtureState.syncState : "reconnecting",
   );
   const setPresencePeers = usePresenceStore((state) => state.setPeers);
   const pendingChanges = useSyncStore((state) => state.pendingChanges);
@@ -740,43 +760,46 @@ export function DocumentRoute() {
   const [daemonWsBaseUrl] = useState(DEFAULT_DAEMON_WS_BASE_URL);
   const [webrtcSignalingUrl] = useState(DEFAULT_WEBRTC_SIGNALING_URL);
   const [webrtcProviderFactory] = useState<WebRtcProviderFactory | undefined>(
-    () => resolveGlobalWebRtcProviderFactory()
+    () => resolveGlobalWebRtcProviderFactory(),
   );
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const isApplyingTimelineSnapshotRef = useRef(false);
-  const collaborationProviderRef = useRef<
-    ReturnType<typeof createCollaborationProvider> | null
-  >(null);
+  const collaborationProviderRef = useRef<ReturnType<
+    typeof createCollaborationProvider
+  > | null>(null);
   const fixtureRemoteClientIdsRef = useRef<number[]>([]);
   const timelineRemotePeersRef = useRef(fixtureState.remotePeers);
-  const [timelineEntries, setTimelineEntries] = useState<TimelineSnapshotEntry[]>([
+  const [timelineEntries, setTimelineEntries] = useState<
+    TimelineSnapshotEntry[]
+  >([
     createTimelineSnapshotEntry(fixtureState.docContent, LOCAL_TIMELINE_AUTHOR),
   ]);
   const [timelineIndex, setTimelineIndex] = useState(0);
   const [timelineViewMode, setTimelineViewMode] =
     useState<HistoryViewMode>("authorship");
   const roomId = useMemo(
-    () => `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
-    [workspaceId, documentId]
+    () =>
+      `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
+    [workspaceId, documentId],
   );
   const currentDocument = useMemo(
     () =>
       documentId
-        ? documents.find((candidate) => candidate.id === documentId) ?? null
+        ? (documents.find((candidate) => candidate.id === documentId) ?? null)
         : null,
-    [documentId, documents]
+    [documentId, documents],
   );
-  const currentDocumentPath = currentDocument?.path ?? (documentId ?? "unknown");
+  const currentDocumentPath = currentDocument?.path ?? documentId ?? "unknown";
   const openTabs = useMemo(
     () =>
       buildOpenDocumentTabs(
         openDocuments,
         workspaceId,
         documentId,
-        currentDocumentPath
+        currentDocumentPath,
       ),
-    [currentDocumentPath, documentId, openDocuments, workspaceId]
+    [currentDocumentPath, documentId, openDocuments, workspaceId],
   );
   const workspaceLabel = useMemo(() => {
     if (!workspaceId) {
@@ -801,7 +824,7 @@ export function DocumentRoute() {
         name: peer.name,
         type: peer.type,
       })),
-    [currentDocumentPath, fixtureState.remotePeers]
+    [currentDocumentPath, fixtureState.remotePeers],
   );
   useEffect(() => {
     setPresencePeers(presencePeers);
@@ -839,7 +862,7 @@ export function DocumentRoute() {
   }, [fixtureState.remotePeers]);
   const commentRanges = useMemo(
     () => commentRangesFromThreads(inlineCommentThreads),
-    [inlineCommentThreads]
+    [inlineCommentThreads],
   );
   const commentAnchorTop = activeSelection
     ? commentAnchorTopPx(activeSelection.line)
@@ -852,11 +875,12 @@ export function DocumentRoute() {
       inlineCommentThreads.find(
         (thread) =>
           thread.startOffsetUtf16 === activeSelection.from &&
-          thread.endOffsetUtf16 === activeSelection.to
+          thread.endOffsetUtf16 === activeSelection.to,
       ) ?? null
     );
   }, [activeSelection, inlineCommentThreads]);
-  const canComposeInActiveThread = !activeThread || activeThread.status === "open";
+  const canComposeInActiveThread =
+    !activeThread || activeThread.status === "open";
   const pendingSyncUpdates = fixtureModeEnabled
     ? fixtureState.pendingSyncUpdates
     : pendingChanges;
@@ -881,7 +905,7 @@ export function DocumentRoute() {
     setSyncState(fixtureState.syncState);
     setCursor(fixtureState.cursor);
     setInlineCommentThreads(
-      normalizeInlineCommentThreads(fixtureState.commentThreads)
+      normalizeInlineCommentThreads(fixtureState.commentThreads),
     );
   }, [
     fixtureModeEnabled,
@@ -970,8 +994,9 @@ export function DocumentRoute() {
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
               const nextContent = update.state.doc.toString();
-              const isRemoteTransaction = update.transactions.some((transaction) =>
-                Boolean(transaction.annotation(Transaction.remote))
+              const isRemoteTransaction = update.transactions.some(
+                (transaction) =>
+                  Boolean(transaction.annotation(Transaction.remote)),
               );
               const nextAuthor = isRemoteTransaction
                 ? timelineRemotePeersRef.current[0]
@@ -990,13 +1015,13 @@ export function DocumentRoute() {
                 const nextEntry = deriveTimelineSnapshotEntry(
                   latestEntry,
                   nextContent,
-                  nextAuthor
+                  nextAuthor,
                 );
                 const nextEntries = [...currentEntries, nextEntry];
                 if (nextEntries.length > MAX_TIMELINE_SNAPSHOTS) {
                   nextEntries.splice(
                     0,
-                    nextEntries.length - MAX_TIMELINE_SNAPSHOTS
+                    nextEntries.length - MAX_TIMELINE_SNAPSHOTS,
                   );
                 }
 
@@ -1011,7 +1036,10 @@ export function DocumentRoute() {
 
             const mainSelection = update.state.selection.main;
             const line = update.state.doc.lineAt(mainSelection.head);
-            setCursor({ ch: mainSelection.head - line.from, line: line.number - 1 });
+            setCursor({
+              ch: mainSelection.head - line.from,
+              line: line.number - 1,
+            });
 
             if (mainSelection.empty) {
               setActiveSelection(null);
@@ -1021,7 +1049,7 @@ export function DocumentRoute() {
 
             const selectedText = update.state.sliceDoc(
               mainSelection.from,
-              mainSelection.to
+              mainSelection.to,
             );
             if (selectedText.trim().length === 0) {
               setActiveSelection(null);
@@ -1041,7 +1069,10 @@ export function DocumentRoute() {
     });
     editorViewRef.current = view;
     setTimelineEntries([
-      createTimelineSnapshotEntry(fixtureState.docContent, LOCAL_TIMELINE_AUTHOR),
+      createTimelineSnapshotEntry(
+        fixtureState.docContent,
+        LOCAL_TIMELINE_AUTHOR,
+      ),
     ]);
     setTimelineIndex(0);
 
@@ -1146,7 +1177,10 @@ export function DocumentRoute() {
     const nextClientIds: number[] = [];
     fixtureState.remotePeers.forEach((peer, index) => {
       const clientId = FIXTURE_REMOTE_CLIENT_ID_BASE + index;
-      const cursorOffset = cursorOffsetFromLineCh(fixtureState.docContent, peer.cursor);
+      const cursorOffset = cursorOffsetFromLineCh(
+        fixtureState.docContent,
+        peer.cursor,
+      );
       states.set(clientId, {
         cursor: { anchor: cursorOffset, head: cursorOffset },
         user: {
@@ -1160,17 +1194,19 @@ export function DocumentRoute() {
 
     awareness.emit("change", [
       {
-        added: nextClientIds.filter((clientId) => !previousClientIds.includes(clientId)),
-        removed: previousClientIds.filter((clientId) => !nextClientIds.includes(clientId)),
-        updated: nextClientIds.filter((clientId) => previousClientIds.includes(clientId)),
+        added: nextClientIds.filter(
+          (clientId) => !previousClientIds.includes(clientId),
+        ),
+        removed: previousClientIds.filter(
+          (clientId) => !nextClientIds.includes(clientId),
+        ),
+        updated: nextClientIds.filter((clientId) =>
+          previousClientIds.includes(clientId),
+        ),
       },
       "fixture",
     ]);
-  }, [
-    fixtureModeEnabled,
-    fixtureState.docContent,
-    fixtureState.remotePeers,
-  ]);
+  }, [fixtureModeEnabled, fixtureState.docContent, fixtureState.remotePeers]);
 
   useEffect(() => {
     setEditingMessageId(null);
@@ -1178,7 +1214,7 @@ export function DocumentRoute() {
   }, [activeThread?.id, isCommentPopoverOpen]);
 
   const persistCommentThreads = (
-    mutator: (threads: readonly InlineCommentThread[]) => InlineCommentThread[]
+    mutator: (threads: readonly InlineCommentThread[]) => InlineCommentThread[],
   ) => {
     setInlineCommentThreads((currentThreads) => {
       const nextThreads = mutator(currentThreads);
@@ -1248,8 +1284,8 @@ export function DocumentRoute() {
         currentThreads,
         threadId,
         messageId,
-        editingMessageBody
-      )
+        editingMessageBody,
+      ),
     );
     setEditingMessageId(null);
     setEditingMessageBody("");
@@ -1257,10 +1293,10 @@ export function DocumentRoute() {
 
   const setThreadStatus = (
     threadId: string,
-    status: InlineCommentThread["status"]
+    status: InlineCommentThread["status"],
   ) => {
     persistCommentThreads((currentThreads) =>
-      updateInlineCommentThreadStatus(currentThreads, threadId, status)
+      updateInlineCommentThreadStatus(currentThreads, threadId, status),
     );
   };
 
@@ -1284,7 +1320,10 @@ export function DocumentRoute() {
     if (!workspaceId) {
       return;
     }
-    const nextDocumentId = nextDocumentIdAfterClose(openTabs, closingDocumentId);
+    const nextDocumentId = nextDocumentIdAfterClose(
+      openTabs,
+      closingDocumentId,
+    );
     closeDocument(closingDocumentId);
 
     if (closingDocumentId !== documentId) {
@@ -1308,22 +1347,22 @@ export function DocumentRoute() {
     createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
   const timelineAuthorshipSegments = useMemo(
     () => buildAuthorshipSegments(activeTimelineEntry),
-    [activeTimelineEntry]
+    [activeTimelineEntry],
   );
   const timelineDiffSegments = useMemo(
     () =>
       buildTimelineDiffSegments(
         latestTimelineEntry.content,
-        activeTimelineEntry.content
+        activeTimelineEntry.content,
       ),
-    [activeTimelineEntry.content, latestTimelineEntry.content]
+    [activeTimelineEntry.content, latestTimelineEntry.content],
   );
   const timelineHasDiff = useMemo(
     () =>
       timelineDiffSegments.some(
-        (segment) => segment.kind === "added" || segment.kind === "removed"
+        (segment) => segment.kind === "added" || segment.kind === "removed",
       ),
-    [timelineDiffSegments]
+    [timelineDiffSegments],
   );
   const timelineLegendAuthors = useMemo(() => {
     const authorsById = new Map<string, TimelineAuthor>();
@@ -1420,7 +1459,8 @@ export function DocumentRoute() {
                 fontWeight: 600,
                 gap: "0.25rem",
                 minHeight: "1.5rem",
-                minWidth: activeThread?.status === "resolved" ? "1.5rem" : undefined,
+                minWidth:
+                  activeThread?.status === "resolved" ? "1.5rem" : undefined,
                 padding:
                   activeThread?.status === "resolved"
                     ? "0.25rem"
@@ -1548,7 +1588,13 @@ export function DocumentRoute() {
                       </button>
                     </div>
                     {activeThread.messages.length === 0 ? (
-                      <p style={{ color: "#64748b", fontSize: "0.75rem", margin: 0 }}>
+                      <p
+                        style={{
+                          color: "#64748b",
+                          fontSize: "0.75rem",
+                          margin: 0,
+                        }}
+                      >
                         No replies yet.
                       </p>
                     ) : (
@@ -1624,7 +1670,9 @@ export function DocumentRoute() {
                                   {message.isOwn ? (
                                     <button
                                       data-testid={`comment-edit-${message.id}`}
-                                      onClick={() => beginEditingMessage(message)}
+                                      onClick={() =>
+                                        beginEditingMessage(message)
+                                      }
                                       style={{ marginTop: "0.25rem" }}
                                       type="button"
                                     >
@@ -1650,16 +1698,26 @@ export function DocumentRoute() {
                   <textarea
                     data-testid="comment-input"
                     id="inline-comment-input"
-                    onChange={(event) => setPendingCommentBody(event.target.value)}
+                    onChange={(event) =>
+                      setPendingCommentBody(event.target.value)
+                    }
                     rows={3}
-                    style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
+                    style={{
+                      display: "block",
+                      marginTop: "0.25rem",
+                      width: "100%",
+                    }}
                     value={pendingCommentBody}
                   />
                 </>
               ) : (
                 <p
                   data-testid="comment-thread-resolved-note"
-                  style={{ color: "#6b7280", fontSize: "0.75rem", margin: "0 0 0.5rem" }}
+                  style={{
+                    color: "#6b7280",
+                    fontSize: "0.75rem",
+                    margin: "0 0 0.5rem",
+                  }}
                 >
                   This thread is resolved.
                 </p>
@@ -1710,7 +1768,9 @@ export function DocumentRoute() {
                     marginBottom: "0.25rem",
                   }}
                 >
-                  <strong>{thread.status === "resolved" ? "Resolved" : "Open"}</strong>{" "}
+                  <strong>
+                    {thread.status === "resolved" ? "Resolved" : "Open"}
+                  </strong>{" "}
                   <span>
                     ({thread.startOffsetUtf16}-{thread.endOffsetUtf16})
                   </span>
@@ -1791,7 +1851,10 @@ export function DocumentRoute() {
 
       <section aria-label="Section overlap" data-testid="overlap-indicator">
         <h2>Section overlap</h2>
-        <p data-severity={overlapSummary.severity} data-testid="overlap-severity">
+        <p
+          data-severity={overlapSummary.severity}
+          data-testid="overlap-severity"
+        >
           Severity: {overlapSummary.severity}
         </p>
         {overlapSummary.severity === "warning" ? (
@@ -1806,7 +1869,8 @@ export function DocumentRoute() {
                       data-testid={`attribution-badge-${badgeSuffix(peer.name)}`}
                       key={`${section}:${peer.name}`}
                       style={{
-                        backgroundColor: peer.type === "agent" ? "#dbeafe" : "#dcfce7",
+                        backgroundColor:
+                          peer.type === "agent" ? "#dbeafe" : "#dcfce7",
                         border: "1px solid #93c5fd",
                         borderRadius: "9999px",
                         display: "inline-flex",
@@ -1833,7 +1897,8 @@ export function DocumentRoute() {
                   data-testid={`attribution-badge-${badgeSuffix(peer.name)}`}
                   key={`info:${peer.name}`}
                   style={{
-                    backgroundColor: peer.type === "agent" ? "#dbeafe" : "#dcfce7",
+                    backgroundColor:
+                      peer.type === "agent" ? "#dbeafe" : "#dcfce7",
                     border: "1px solid #93c5fd",
                     borderRadius: "9999px",
                     display: "inline-flex",
@@ -1934,7 +1999,8 @@ export function DocumentRoute() {
                   background: "#f8fafc",
                   border: "1px solid #e5e7eb",
                   borderRadius: "0.375rem",
-                  fontFamily: "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
                   fontSize: "0.8rem",
                   margin: 0,
                   overflowX: "auto",
@@ -1979,7 +2045,8 @@ export function DocumentRoute() {
                   background: "#f8fafc",
                   border: "1px solid #e5e7eb",
                   borderRadius: "0.375rem",
-                  fontFamily: "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
                   fontSize: "0.8rem",
                   margin: 0,
                   overflowX: "auto",

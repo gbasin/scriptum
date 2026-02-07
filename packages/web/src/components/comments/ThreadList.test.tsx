@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ComponentProps } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThreadList } from "./ThreadList";
@@ -74,7 +74,9 @@ describe("ThreadList", () => {
 
     expect(harness.container.textContent).toContain("Alex");
     expect(harness.container.textContent).toContain("Bold");
-    expect(harness.container.querySelector("strong")?.textContent).toContain("Thread");
+    expect(harness.container.querySelector("strong")?.textContent).toContain(
+      "Thread",
+    );
     expect(harness.container.querySelector("code")?.textContent).toBe("code");
     const link = harness.container.querySelector("a");
     expect(link?.getAttribute("href")).toBe("https://example.com");
@@ -99,7 +101,10 @@ describe("ThreadList", () => {
         createdAt: "2026-02-07T01:02:00.000Z",
         editedAt: null,
       });
-    const onMessageCreated = vi.fn<(message: ComponentProps<typeof ThreadList>["messages"][number]) => void>();
+    const onMessageCreated =
+      vi.fn<
+        (message: ComponentProps<typeof ThreadList>["messages"][number]) => void
+      >();
 
     const harness = renderThreadList({
       workspaceId: "ws-1",
@@ -121,7 +126,7 @@ describe("ThreadList", () => {
     });
 
     const input = harness.container.querySelector(
-      "[data-testid=\"thread-list-reply-input\"]",
+      '[data-testid="thread-list-reply-input"]',
     ) as HTMLTextAreaElement | null;
     expect(input).not.toBeNull();
 
@@ -137,7 +142,7 @@ describe("ThreadList", () => {
     });
 
     const submit = harness.container.querySelector(
-      "[data-testid=\"thread-list-reply-submit\"]",
+      '[data-testid="thread-list-reply-submit"]',
     ) as HTMLButtonElement | null;
     expect(submit).not.toBeNull();
 
@@ -200,7 +205,8 @@ describe("ThreadList", () => {
         createdAt: "2026-02-07T01:00:00.000Z",
         resolvedAt: null,
       });
-    const onThreadUpdated = vi.fn<(thread: ComponentProps<typeof ThreadList>["thread"]) => void>();
+    const onThreadUpdated =
+      vi.fn<(thread: ComponentProps<typeof ThreadList>["thread"]) => void>();
 
     const harness = renderThreadList({
       workspaceId: "ws-1",
@@ -223,7 +229,7 @@ describe("ThreadList", () => {
     });
 
     const resolveButton = harness.container.querySelector(
-      "[data-testid=\"thread-list-resolve\"]",
+      '[data-testid="thread-list-resolve"]',
     ) as HTMLButtonElement | null;
     expect(resolveButton).not.toBeNull();
 
@@ -233,10 +239,14 @@ describe("ThreadList", () => {
     });
 
     expect(resolveThread).toHaveBeenCalledWith("ws-1", "thread-1", 1);
-    expect(harness.container.querySelector("[data-testid=\"thread-list-resolved-note\"]")).not.toBeNull();
+    expect(
+      harness.container.querySelector(
+        '[data-testid="thread-list-resolved-note"]',
+      ),
+    ).not.toBeNull();
 
     const reopenButton = harness.container.querySelector(
-      "[data-testid=\"thread-list-reopen\"]",
+      '[data-testid="thread-list-reopen"]',
     ) as HTMLButtonElement | null;
     expect(reopenButton).not.toBeNull();
 

@@ -2,7 +2,7 @@
 
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import {
-  AuthClient,
+  type AuthClient,
   AuthClientError,
   type AuthUser,
 } from "../auth/client";
@@ -246,4 +246,3 @@ export function createAuthStore(
 }
 
 export const useAuthStore = createAuthStore();
-

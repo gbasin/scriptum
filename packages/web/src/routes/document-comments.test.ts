@@ -4,10 +4,10 @@ import {
   buildTimelineDiffSegments,
   commentAnchorTopPx,
   commentRangesFromThreads,
-  normalizeInlineCommentThreads,
-  updateInlineCommentThreadStatus,
-  updateInlineCommentMessageBody,
   type InlineCommentThread,
+  normalizeInlineCommentThreads,
+  updateInlineCommentMessageBody,
+  updateInlineCommentThreadStatus,
 } from "./document";
 
 describe("document comment helpers", () => {
@@ -156,7 +156,7 @@ describe("document comment helpers", () => {
       threads,
       "thread-1",
       "msg-own",
-      "Updated"
+      "Updated",
     );
     expect(afterOwnEdit[0]?.messages[0]?.bodyMd).toBe("Updated");
 
@@ -164,7 +164,7 @@ describe("document comment helpers", () => {
       afterOwnEdit,
       "thread-1",
       "msg-other",
-      "Should not change"
+      "Should not change",
     );
     expect(afterOtherEdit[0]?.messages[1]?.bodyMd).toBe("Teammate note");
   });
@@ -183,14 +183,14 @@ describe("document comment helpers", () => {
     const resolved = updateInlineCommentThreadStatus(
       threads,
       "thread-1",
-      "resolved"
+      "resolved",
     );
     expect(resolved[0]?.status).toBe("resolved");
 
     const reopened = updateInlineCommentThreadStatus(
       resolved,
       "thread-1",
-      "open"
+      "open",
     );
     expect(reopened[0]?.status).toBe("open");
   });
@@ -209,7 +209,7 @@ describe("document comment helpers", () => {
     const next = updateInlineCommentThreadStatus(
       threads,
       "missing-thread",
-      "resolved"
+      "resolved",
     );
     expect(next).toEqual(threads);
   });
@@ -217,7 +217,7 @@ describe("document comment helpers", () => {
   it("builds diff segments from the selected snapshot against current content", () => {
     const segments = buildTimelineDiffSegments(
       "# Current\nHello world\n",
-      "# Current\nHello Scriptum\n"
+      "# Current\nHello Scriptum\n",
     );
 
     expect(segments).toEqual([

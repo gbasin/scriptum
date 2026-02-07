@@ -1,6 +1,6 @@
+import { useEffect, useState } from "react";
 import type { DerivedSyncStatus } from "../hooks/useSyncStatus";
 import type { ReconnectProgress } from "../store/sync";
-import { useEffect, useState } from "react";
 
 const DEFAULT_REAPPEAR_DELAY_MS = 30_000;
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
@@ -35,7 +35,10 @@ export function OfflineBanner({
 }: OfflineBannerProps) {
   const [dismissed, setDismissed] = useState(false);
   const showOffline = status === "offline" && !dismissed;
-  const showReconnectProgress = shouldShowReconnectProgress(status, reconnectProgress);
+  const showReconnectProgress = shouldShowReconnectProgress(
+    status,
+    reconnectProgress,
+  );
   const visible = showOffline || showReconnectProgress;
 
   useEffect(() => {

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  ApiClientError,
-  createApiClient,
+  type ApiClientError,
   type CreateCommentInput,
+  createApiClient,
 } from "./api-client";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -12,7 +12,10 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-function headerValue(init: RequestInit | undefined, key: string): string | null {
+function headerValue(
+  init: RequestInit | undefined,
+  key: string,
+): string | null {
   return new Headers(init?.headers).get(key);
 }
 
@@ -41,12 +44,17 @@ describe("api-client", () => {
       getAccessToken: async () => "token-abc",
     });
 
-    const response = await client.listWorkspaces({ limit: 10, cursor: "cur-1" });
+    const response = await client.listWorkspaces({
+      limit: 10,
+      cursor: "cur-1",
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
 
-    expect(url).toBe("https://relay.scriptum.dev/v1/workspaces?limit=10&cursor=cur-1");
+    expect(url).toBe(
+      "https://relay.scriptum.dev/v1/workspaces?limit=10&cursor=cur-1",
+    );
     expect(init?.method).toBe("GET");
     expect(headerValue(init, "Authorization")).toBe("Bearer token-abc");
     expect(response).toEqual({
@@ -179,12 +187,12 @@ describe("api-client", () => {
       "workspace-1",
       "doc-1",
       { title: "Updated" },
-      { etag: "\"etag-old\"" },
+      { etag: '"etag-old"' },
     );
 
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init?.method).toBe("PATCH");
-    expect(headerValue(init, "If-Match")).toBe("\"etag-old\"");
+    expect(headerValue(init, "If-Match")).toBe('"etag-old"');
     expect(headerValue(init, "Idempotency-Key")).toBeNull();
   });
 
@@ -212,12 +220,12 @@ describe("api-client", () => {
     const message = await client.addCommentMessage(
       "workspace-1",
       "thread-1",
-      "Follow-up"
+      "Follow-up",
     );
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe(
-      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/messages"
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/messages",
     );
     expect(init?.method).toBe("POST");
     expect(headerValue(init, "Idempotency-Key")).toBe("idem-456");
@@ -278,17 +286,17 @@ describe("api-client", () => {
     const resolved = await client.resolveCommentThread(
       "workspace-1",
       "thread-1",
-      1
+      1,
     );
     const reopened = await client.reopenCommentThread(
       "workspace-1",
       "thread-1",
-      2
+      2,
     );
 
     const [resolveUrl, resolveInit] = fetchMock.mock.calls[0]!;
     expect(resolveUrl).toBe(
-      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/resolve"
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/resolve",
     );
     expect(resolveInit?.method).toBe("POST");
     expect(resolveInit?.body).toBe(JSON.stringify({ if_version: 1 }));
@@ -296,7 +304,7 @@ describe("api-client", () => {
 
     const [reopenUrl, reopenInit] = fetchMock.mock.calls[1]!;
     expect(reopenUrl).toBe(
-      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/reopen"
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/comments/thread-1/reopen",
     );
     expect(reopenInit?.method).toBe("POST");
     expect(reopenInit?.body).toBe(JSON.stringify({ if_version: 2 }));

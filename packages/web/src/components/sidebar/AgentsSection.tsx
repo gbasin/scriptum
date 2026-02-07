@@ -4,7 +4,7 @@ const ACTIVE_WINDOW_MS = 60_000;
 
 export function activityStatusFromLastSeen(
   lastSeenAt: string,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
 ): "active" | "idle" {
   const timestamp = Date.parse(lastSeenAt);
   if (!Number.isFinite(timestamp)) {
@@ -18,7 +18,10 @@ interface AgentsSectionProps {
   nowMs?: number;
 }
 
-export function AgentsSection({ peers, nowMs = Date.now() }: AgentsSectionProps) {
+export function AgentsSection({
+  peers,
+  nowMs = Date.now(),
+}: AgentsSectionProps) {
   const agents = peers
     .filter((peer) => peer.type === "agent")
     .slice()

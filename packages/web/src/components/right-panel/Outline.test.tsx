@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ComponentProps } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Outline } from "./Outline";
@@ -62,23 +62,29 @@ describe("Outline", () => {
     );
     const harness = renderOutline({ editorContainer });
 
-    const list = harness.container.querySelector("[data-testid=\"outline-list\"]");
+    const list = harness.container.querySelector(
+      '[data-testid="outline-list"]',
+    );
     expect(list).not.toBeNull();
     expect(harness.container.textContent).toContain("Summary");
     expect(harness.container.textContent).toContain("Overview");
     expect(harness.container.textContent).toContain("Implementation details");
 
-    const implementationHeading = editorContainer.querySelectorAll("h1,h2,h3")[2] as
-      | HTMLElement
-      | undefined;
+    const implementationHeading = editorContainer.querySelectorAll(
+      "h1,h2,h3",
+    )[2] as HTMLElement | undefined;
     expect(implementationHeading).toBeDefined();
     const scrollIntoViewSpy = vi.fn();
     if (implementationHeading) {
       implementationHeading.scrollIntoView = scrollIntoViewSpy;
     }
     const button = Array.from(
-      harness.container.querySelectorAll<HTMLButtonElement>("[data-testid^=\"outline-heading-\"]"),
-    ).find((candidate) => candidate.textContent?.includes("Implementation details"));
+      harness.container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid^="outline-heading-"]',
+      ),
+    ).find((candidate) =>
+      candidate.textContent?.includes("Implementation details"),
+    );
 
     expect(button).toBeDefined();
 
@@ -134,7 +140,7 @@ describe("Outline", () => {
     });
 
     const active = harness.container.querySelector(
-      "[data-active=\"true\"]",
+      '[data-active="true"]',
     ) as HTMLButtonElement | null;
     expect(active?.textContent).toContain("Overview");
 
@@ -157,7 +163,9 @@ describe("Outline", () => {
     });
 
     const headingButton = Array.from(
-      harness.container.querySelectorAll<HTMLButtonElement>("[data-testid^=\"outline-heading-\"]"),
+      harness.container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid^="outline-heading-"]',
+      ),
     ).find((button) => button.textContent?.includes("intentionally very long"));
 
     expect(headingButton).toBeDefined();

@@ -2,7 +2,12 @@ import type { WorkspaceConfig } from "@scriptum/shared";
 import { useMemo, useState } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 
-type SettingsTab = "general" | "gitSync" | "agents" | "permissions" | "appearance";
+type SettingsTab =
+  | "general"
+  | "gitSync"
+  | "agents"
+  | "permissions"
+  | "appearance";
 
 interface SettingsTabDefinition {
   id: SettingsTab;
@@ -53,7 +58,9 @@ function asPositiveInt(value: string, fallback: number): number {
 }
 
 export function SettingsRoute() {
-  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
+  const activeWorkspaceId = useWorkspaceStore(
+    (state) => state.activeWorkspaceId,
+  );
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const upsertWorkspace = useWorkspaceStore((state) => state.upsertWorkspace);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
@@ -61,7 +68,8 @@ export function SettingsRoute() {
   const activeWorkspace = useMemo(
     () =>
       activeWorkspaceId
-        ? workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null
+        ? (workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
+          null)
         : null,
     [activeWorkspaceId, workspaces],
   );
@@ -75,7 +83,8 @@ export function SettingsRoute() {
     );
   }
 
-  const config = activeWorkspace.config ?? defaultWorkspaceConfig(activeWorkspace.name);
+  const config =
+    activeWorkspace.config ?? defaultWorkspaceConfig(activeWorkspace.name);
 
   const persist = (
     nextConfig: WorkspaceConfig,
@@ -95,7 +104,9 @@ export function SettingsRoute() {
     });
   };
 
-  const updateConfig = (mutate: (current: WorkspaceConfig) => WorkspaceConfig) => {
+  const updateConfig = (
+    mutate: (current: WorkspaceConfig) => WorkspaceConfig,
+  ) => {
     const nextConfig = mutate(config);
     persist(nextConfig);
   };
@@ -111,7 +122,12 @@ export function SettingsRoute() {
         aria-label="Settings tabs"
         data-testid="settings-tabs"
         role="tablist"
-        style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", marginTop: "1rem" }}
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          marginBottom: "1rem",
+          marginTop: "1rem",
+        }}
       >
         {SETTINGS_TABS.map((tab) => (
           <button
@@ -127,7 +143,11 @@ export function SettingsRoute() {
         ))}
       </div>
 
-      <div aria-label="Settings tab panel" data-testid="settings-tab-panel" role="tabpanel">
+      <div
+        aria-label="Settings tab panel"
+        data-testid="settings-tab-panel"
+        role="tabpanel"
+      >
         {activeTab === "general" ? (
           <fieldset data-testid="settings-form-general">
             <legend>General</legend>
@@ -194,7 +214,10 @@ export function SettingsRoute() {
                 onChange={(event) =>
                   updateConfig((current) => ({
                     ...current,
-                    gitSync: { ...current.gitSync, enabled: event.target.checked },
+                    gitSync: {
+                      ...current.gitSync,
+                      enabled: event.target.checked,
+                    },
                   }))
                 }
                 type="checkbox"
@@ -252,7 +275,10 @@ export function SettingsRoute() {
                 onChange={(event) =>
                   updateConfig((current) => ({
                     ...current,
-                    agents: { ...current.agents, allowAgentEdits: event.target.checked },
+                    agents: {
+                      ...current.agents,
+                      allowAgentEdits: event.target.checked,
+                    },
                   }))
                 }
                 type="checkbox"
@@ -266,7 +292,10 @@ export function SettingsRoute() {
                 onChange={(event) =>
                   updateConfig((current) => ({
                     ...current,
-                    agents: { ...current.agents, requireSectionLease: event.target.checked },
+                    agents: {
+                      ...current.agents,
+                      requireSectionLease: event.target.checked,
+                    },
                   }))
                 }
                 type="checkbox"
@@ -280,7 +309,10 @@ export function SettingsRoute() {
                 onChange={(event) =>
                   updateConfig((current) => ({
                     ...current,
-                    agents: { ...current.agents, defaultAgentName: event.target.value },
+                    agents: {
+                      ...current.agents,
+                      defaultAgentName: event.target.value,
+                    },
                   }))
                 }
                 type="text"
@@ -388,7 +420,9 @@ export function SettingsRoute() {
                     appearance: {
                       ...current.appearance,
                       density:
-                        event.target.value === "compact" ? "compact" : "comfortable",
+                        event.target.value === "compact"
+                          ? "compact"
+                          : "comfortable",
                     },
                   }))
                 }

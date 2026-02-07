@@ -137,7 +137,7 @@ export function AvatarStack({
 }: AvatarStackProps) {
   const sortedPeers = useMemo(
     () => [...peers].sort((a, b) => a.name.localeCompare(b.name)),
-    [peers]
+    [peers],
   );
 
   if (sortedPeers.length === 0) {

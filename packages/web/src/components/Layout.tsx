@@ -5,8 +5,9 @@ import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore } from "../store/presence";
 import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
+import { Outline } from "./right-panel/Outline";
 import { AgentsSection } from "./sidebar/AgentsSection";
-import { DocumentTree, type ContextMenuAction } from "./sidebar/DocumentTree";
+import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
 import {
   buildSearchPanelResults,
   isSearchPanelShortcut,
@@ -18,7 +19,6 @@ import {
   TagsList,
 } from "./sidebar/TagsList";
 import { WorkspaceDropdown } from "./sidebar/WorkspaceDropdown";
-import { Outline } from "./right-panel/Outline";
 
 interface ParsedWikiLink {
   raw: string;
@@ -111,7 +111,9 @@ function extractWikiLinks(markdown: string): ParsedWikiLink[] {
   return links;
 }
 
-function targetAliases(document: Pick<Document, "path" | "title">): Set<string> {
+function targetAliases(
+  document: Pick<Document, "path" | "title">,
+): Set<string> {
   const aliases = new Set<string>();
   const pathNormalized = normalizeBacklinkTarget(document.path);
   const pathBaseName = normalizeBacklinkTarget(baseName(document.path));
@@ -143,7 +145,9 @@ function replacementTargetForRename(
 ): string {
   const normalizedOriginalTarget = normalizeBacklinkTarget(originalTarget);
   const normalizedOldPath = normalizeBacklinkTarget(oldDocument.path);
-  const normalizedOldBaseName = normalizeBacklinkTarget(baseName(oldDocument.path));
+  const normalizedOldBaseName = normalizeBacklinkTarget(
+    baseName(oldDocument.path),
+  );
   const normalizedOldBaseNameWithoutExtension = normalizeBacklinkTarget(
     baseNameWithoutExtension(oldDocument.path),
   );
@@ -192,7 +196,10 @@ export function rewriteWikiReferencesForRename(
   let updatedLinks = 0;
 
   for (const document of workspaceDocuments) {
-    if (document.id === renamedDocument.id || typeof document.bodyMd !== "string") {
+    if (
+      document.id === renamedDocument.id ||
+      typeof document.bodyMd !== "string"
+    ) {
       continue;
     }
 
@@ -258,7 +265,9 @@ export function buildIncomingBacklinks(
     return [];
   }
 
-  const activeDocument = documents.find((document) => document.id === activeDocumentId);
+  const activeDocument = documents.find(
+    (document) => document.id === activeDocumentId,
+  );
   if (!activeDocument) {
     return [];
   }
@@ -266,7 +275,10 @@ export function buildIncomingBacklinks(
   const backlinks: IncomingBacklink[] = [];
 
   for (const document of documents) {
-    if (document.id === activeDocument.id || typeof document.bodyMd !== "string") {
+    if (
+      document.id === activeDocument.id ||
+      typeof document.bodyMd !== "string"
+    ) {
       continue;
     }
     const link = extractWikiLinks(document.bodyMd).find((candidate) =>
@@ -291,9 +303,11 @@ export function buildIncomingBacklinks(
 
 export function Layout() {
   const navigate = useNavigate();
-  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
+  const activeWorkspaceId = useWorkspaceStore(
+    (state) => state.activeWorkspaceId,
+  );
   const setActiveWorkspaceId = useWorkspaceStore(
-    (state) => state.setActiveWorkspaceId
+    (state) => state.setActiveWorkspaceId,
   );
   const upsertWorkspace = useWorkspaceStore((state) => state.upsertWorkspace);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
@@ -318,13 +332,17 @@ export function Layout() {
   );
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [outlinePanelOpen, setOutlinePanelOpen] = useState(true);
-  const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(null);
+  const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(
+    null,
+  );
   const editorAreaRef = useRef<HTMLElement | null>(null);
 
   const workspaceDocuments = useMemo(
     () =>
       activeWorkspaceId
-        ? documents.filter((document) => document.workspaceId === activeWorkspaceId)
+        ? documents.filter(
+            (document) => document.workspaceId === activeWorkspaceId,
+          )
         : [],
     [activeWorkspaceId, documents],
   );
@@ -341,7 +359,7 @@ export function Layout() {
     [workspaceDocuments],
   );
   const activeDocumentId = activeWorkspaceId
-    ? activeDocumentIdByWorkspace[activeWorkspaceId] ?? null
+    ? (activeDocumentIdByWorkspace[activeWorkspaceId] ?? null)
     : null;
   const incomingBacklinks = useMemo(
     () => buildIncomingBacklinks(workspaceDocuments, activeDocumentId),
@@ -390,7 +408,9 @@ export function Layout() {
   };
 
   const createUntitledDocument = () => {
-    const existingPaths = new Set(workspaceDocuments.map((document) => document.path));
+    const existingPaths = new Set(
+      workspaceDocuments.map((document) => document.path),
+    );
     let suffix = 1;
     let candidatePath = "untitled-1.md";
 
@@ -484,7 +504,9 @@ export function Layout() {
     documentId: string,
     updater: (document: Document) => Document,
   ) => {
-    const currentDocument = documents.find((document) => document.id === documentId);
+    const currentDocument = documents.find(
+      (document) => document.id === documentId,
+    );
     if (!currentDocument) {
       return;
     }
@@ -497,7 +519,9 @@ export function Layout() {
       return;
     }
 
-    const currentDocument = documents.find((document) => document.id === documentId);
+    const currentDocument = documents.find(
+      (document) => document.id === documentId,
+    );
     if (!currentDocument) {
       return;
     }
@@ -528,21 +552,27 @@ export function Layout() {
       });
     }
 
-    setRenameBacklinkToast(formatRenameBacklinkToast(updatedLinks, updatedDocuments));
+    setRenameBacklinkToast(
+      formatRenameBacklinkToast(updatedLinks, updatedDocuments),
+    );
     setPendingRenameDocumentId(null);
   };
 
   const createDocumentInNewFolder = (sourceDocument: Document) => {
     const segments = sourceDocument.path.split("/").filter(Boolean);
     const parentPath = segments.slice(0, -1).join("/");
-    const existingPaths = new Set(workspaceDocuments.map((document) => document.path));
+    const existingPaths = new Set(
+      workspaceDocuments.map((document) => document.path),
+    );
     let suffix = 1;
     let folderName = "new-folder";
     let candidatePath = `${folderName}/untitled.md`;
 
     while (
       existingPaths.has(
-        parentPath.length > 0 ? `${parentPath}/${candidatePath}` : candidatePath,
+        parentPath.length > 0
+          ? `${parentPath}/${candidatePath}`
+          : candidatePath,
       )
     ) {
       suffix += 1;
@@ -651,7 +681,11 @@ export function Layout() {
           <p
             data-testid="rename-backlink-toast"
             role="status"
-            style={{ color: "#065f46", fontSize: "0.8rem", margin: "0.75rem 0 0" }}
+            style={{
+              color: "#065f46",
+              fontSize: "0.8rem",
+              margin: "0.75rem 0 0",
+            }}
           >
             {renameBacklinkToast}
           </p>
@@ -659,12 +693,16 @@ export function Layout() {
         {searchPanelOpen ? (
           <SearchPanel
             onClose={() => setSearchPanelOpen(false)}
-            onResultSelect={(result) => handleSearchResultSelect(result.documentId)}
+            onResultSelect={(result) =>
+              handleSearchResultSelect(result.documentId)
+            }
             results={searchPanelResults}
           />
         ) : (
           <section aria-label="Document tree section">
-            <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>Documents</h2>
+            <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>
+              Documents
+            </h2>
             <DocumentTree
               activeDocumentId={activeDocumentId}
               documents={filteredDocuments}
@@ -725,7 +763,10 @@ export function Layout() {
           >
             <h3 style={{ margin: "0 0 0.5rem" }}>Backlinks</h3>
             {incomingBacklinks.length === 0 ? (
-              <p data-testid="backlinks-empty" style={{ color: "#6b7280", margin: 0 }}>
+              <p
+                data-testid="backlinks-empty"
+                style={{ color: "#6b7280", margin: 0 }}
+              >
                 No incoming links to this document.
               </p>
             ) : (
@@ -735,10 +776,15 @@ export function Layout() {
                 style={{ listStyle: "none", margin: 0, padding: 0 }}
               >
                 {incomingBacklinks.map((backlink) => (
-                  <li key={backlink.sourceDocumentId} style={{ marginBottom: "0.75rem" }}>
+                  <li
+                    key={backlink.sourceDocumentId}
+                    style={{ marginBottom: "0.75rem" }}
+                  >
                     <button
                       data-testid={`backlink-item-${backlink.sourceDocumentId}`}
-                      onClick={() => handleBacklinkSelect(backlink.sourceDocumentId)}
+                      onClick={() =>
+                        handleBacklinkSelect(backlink.sourceDocumentId)
+                      }
                       style={{
                         background: "transparent",
                         border: "none",
@@ -755,7 +801,11 @@ export function Layout() {
                     </button>
                     <p
                       data-testid={`backlink-snippet-${backlink.sourceDocumentId}`}
-                      style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0.2rem 0 0" }}
+                      style={{
+                        color: "#6b7280",
+                        fontSize: "0.8rem",
+                        margin: "0.2rem 0 0",
+                      }}
                     >
                       {backlink.snippet}
                     </p>

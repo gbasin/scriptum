@@ -4,8 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthService, AuthSession } from "../lib/auth";
-import { createAuthStore, type AuthStore } from "../store/auth";
-import { useAuth, type UseAuthOptions, type UseAuthResult } from "./useAuth";
+import { type AuthStore, createAuthStore } from "../store/auth";
+import { type UseAuthOptions, type UseAuthResult, useAuth } from "./useAuth";
 
 declare global {
   // eslint-disable-next-line no-var

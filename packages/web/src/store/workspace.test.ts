@@ -28,10 +28,9 @@ describe("workspace store", () => {
     const store = createWorkspaceStore();
 
     store.getState().setWorkspaces([WORKSPACE_ALPHA, WORKSPACE_BETA]);
-    expect(store.getState().workspaces.map((workspace) => workspace.id)).toEqual([
-      WORKSPACE_ALPHA.id,
-      WORKSPACE_BETA.id,
-    ]);
+    expect(
+      store.getState().workspaces.map((workspace) => workspace.id),
+    ).toEqual([WORKSPACE_ALPHA.id, WORKSPACE_BETA.id]);
     expect(store.getState().activeWorkspaceId).toBe(WORKSPACE_ALPHA.id);
     expect(store.getState().activeWorkspace?.id).toBe(WORKSPACE_ALPHA.id);
 
@@ -56,10 +55,9 @@ describe("workspace store", () => {
       workspaceMeta.set("activeWorkspaceId", WORKSPACE_BETA.id);
     });
 
-    expect(store.getState().workspaces.map((workspace) => workspace.id)).toEqual([
-      WORKSPACE_ALPHA.id,
-      WORKSPACE_BETA.id,
-    ]);
+    expect(
+      store.getState().workspaces.map((workspace) => workspace.id),
+    ).toEqual([WORKSPACE_ALPHA.id, WORKSPACE_BETA.id]);
     expect(store.getState().activeWorkspaceId).toBe(WORKSPACE_BETA.id);
 
     doc.transact(() => {
@@ -75,10 +73,9 @@ describe("workspace store", () => {
       workspaceMeta.set("activeWorkspaceId", null);
     });
 
-    expect(store.getState().workspaces.map((workspace) => workspace.id)).toEqual([
-      WORKSPACE_ALPHA.id,
-    ]);
+    expect(
+      store.getState().workspaces.map((workspace) => workspace.id),
+    ).toEqual([WORKSPACE_ALPHA.id]);
     expect(store.getState().activeWorkspaceId).toBe(WORKSPACE_ALPHA.id);
   });
 });
-

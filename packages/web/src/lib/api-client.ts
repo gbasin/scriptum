@@ -106,7 +106,9 @@ interface RequestOptions {
 }
 
 interface ApiClient {
-  listWorkspaces: (options?: ListWorkspacesOptions) => Promise<PagedResult<Workspace>>;
+  listWorkspaces: (
+    options?: ListWorkspacesOptions,
+  ) => Promise<PagedResult<Workspace>>;
   listDocuments: (
     workspaceId: string,
     options?: ListDocumentsOptions,
@@ -153,7 +155,10 @@ function asRecord(value: unknown): UnknownRecord | null {
   return value as UnknownRecord;
 }
 
-function readString(record: UnknownRecord | null, keys: readonly string[]): string | null {
+function readString(
+  record: UnknownRecord | null,
+  keys: readonly string[],
+): string | null {
   if (!record) {
     return null;
   }
@@ -188,7 +193,10 @@ function readNullableString(
   return undefined;
 }
 
-function readNumber(record: UnknownRecord | null, keys: readonly string[]): number | null {
+function readNumber(
+  record: UnknownRecord | null,
+  keys: readonly string[],
+): number | null {
   if (!record) {
     return null;
   }
@@ -201,7 +209,10 @@ function readNumber(record: UnknownRecord | null, keys: readonly string[]): numb
   return null;
 }
 
-function readBoolean(record: UnknownRecord | null, keys: readonly string[]): boolean | null {
+function readBoolean(
+  record: UnknownRecord | null,
+  keys: readonly string[],
+): boolean | null {
   if (!record) {
     return null;
   }
@@ -214,7 +225,10 @@ function readBoolean(record: UnknownRecord | null, keys: readonly string[]): boo
   return null;
 }
 
-function readArray<T = unknown>(record: UnknownRecord | null, keys: readonly string[]): T[] {
+function readArray<T = unknown>(
+  record: UnknownRecord | null,
+  keys: readonly string[],
+): T[] {
   if (!record) {
     return [];
   }
@@ -271,7 +285,9 @@ function mapDocument(value: unknown): Document {
     ]),
     path: requireString("document", record, ["path"]),
     title: requireString("document", record, ["title"]),
-    ...(readString(record, ["bodyMd", "body_md"]) ? { bodyMd: readString(record, ["bodyMd", "body_md"])! } : {}),
+    ...(readString(record, ["bodyMd", "body_md"])
+      ? { bodyMd: readString(record, ["bodyMd", "body_md"])! }
+      : {}),
     tags,
     headSeq:
       readNumber(record, ["headSeq", "head_seq"]) ??
@@ -281,8 +297,7 @@ function mapDocument(value: unknown): Document {
     etag: requireString("document", record, ["etag"]),
     archivedAt:
       readNullableString(record, ["archivedAt", "archived_at"]) ?? null,
-    deletedAt:
-      readNullableString(record, ["deletedAt", "deleted_at"]) ?? null,
+    deletedAt: readNullableString(record, ["deletedAt", "deleted_at"]) ?? null,
     createdAt: requireString("document", record, ["createdAt", "created_at"]),
     updatedAt: requireString("document", record, ["updatedAt", "updated_at"]),
   };
@@ -380,7 +395,10 @@ function mapCommentMessage(value: unknown): CommentMessage {
   };
 }
 
-function mapPaged<T>(value: unknown, mapItem: (raw: unknown) => T): PagedResult<T> {
+function mapPaged<T>(
+  value: unknown,
+  mapItem: (raw: unknown) => T,
+): PagedResult<T> {
   const record = asRecord(value);
   const items = readArray(record, ["items"]).map((item) => mapItem(item));
   const nextCursor = readString(record, ["nextCursor", "next_cursor"]);
@@ -462,7 +480,10 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   const createIdempotencyKey =
     options.createIdempotencyKey ?? (() => crypto.randomUUID());
 
-  const request = async <T>(path: string, requestOptions: RequestOptions = {}): Promise<T> => {
+  const request = async <T>(
+    path: string,
+    requestOptions: RequestOptions = {},
+  ): Promise<T> => {
     const method = requestOptions.method ?? "GET";
     const url = createUrl(baseUrl, path, requestOptions.query);
     const headers = new Headers(requestOptions.headers);
@@ -512,7 +533,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     listWorkspaces: async (listOptions = {}) => {
       const payload = await request<unknown>("/v1/workspaces", {
         query: {
-          ...(listOptions.limit !== undefined ? { limit: listOptions.limit } : {}),
+          ...(listOptions.limit !== undefined
+            ? { limit: listOptions.limit }
+            : {}),
           ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
         },
       });
@@ -524,7 +547,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         `/v1/workspaces/${encodeURIComponent(workspaceId)}/documents`,
         {
           query: {
-            ...(listOptions.limit !== undefined ? { limit: listOptions.limit } : {}),
+            ...(listOptions.limit !== undefined
+              ? { limit: listOptions.limit }
+              : {}),
             ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
             ...(listOptions.pathPrefix
               ? { path_prefix: listOptions.pathPrefix }
@@ -564,7 +589,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       return {
         document,
         ...(contentMd ? { contentMd } : {}),
-        ...(sectionsRaw.length > 0 ? { sections: sectionsRaw.map(mapSection) } : {}),
+        ...(sectionsRaw.length > 0
+          ? { sections: sectionsRaw.map(mapSection) }
+          : {}),
       };
     },
 
@@ -702,7 +729,12 @@ export async function updateDocument(
   input: UpdateDocumentInput,
   options: { etag: string },
 ): Promise<Document> {
-  return getDefaultClient().updateDocument(workspaceId, documentId, input, options);
+  return getDefaultClient().updateDocument(
+    workspaceId,
+    documentId,
+    input,
+    options,
+  );
 }
 
 export async function createComment(
@@ -726,7 +758,11 @@ export async function resolveCommentThread(
   threadId: string,
   ifVersion: number,
 ): Promise<CommentThread> {
-  return getDefaultClient().resolveCommentThread(workspaceId, threadId, ifVersion);
+  return getDefaultClient().resolveCommentThread(
+    workspaceId,
+    threadId,
+    ifVersion,
+  );
 }
 
 export async function reopenCommentThread(
@@ -734,5 +770,9 @@ export async function reopenCommentThread(
   threadId: string,
   ifVersion: number,
 ): Promise<CommentThread> {
-  return getDefaultClient().reopenCommentThread(workspaceId, threadId, ifVersion);
+  return getDefaultClient().reopenCommentThread(
+    workspaceId,
+    threadId,
+    ifVersion,
+  );
 }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ComponentProps } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OfflineBanner } from "./OfflineBanner";
@@ -26,7 +26,8 @@ function renderOfflineBanner(props: ComponentProps<typeof OfflineBanner>) {
 
   return {
     container,
-    rerender: (nextProps: ComponentProps<typeof OfflineBanner>) => render(nextProps),
+    rerender: (nextProps: ComponentProps<typeof OfflineBanner>) =>
+      render(nextProps),
     unmount: () => {
       act(() => {
         root.unmount();
@@ -56,7 +57,7 @@ describe("OfflineBanner", () => {
       "You are offline — changes will sync when reconnected.",
     );
     expect(
-      harness.container.querySelector("[data-testid=\"offline-banner-dismiss\"]"),
+      harness.container.querySelector('[data-testid="offline-banner-dismiss"]'),
     ).not.toBeNull();
 
     harness.unmount();
@@ -68,9 +69,11 @@ describe("OfflineBanner", () => {
       reconnectProgress: { syncedUpdates: 847, totalUpdates: 1203 },
     });
 
-    expect(harness.container.textContent).toContain("Syncing... 847/1,203 updates");
+    expect(harness.container.textContent).toContain(
+      "Syncing... 847/1,203 updates",
+    );
     expect(
-      harness.container.querySelector("[data-testid=\"offline-banner-dismiss\"]"),
+      harness.container.querySelector('[data-testid="offline-banner-dismiss"]'),
     ).toBeNull();
 
     harness.unmount();
@@ -83,7 +86,7 @@ describe("OfflineBanner", () => {
     });
 
     expect(
-      harness.container.querySelector("[data-testid=\"offline-banner-message\"]"),
+      harness.container.querySelector('[data-testid="offline-banner-message"]'),
     ).toBeNull();
 
     harness.unmount();
@@ -98,7 +101,7 @@ describe("OfflineBanner", () => {
     });
 
     const dismissButton = harness.container.querySelector(
-      "[data-testid=\"offline-banner-dismiss\"]",
+      '[data-testid="offline-banner-dismiss"]',
     ) as HTMLButtonElement | null;
     expect(dismissButton).not.toBeNull();
 
@@ -107,7 +110,7 @@ describe("OfflineBanner", () => {
     });
 
     expect(
-      harness.container.querySelector("[data-testid=\"offline-banner-message\"]"),
+      harness.container.querySelector('[data-testid="offline-banner-message"]'),
     ).toBeNull();
 
     act(() => {

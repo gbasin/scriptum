@@ -1,9 +1,6 @@
 import type { CommentMessage, CommentThread } from "@scriptum/shared";
 import { useEffect, useState } from "react";
-import {
-  createComment,
-  type CreateCommentInput,
-} from "../../lib/api-client";
+import { type CreateCommentInput, createComment } from "../../lib/api-client";
 import { ThreadList } from "./ThreadList";
 
 export interface InlineCommentSelection {
@@ -191,7 +188,10 @@ export function CommentPopover({
                   if (!current) {
                     return current;
                   }
-                  const next = { ...current, messages: [...current.messages, message] };
+                  const next = {
+                    ...current,
+                    messages: [...current.messages, message],
+                  };
                   onThreadChange?.(next);
                   return next;
                 });
@@ -214,14 +214,25 @@ export function CommentPopover({
                 id="inline-comment-input"
                 onChange={(event) => setPendingBody(event.target.value)}
                 rows={3}
-                style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
+                style={{
+                  display: "block",
+                  marginTop: "0.25rem",
+                  width: "100%",
+                }}
                 value={pendingBody}
               />
             </>
           )}
 
           {errorMessage ? (
-            <p data-testid="comment-popover-error" style={{ color: "#b91c1c", fontSize: "0.75rem", margin: "0.5rem 0 0" }}>
+            <p
+              data-testid="comment-popover-error"
+              style={{
+                color: "#b91c1c",
+                fontSize: "0.75rem",
+                margin: "0.5rem 0 0",
+              }}
+            >
               {errorMessage}
             </p>
           ) : null}

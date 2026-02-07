@@ -1,6 +1,6 @@
 import type { Document } from "@scriptum/shared";
+import type * as Y from "yjs";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
-import * as Y from "yjs";
 
 const DEFAULT_DOCUMENTS_ARRAY_NAME = "documents";
 const DEFAULT_OPEN_DOCUMENT_IDS_ARRAY_NAME = "openDocumentIds";
@@ -24,7 +24,7 @@ export interface DocumentsStoreState extends ResolvedDocumentsSnapshot {
   reset: () => void;
   setActiveDocumentForWorkspace: (
     workspaceId: string,
-    documentId: string | null
+    documentId: string | null,
   ) => void;
   setDocuments: (documents: Document[]) => void;
   setOpenDocumentIds: (documentIds: string[]) => void;
@@ -95,12 +95,12 @@ function normalizeDocument(value: unknown): Document | null {
     !workspaceId ||
     !path ||
     !title ||
-    bodyMdValue !== undefined && typeof bodyMdValue !== "string" ||
+    (bodyMdValue !== undefined && typeof bodyMdValue !== "string") ||
     !tags ||
     headSeq === null ||
     !etag ||
-    archivedAt === null && document.archivedAt !== null ||
-    deletedAt === null && document.deletedAt !== null ||
+    (archivedAt === null && document.archivedAt !== null) ||
+    (deletedAt === null && document.deletedAt !== null) ||
     !createdAt ||
     !updatedAt
   ) {
@@ -142,7 +142,7 @@ function normalizeDocuments(values: readonly unknown[]): Document[] {
 
 function normalizeOpenDocumentIds(
   values: readonly unknown[],
-  documentsById: Map<string, Document>
+  documentsById: Map<string, Document>,
 ): string[] {
   const openDocumentIds: string[] = [];
   const seenOpenDocumentIds = new Set<string>();
@@ -164,7 +164,7 @@ function normalizeOpenDocumentIds(
 
 function normalizeActiveDocumentIdByWorkspace(
   value: Record<string, unknown>,
-  documentsById: Map<string, Document>
+  documentsById: Map<string, Document>,
 ): Record<string, string | null> {
   const activeDocumentIdByWorkspace: Record<string, string | null> = {};
 
@@ -191,17 +191,19 @@ function normalizeActiveDocumentIdByWorkspace(
 }
 
 function resolveDocumentsSnapshot(
-  snapshot: DocumentsSnapshot
+  snapshot: DocumentsSnapshot,
 ): ResolvedDocumentsSnapshot {
   const documents = snapshot.documents.slice();
-  const documentsById = new Map(documents.map((document) => [document.id, document]));
+  const documentsById = new Map(
+    documents.map((document) => [document.id, document]),
+  );
   const openDocumentIds = normalizeOpenDocumentIds(
     snapshot.openDocumentIds,
-    documentsById
+    documentsById,
   );
   const activeDocumentIdByWorkspace = normalizeActiveDocumentIdByWorkspace(
     snapshot.activeDocumentIdByWorkspace,
-    documentsById
+    documentsById,
   );
   const openDocumentIdsByWorkspace = new Map<string, string[]>();
 
@@ -214,12 +216,21 @@ function resolveDocumentsSnapshot(
     const workspaceOpenDocumentIds =
       openDocumentIdsByWorkspace.get(document.workspaceId) ?? [];
     workspaceOpenDocumentIds.push(document.id);
-    openDocumentIdsByWorkspace.set(document.workspaceId, workspaceOpenDocumentIds);
+    openDocumentIdsByWorkspace.set(
+      document.workspaceId,
+      workspaceOpenDocumentIds,
+    );
   }
 
-  for (const [workspaceId, workspaceOpenDocumentIds] of openDocumentIdsByWorkspace) {
+  for (const [
+    workspaceId,
+    workspaceOpenDocumentIds,
+  ] of openDocumentIdsByWorkspace) {
     const activeDocumentId = activeDocumentIdByWorkspace[workspaceId];
-    if (!activeDocumentId || !workspaceOpenDocumentIds.includes(activeDocumentId)) {
+    if (
+      !activeDocumentId ||
+      !workspaceOpenDocumentIds.includes(activeDocumentId)
+    ) {
       activeDocumentIdByWorkspace[workspaceId] =
         workspaceOpenDocumentIds[0] ?? null;
     }
@@ -238,7 +249,7 @@ function resolveDocumentsSnapshot(
 }
 
 export function createDocumentsStore(
-  initial: Partial<DocumentsSnapshot> = {}
+  initial: Partial<DocumentsSnapshot> = {},
 ): DocumentsStore {
   return create<DocumentsStoreState>()((set, get) => ({
     ...resolveDocumentsSnapshot({
@@ -253,18 +264,18 @@ export function createDocumentsStore(
           documents,
           openDocumentIds: previous.openDocumentIds,
           activeDocumentIdByWorkspace: previous.activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     upsertDocument: (document) => {
       const previous = get();
       const index = previous.documents.findIndex(
-        (candidate) => candidate.id === document.id
+        (candidate) => candidate.id === document.id,
       );
       const documents =
         index >= 0
           ? previous.documents.map((candidate) =>
-              candidate.id === document.id ? document : candidate
+              candidate.id === document.id ? document : candidate,
             )
           : [...previous.documents, document];
 
@@ -273,20 +284,22 @@ export function createDocumentsStore(
           documents,
           openDocumentIds: previous.openDocumentIds,
           activeDocumentIdByWorkspace: previous.activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     removeDocument: (documentId) => {
       const previous = get();
       const documents = previous.documents.filter(
-        (candidate) => candidate.id !== documentId
+        (candidate) => candidate.id !== documentId,
       );
       set(
         resolveDocumentsSnapshot({
           documents,
-          openDocumentIds: previous.openDocumentIds.filter((id) => id !== documentId),
+          openDocumentIds: previous.openDocumentIds.filter(
+            (id) => id !== documentId,
+          ),
           activeDocumentIdByWorkspace: previous.activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     setOpenDocumentIds: (documentIds) => {
@@ -296,13 +309,13 @@ export function createDocumentsStore(
           documents: previous.documents,
           openDocumentIds: documentIds,
           activeDocumentIdByWorkspace: previous.activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     openDocument: (documentId) => {
       const previous = get();
       const document = previous.documents.find(
-        (candidate) => candidate.id === documentId
+        (candidate) => candidate.id === documentId,
       );
       if (!document) {
         return;
@@ -321,13 +334,13 @@ export function createDocumentsStore(
           documents: previous.documents,
           openDocumentIds,
           activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     closeDocument: (documentId) => {
       const previous = get();
       const openDocumentIds = previous.openDocumentIds.filter(
-        (openDocumentId) => openDocumentId !== documentId
+        (openDocumentId) => openDocumentId !== documentId,
       );
 
       set(
@@ -335,7 +348,7 @@ export function createDocumentsStore(
           documents: previous.documents,
           openDocumentIds,
           activeDocumentIdByWorkspace: previous.activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     setActiveDocumentForWorkspace: (workspaceId, documentId) => {
@@ -355,7 +368,7 @@ export function createDocumentsStore(
           documents: previous.documents,
           openDocumentIds,
           activeDocumentIdByWorkspace,
-        })
+        }),
       );
     },
     reset: () =>
@@ -364,7 +377,7 @@ export function createDocumentsStore(
           documents: [],
           openDocumentIds: [],
           activeDocumentIdByWorkspace: {},
-        })
+        }),
       ),
   }));
 }
@@ -373,32 +386,32 @@ export const useDocumentsStore = createDocumentsStore();
 
 export function bindDocumentsStoreToYjs(
   doc: Y.Doc,
-  options: DocumentsYjsBindingOptions = {}
+  options: DocumentsYjsBindingOptions = {},
 ): () => void {
   const store = options.store ?? useDocumentsStore;
   const documentsArray = doc.getArray<unknown>(
-    options.documentsArrayName ?? DEFAULT_DOCUMENTS_ARRAY_NAME
+    options.documentsArrayName ?? DEFAULT_DOCUMENTS_ARRAY_NAME,
   );
   const openDocumentIdsArray = doc.getArray<unknown>(
-    options.openDocumentIdsArrayName ?? DEFAULT_OPEN_DOCUMENT_IDS_ARRAY_NAME
+    options.openDocumentIdsArrayName ?? DEFAULT_OPEN_DOCUMENT_IDS_ARRAY_NAME,
   );
   const activeDocumentByWorkspace = doc.getMap<unknown>(
     options.activeDocumentByWorkspaceMapName ??
-      DEFAULT_ACTIVE_DOCUMENT_BY_WORKSPACE_MAP_NAME
+      DEFAULT_ACTIVE_DOCUMENT_BY_WORKSPACE_MAP_NAME,
   );
 
   const syncFromYjs = () => {
     const documents = normalizeDocuments(documentsArray.toArray());
     const documentsById = new Map(
-      documents.map((document) => [document.id, document])
+      documents.map((document) => [document.id, document]),
     );
     const openDocumentIds = normalizeOpenDocumentIds(
       openDocumentIdsArray.toArray(),
-      documentsById
+      documentsById,
     );
     const activeDocumentIdByWorkspace = normalizeActiveDocumentIdByWorkspace(
       Object.fromEntries(activeDocumentByWorkspace.entries()),
-      documentsById
+      documentsById,
     );
 
     store.setState(
@@ -406,7 +419,7 @@ export function bindDocumentsStoreToYjs(
         documents,
         openDocumentIds,
         activeDocumentIdByWorkspace,
-      })
+      }),
     );
   };
 

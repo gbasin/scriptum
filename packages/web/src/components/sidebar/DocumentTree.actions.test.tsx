@@ -39,7 +39,8 @@ afterEach(() => {
 describe("DocumentTree workspace actions", () => {
   it("starts inline rename from context menu and commits with Enter", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-    const onRenameDocument = vi.fn<(documentId: string, nextPath: string) => void>();
+    const onRenameDocument =
+      vi.fn<(documentId: string, nextPath: string) => void>();
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);

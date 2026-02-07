@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuthApi, AuthSession } from "./auth";
-import { AuthFlowError, createAuthService } from "./auth";
 import { MockLocalStorage } from "../test/mock-local-storage";
+import type { AuthApi, AuthSession } from "./auth";
+import { type AuthFlowError, createAuthService } from "./auth";
 
 vi.mock("../auth/pkce", () => ({
   generateCodeVerifier: () => "test-code-verifier",
