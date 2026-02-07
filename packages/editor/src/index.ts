@@ -51,3 +51,24 @@ export {
   type SectionOverlapSection,
   type SectionOverlapSeverity,
 } from "./section/overlap-indicator";
+export {
+  leaseBadgeExtension,
+  leaseBadgeState,
+  LeaseBadgeWidget,
+  setLeases,
+  type LeaseBadgeData,
+} from "./section/lease-badge";
+export {
+  applySlashCommand,
+  slashCommandCompletions,
+  slashCommands,
+  slashCommandsExtension,
+} from "./slash-commands/extension";
+export {
+  createSlashCommandInsertion,
+  getSlashCommand,
+  listSlashCommands,
+  type SlashCommandDefinition,
+  type SlashCommandInsertion,
+  type SlashCommandName,
+} from "./slash-commands/commands";
