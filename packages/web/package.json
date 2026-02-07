@@ -27,7 +27,7 @@
     "zustand": "latest"
   },
   "devDependencies": {
-    "@playwright/test": "latest",
+    "@playwright/test": "1.57.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
