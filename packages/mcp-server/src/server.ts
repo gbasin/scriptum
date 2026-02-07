@@ -6,7 +6,6 @@ import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
 import { createDaemonClient, type DaemonClient } from "./daemon-client";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
-const DEFAULT_STATUS_CHANGE_TOKEN = "bootstrap";
 const SERVER_INFO: Implementation = {
   name: "scriptum-mcp-server",
   version: "0.0.0",
@@ -43,6 +42,24 @@ const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     rpcMethod: "doc.sections",
     description:
       "List document section structure via daemon doc.sections. Forwards all tool arguments as JSON-RPC params.",
+  },
+  {
+    name: "scriptum_conflicts",
+    rpcMethod: "agent.conflicts",
+    description:
+      "List active section conflicts via daemon agent.conflicts. Forwards all tool arguments as JSON-RPC params.",
+  },
+  {
+    name: "scriptum_history",
+    rpcMethod: "doc.diff",
+    description:
+      "Show document diff/history via daemon doc.diff. Forwards all tool arguments as JSON-RPC params.",
+  },
+  {
+    name: "scriptum_agents",
+    rpcMethod: "agent.list",
+    description:
+      "List active agents in the workspace via daemon agent.list. Forwards all tool arguments as JSON-RPC params.",
   },
 ];
 
@@ -128,14 +145,15 @@ function registerToolHandlers(
     "scriptum_status",
     {
       description:
-        "Scaffold status tool. Returns agent identity and placeholder change token.",
-      inputSchema: {},
+        "Return agent status including identity, sync state, and change token via daemon agent.status.",
+      inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
     },
-    async () => {
-      const payload = {
+    async (toolArgs) => {
+      const rpcParams = {
+        ...toToolPayload(toolArgs),
         agent_name: resolveAgentName(),
-        change_token: DEFAULT_STATUS_CHANGE_TOKEN,
       };
+      const payload = await daemonClient.request("agent.status", rpcParams);
 
       return makeToolResult(payload);
     },

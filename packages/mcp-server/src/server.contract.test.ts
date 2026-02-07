@@ -6,10 +6,14 @@ import type { DaemonClient } from "./daemon-client";
 import { createServer } from "./server";
 
 const MCP_TO_DAEMON_CONTRACT: Record<string, string> = {
+  scriptum_status: "agent.status",
   scriptum_read: "doc.read",
   scriptum_edit: "doc.edit",
   scriptum_list: "doc.tree",
   scriptum_tree: "doc.sections",
+  scriptum_conflicts: "agent.conflicts",
+  scriptum_history: "doc.diff",
+  scriptum_agents: "agent.list",
 };
 
 describe("mcp tool contract", () => {
@@ -35,7 +39,10 @@ describe("mcp tool contract", () => {
       const names = tools.tools.map((tool) => tool.name).sort();
 
       expect(names).toEqual([
+        "scriptum_agents",
+        "scriptum_conflicts",
         "scriptum_edit",
+        "scriptum_history",
         "scriptum_list",
         "scriptum_read",
         "scriptum_status",
@@ -71,6 +78,10 @@ describe("mcp tool contract", () => {
       await client.connect(clientTransport);
 
       await client.callTool({
+        name: "scriptum_status",
+        arguments: {},
+      });
+      await client.callTool({
         name: "scriptum_read",
         arguments: { workspace_id: "ws", doc_id: "doc", include_content: true },
       });
@@ -91,12 +102,28 @@ describe("mcp tool contract", () => {
         name: "scriptum_tree",
         arguments: { workspace_id: "ws", doc_id: "doc" },
       });
+      await client.callTool({
+        name: "scriptum_conflicts",
+        arguments: { workspace_id: "ws" },
+      });
+      await client.callTool({
+        name: "scriptum_history",
+        arguments: { workspace_id: "ws", doc_id: "doc" },
+      });
+      await client.callTool({
+        name: "scriptum_agents",
+        arguments: { workspace_id: "ws" },
+      });
 
       expect(calls.map((call) => call.method)).toEqual([
+        MCP_TO_DAEMON_CONTRACT.scriptum_status,
         MCP_TO_DAEMON_CONTRACT.scriptum_read,
         MCP_TO_DAEMON_CONTRACT.scriptum_edit,
         MCP_TO_DAEMON_CONTRACT.scriptum_list,
         MCP_TO_DAEMON_CONTRACT.scriptum_tree,
+        MCP_TO_DAEMON_CONTRACT.scriptum_conflicts,
+        MCP_TO_DAEMON_CONTRACT.scriptum_history,
+        MCP_TO_DAEMON_CONTRACT.scriptum_agents,
       ]);
     } finally {
       await client.close();

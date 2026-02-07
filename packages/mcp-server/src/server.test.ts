@@ -39,21 +39,15 @@ describe("mcp server scaffold", () => {
       await client.connect(clientTransport);
 
       const toolList = await client.listTools();
-      expect(toolList.tools.some((tool) => tool.name === "scriptum_status")).toBe(
-        true,
-      );
-      expect(toolList.tools.some((tool) => tool.name === "scriptum_read")).toBe(
-        true,
-      );
-      expect(toolList.tools.some((tool) => tool.name === "scriptum_edit")).toBe(
-        true,
-      );
-      expect(toolList.tools.some((tool) => tool.name === "scriptum_list")).toBe(
-        true,
-      );
-      expect(toolList.tools.some((tool) => tool.name === "scriptum_tree")).toBe(
-        true,
-      );
+      const toolNames = toolList.tools.map((tool) => tool.name).sort();
+      expect(toolNames).toContain("scriptum_status");
+      expect(toolNames).toContain("scriptum_read");
+      expect(toolNames).toContain("scriptum_edit");
+      expect(toolNames).toContain("scriptum_list");
+      expect(toolNames).toContain("scriptum_tree");
+      expect(toolNames).toContain("scriptum_conflicts");
+      expect(toolNames).toContain("scriptum_history");
+      expect(toolNames).toContain("scriptum_agents");
 
       const resourceList = await client.listResources();
       expect(
@@ -66,20 +60,12 @@ describe("mcp server scaffold", () => {
         name: "scriptum_status",
         arguments: {},
       });
-      if (!("content" in toolResult)) {
-        throw new Error("Expected content in scriptum_status response");
-      }
-
-      const firstContent = toolResult.content.at(0);
-      if (!firstContent || firstContent.type !== "text") {
-        throw new Error("Expected text content from scriptum_status response");
-      }
-      const statusPayload = JSON.parse(firstContent.text) as {
-        agent_name: string;
-        change_token: string;
+      const statusPayload = readToolTextPayload(toolResult) as {
+        forwarded_method: string;
+        forwarded_params: Record<string, unknown>;
       };
-      expect(statusPayload.agent_name).toBe("cursor");
-      expect(statusPayload.change_token).toBe("bootstrap");
+      expect(statusPayload.forwarded_method).toBe("agent.status");
+      expect(statusPayload.forwarded_params.agent_name).toBe("cursor");
 
       const readToolResult = await client.callTool({
         name: "scriptum_read",
@@ -134,7 +120,41 @@ describe("mcp server scaffold", () => {
         forwarded_method: string;
       };
       expect(treePayload.forwarded_method).toBe("doc.sections");
+
+      const conflictsToolResult = await client.callTool({
+        name: "scriptum_conflicts",
+        arguments: { workspace_id: "ws-1" },
+      });
+      const conflictsPayload = readToolTextPayload(conflictsToolResult) as {
+        forwarded_method: string;
+      };
+      expect(conflictsPayload.forwarded_method).toBe("agent.conflicts");
+
+      const historyToolResult = await client.callTool({
+        name: "scriptum_history",
+        arguments: { workspace_id: "ws-1", doc_id: "doc-1", from_seq: 0 },
+      });
+      const historyPayload = readToolTextPayload(historyToolResult) as {
+        forwarded_method: string;
+      };
+      expect(historyPayload.forwarded_method).toBe("doc.diff");
+
+      const agentsToolResult = await client.callTool({
+        name: "scriptum_agents",
+        arguments: { workspace_id: "ws-1" },
+      });
+      const agentsToolPayload = readToolTextPayload(agentsToolResult) as {
+        forwarded_method: string;
+      };
+      expect(agentsToolPayload.forwarded_method).toBe("agent.list");
+
       expect(daemonCalls).toEqual([
+        {
+          method: "agent.status",
+          params: {
+            agent_name: "cursor",
+          },
+        },
         {
           method: "doc.read",
           params: {
@@ -163,6 +183,26 @@ describe("mcp server scaffold", () => {
           params: {
             workspace_id: "ws-1",
             doc_id: "doc-1",
+          },
+        },
+        {
+          method: "agent.conflicts",
+          params: {
+            workspace_id: "ws-1",
+          },
+        },
+        {
+          method: "doc.diff",
+          params: {
+            workspace_id: "ws-1",
+            doc_id: "doc-1",
+            from_seq: 0,
+          },
+        },
+        {
+          method: "agent.list",
+          params: {
+            workspace_id: "ws-1",
           },
         },
       ]);
