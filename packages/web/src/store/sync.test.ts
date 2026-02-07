@@ -7,6 +7,7 @@ describe("sync store", () => {
     expect(store.getState().status).toBe("offline");
     expect(store.getState().lastSyncedAt).toBeNull();
     expect(store.getState().pendingChanges).toBe(0);
+    expect(store.getState().reconnectProgress).toBeNull();
     expect(store.getState().error).toBeNull();
     expect(store.getState().reconnectAttempt).toBe(0);
   });
@@ -72,16 +73,30 @@ describe("sync store", () => {
     expect(store.getState().pendingChanges).toBe(0);
   });
 
+  it("tracks reconnect progress", () => {
+    const store = createSyncStore();
+    store.getState().setReconnectProgress({ syncedUpdates: 847, totalUpdates: 1203 });
+    expect(store.getState().reconnectProgress).toEqual({
+      syncedUpdates: 847,
+      totalUpdates: 1203,
+    });
+
+    store.getState().setReconnectProgress(null);
+    expect(store.getState().reconnectProgress).toBeNull();
+  });
+
   it("resets to initial state", () => {
     const store = createSyncStore();
     store.getState().setOnline();
     store.getState().setLastSyncedAt("2026-01-15T10:00:00Z");
     store.getState().setPendingChanges(3);
+    store.getState().setReconnectProgress({ syncedUpdates: 1, totalUpdates: 5 });
 
     store.getState().reset();
     expect(store.getState().status).toBe("offline");
     expect(store.getState().lastSyncedAt).toBeNull();
     expect(store.getState().pendingChanges).toBe(0);
+    expect(store.getState().reconnectProgress).toBeNull();
     expect(store.getState().error).toBeNull();
     expect(store.getState().reconnectAttempt).toBe(0);
   });
@@ -107,6 +122,7 @@ describe("sync store", () => {
     expect(store.getState().reconnectAttempt).toBe(0);
     store.getState().setLastSyncedAt("2026-01-15T10:00:00Z");
     store.getState().setPendingChanges(2);
+    store.getState().setReconnectProgress({ syncedUpdates: 2, totalUpdates: 10 });
 
     // Disconnect
     store.getState().setOffline("server unreachable");
@@ -114,6 +130,7 @@ describe("sync store", () => {
     expect(store.getState().error).toBe("server unreachable");
     expect(store.getState().lastSyncedAt).toBe("2026-01-15T10:00:00Z");
     expect(store.getState().pendingChanges).toBe(2);
+    expect(store.getState().reconnectProgress).toBeNull();
   });
 
   it("accepts initial state overrides", () => {
@@ -121,9 +138,14 @@ describe("sync store", () => {
       status: "online",
       lastSyncedAt: "2026-01-01T00:00:00Z",
       pendingChanges: 7,
+      reconnectProgress: { syncedUpdates: 4, totalUpdates: 10 },
     });
     expect(store.getState().status).toBe("online");
     expect(store.getState().lastSyncedAt).toBe("2026-01-01T00:00:00Z");
     expect(store.getState().pendingChanges).toBe(7);
+    expect(store.getState().reconnectProgress).toEqual({
+      syncedUpdates: 4,
+      totalUpdates: 10,
+    });
   });
 });

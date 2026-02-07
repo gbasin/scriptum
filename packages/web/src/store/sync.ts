@@ -3,12 +3,19 @@ import { create, type StoreApi, type UseBoundStore } from "zustand";
 /** Connection status for the sync layer. */
 export type SyncStatus = "online" | "offline" | "reconnecting";
 
+export interface ReconnectProgress {
+  syncedUpdates: number;
+  totalUpdates: number;
+}
+
 interface SyncSnapshot {
   status: SyncStatus;
   /** ISO timestamp of last successful sync with relay. */
   lastSyncedAt: string | null;
   /** Number of pending local changes not yet confirmed by relay. */
   pendingChanges: number;
+  /** Optional progress details while reconnecting/syncing backlog. */
+  reconnectProgress: ReconnectProgress | null;
   /** Human-readable error message, if any. */
   error: string | null;
   /** Current reconnection attempt number (0 when connected). */
@@ -26,6 +33,8 @@ export interface SyncStoreState extends SyncSnapshot {
   setLastSyncedAt: (timestamp: string) => void;
   /** Update pending change count. */
   setPendingChanges: (count: number) => void;
+  /** Update reconnect progress details, or clear with null. */
+  setReconnectProgress: (progress: ReconnectProgress | null) => void;
   /** Full reset to initial offline state. */
   reset: () => void;
 }
@@ -36,6 +45,7 @@ const INITIAL_SNAPSHOT: SyncSnapshot = {
   status: "offline",
   lastSyncedAt: null,
   pendingChanges: 0,
+  reconnectProgress: null,
   error: null,
   reconnectAttempt: 0,
 };
@@ -59,6 +69,7 @@ export function createSyncStore(
         status: "offline",
         error: error ?? null,
         reconnectAttempt: 0,
+        reconnectProgress: null,
       });
     },
     setReconnecting: () => {
@@ -73,6 +84,9 @@ export function createSyncStore(
     },
     setPendingChanges: (count) => {
       set({ pendingChanges: count });
+    },
+    setReconnectProgress: (progress) => {
+      set({ reconnectProgress: progress });
     },
     reset: () => {
       set({ ...INITIAL_SNAPSHOT });
