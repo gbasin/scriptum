@@ -8,6 +8,7 @@ import {
   rewriteWikiReferencesForRename,
   type RenameBacklinkRewriteResult,
 } from "../lib/wiki-links";
+import { useToast } from "../hooks/useToast";
 import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore } from "../store/presence";
 import { useUiStore } from "../store/ui";
@@ -16,6 +17,7 @@ import { CommandPalette } from "./CommandPalette";
 import styles from "./Layout.module.css";
 import { Backlinks } from "./right-panel/Backlinks";
 import { Outline } from "./right-panel/Outline";
+import { ToastViewport } from "./ToastViewport";
 import { AgentsSection } from "./sidebar/AgentsSection";
 import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
 import {
@@ -86,13 +88,11 @@ export function Layout() {
   const commandPaletteOpen = useUiStore((state) => state.commandPaletteOpen);
   const openCommandPalette = useUiStore((state) => state.openCommandPalette);
   const closeCommandPalette = useUiStore((state) => state.closeCommandPalette);
+  const toast = useToast();
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [pendingRenameDocumentId, setPendingRenameDocumentId] = useState<
     string | null
   >(null);
-  const [renameBacklinkToast, setRenameBacklinkToast] = useState<string | null>(
-    null,
-  );
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
   const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(
@@ -231,20 +231,6 @@ export function Layout() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [createUntitledDocument, setSidebarPanel]);
 
-  useEffect(() => {
-    if (!renameBacklinkToast) {
-      return;
-    }
-
-    const timeoutId = globalThis.setTimeout(() => {
-      setRenameBacklinkToast(null);
-    }, 3000);
-
-    return () => {
-      globalThis.clearTimeout(timeoutId);
-    };
-  }, [renameBacklinkToast]);
-
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
     const now = new Date().toISOString();
@@ -261,6 +247,7 @@ export function Layout() {
 
     upsertWorkspace(workspace);
     setActiveWorkspaceId(workspace.id);
+    toast.success(`Created workspace "${workspace.name}".`);
   };
 
   const handleDocumentSelect = (documentId: string) => {
@@ -330,9 +317,7 @@ export function Layout() {
       });
     }
 
-    setRenameBacklinkToast(
-      formatRenameBacklinkToast(updatedLinks, updatedDocuments),
-    );
+    toast.success(formatRenameBacklinkToast(updatedLinks, updatedDocuments));
     setPendingRenameDocumentId(null);
   };
 
@@ -386,7 +371,16 @@ export function Layout() {
     if (action === "copy-link") {
       const link = `/workspace/${encodeURIComponent(document.workspaceId)}/document/${encodeURIComponent(document.id)}`;
       if (typeof navigator !== "undefined" && navigator.clipboard) {
-        void navigator.clipboard.writeText(link);
+        void navigator.clipboard
+          .writeText(link)
+          .then(() => {
+            toast.success("Copied document link.");
+          })
+          .catch(() => {
+            toast.error("Failed to copy document link.");
+          });
+      } else {
+        toast.error("Clipboard is unavailable in this environment.");
       }
       return;
     }
@@ -436,6 +430,7 @@ export function Layout() {
     const deletingActiveDocument = activeDocumentId === documentToDelete.id;
     removeDocument(documentToDelete.id);
     setPendingDeleteDocument(null);
+    toast.success(`Deleted "${documentToDelete.path}".`);
 
     if (
       !deletingActiveDocument ||
@@ -503,15 +498,6 @@ export function Layout() {
             onTagSelect={setActiveTag}
             tags={workspaceTags}
           />
-          {renameBacklinkToast ? (
-            <p
-              className={styles.renameBacklinkToast}
-              data-testid="rename-backlink-toast"
-              role="status"
-            >
-              {renameBacklinkToast}
-            </p>
-          ) : null}
           {searchPanelOpen ? (
             <SearchPanel
               loading={showPanelSkeletons}
@@ -719,6 +705,7 @@ export function Layout() {
           </AlertDialog.Popup>
         </AlertDialog.Portal>
       </AlertDialog.Root>
+      <ToastViewport />
     </div>
   );
 }
