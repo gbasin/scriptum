@@ -31,6 +31,7 @@ import {
   type HistoryViewMode,
   TimelineSlider,
 } from "../components/editor/TimelineSlider";
+import { DiffView } from "../components/history/DiffView";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { ShareDialog } from "../components/share/ShareDialog";
 import { SkeletonBlock } from "../components/Skeleton";
@@ -340,6 +341,35 @@ export function buildTimelineDiffSegments(
   }
 
   return segments;
+}
+
+export function authorshipMapFromTimelineEntry(
+  entry: TimelineSnapshotEntry,
+): Map<{ from: number; to: number }, string> {
+  const attribution = normalizedAttributionLength(entry);
+  const authorshipMap = new Map<{ from: number; to: number }, string>();
+  if (entry.content.length === 0 || attribution.length === 0) {
+    return authorshipMap;
+  }
+
+  let rangeStart = 0;
+  let currentAuthor = attribution[0] ?? LOCAL_TIMELINE_AUTHOR;
+
+  for (let index = 1; index <= entry.content.length; index += 1) {
+    const nextAuthor =
+      index < attribution.length ? attribution[index] : undefined;
+    if (nextAuthor?.id === currentAuthor.id) {
+      continue;
+    }
+
+    authorshipMap.set({ from: rangeStart, to: index }, currentAuthor.name);
+    if (nextAuthor) {
+      rangeStart = index;
+      currentAuthor = nextAuthor;
+    }
+  }
+
+  return authorshipMap;
 }
 
 function pluralizeFiles(count: number): string {
@@ -1562,32 +1592,10 @@ export function DocumentRoute() {
   const latestTimelineEntry =
     timelineEntries[timelineEntries.length - 1] ??
     createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
-  const timelineAuthorshipSegments = useMemo(
-    () => buildAuthorshipSegments(activeTimelineEntry),
+  const timelineAuthorshipMap = useMemo(
+    () => authorshipMapFromTimelineEntry(activeTimelineEntry),
     [activeTimelineEntry],
   );
-  const timelineDiffSegments = useMemo(
-    () =>
-      buildTimelineDiffSegments(
-        latestTimelineEntry.content,
-        activeTimelineEntry.content,
-      ),
-    [activeTimelineEntry.content, latestTimelineEntry.content],
-  );
-  const timelineHasDiff = useMemo(
-    () =>
-      timelineDiffSegments.some(
-        (segment) => segment.kind === "added" || segment.kind === "removed",
-      ),
-    [timelineDiffSegments],
-  );
-  const timelineLegendAuthors = useMemo(() => {
-    const authorsById = new Map<string, TimelineAuthor>();
-    timelineAuthorshipSegments.forEach((segment) => {
-      authorsById.set(segment.author.id, segment.author);
-    });
-    return Array.from(authorsById.values());
-  }, [timelineAuthorshipSegments]);
 
   return (
     <section aria-label="Document workspace">
@@ -2199,155 +2207,12 @@ export function DocumentRoute() {
           paddingTop: "0.5rem",
         }}
       >
-        {timelineViewMode === "authorship" ? (
-          <>
-            <h3 style={{ fontSize: "0.875rem", margin: "0 0 0.375rem" }}>
-              Author-colored highlights
-            </h3>
-            <p
-              style={{
-                color: "#4b5563",
-                fontSize: "0.75rem",
-                margin: "0 0 0.375rem",
-              }}
-            >
-              Scrub snapshots to inspect per-character attribution.
-            </p>
-            <div
-              data-testid="history-authorship-legend"
-              style={{
-                alignItems: "center",
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "0.375rem",
-                marginBottom: "0.375rem",
-              }}
-            >
-              {timelineLegendAuthors.map((author) => (
-                <span
-                  data-testid={`history-authorship-author-${author.id}`}
-                  key={author.id}
-                  style={{
-                    alignItems: "center",
-                    border: `1px solid ${author.color}66`,
-                    borderRadius: "9999px",
-                    color: author.color,
-                    display: "inline-flex",
-                    fontSize: "0.7rem",
-                    fontWeight: 700,
-                    gap: "0.25rem",
-                    padding: "0.1rem 0.4rem",
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      background: author.color,
-                      borderRadius: "9999px",
-                      display: "inline-block",
-                      height: "0.4rem",
-                      width: "0.4rem",
-                    }}
-                  />
-                  {author.name}
-                </span>
-              ))}
-            </div>
-            {timelineAuthorshipSegments.length === 0 ? (
-              <p data-testid="history-authorship-empty" style={{ margin: 0 }}>
-                No content yet.
-              </p>
-            ) : (
-              <pre
-                data-testid="history-authorship-preview"
-                style={{
-                  background: "#f8fafc",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: "0.375rem",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
-                  fontSize: "0.8rem",
-                  margin: 0,
-                  overflowX: "auto",
-                  padding: "0.5rem",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {timelineAuthorshipSegments.map((segment, index) => (
-                  <span
-                    data-testid={`history-authorship-segment-${index}`}
-                    key={`${segment.author.id}:${index}`}
-                    style={{ color: segment.author.color }}
-                  >
-                    {segment.text}
-                  </span>
-                ))}
-              </pre>
-            )}
-          </>
-        ) : (
-          <>
-            <h3 style={{ fontSize: "0.875rem", margin: "0 0 0.375rem" }}>
-              Diff from current
-            </h3>
-            <p
-              style={{
-                color: "#4b5563",
-                fontSize: "0.75rem",
-                margin: "0 0 0.375rem",
-              }}
-            >
-              Comparing the selected snapshot against the latest document state.
-            </p>
-            {!timelineHasDiff ? (
-              <p data-testid="history-diff-empty" style={{ margin: 0 }}>
-                Selected snapshot matches current version.
-              </p>
-            ) : (
-              <pre
-                data-testid="history-diff-preview"
-                style={{
-                  background: "#f8fafc",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: "0.375rem",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
-                  fontSize: "0.8rem",
-                  margin: 0,
-                  overflowX: "auto",
-                  padding: "0.5rem",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {timelineDiffSegments.map((segment, index) => (
-                  <span
-                    data-kind={segment.kind}
-                    data-testid={`history-diff-segment-${index}`}
-                    key={`${segment.kind}:${index}`}
-                    style={{
-                      background:
-                        segment.kind === "added"
-                          ? "#dcfce7"
-                          : segment.kind === "removed"
-                            ? "#fee2e2"
-                            : "transparent",
-                      color:
-                        segment.kind === "added"
-                          ? "#166534"
-                          : segment.kind === "removed"
-                            ? "#991b1b"
-                            : "#1f2937",
-                      textDecoration:
-                        segment.kind === "removed" ? "line-through" : "none",
-                    }}
-                  >
-                    {segment.text}
-                  </span>
-                ))}
-              </pre>
-            )}
-          </>
-        )}
+        <DiffView
+          authorshipMap={timelineAuthorshipMap}
+          currentContent={latestTimelineEntry.content}
+          historicalContent={activeTimelineEntry.content}
+          viewMode={timelineViewMode}
+        />
       </section>
       <TimelineSlider
         max={timelineEntries.length - 1}
