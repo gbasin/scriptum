@@ -22,7 +22,7 @@ import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
 import { TimelineSlider } from "../components/editor/TimelineSlider";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
-import type { PeerPresence } from "../store/presence";
+import { usePresenceStore, type PeerPresence } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
@@ -447,6 +447,7 @@ export function DocumentRoute() {
   const [syncState, setSyncState] = useState<ScriptumTestState["syncState"]>(
     fixtureModeEnabled ? fixtureState.syncState : "reconnecting"
   );
+  const setPresencePeers = usePresenceStore((state) => state.setPeers);
   const pendingChanges = useSyncStore((state) => state.pendingChanges);
   const [cursor, setCursor] = useState(fixtureState.cursor);
   const [daemonWsBaseUrl] = useState(DEFAULT_DAEMON_WS_BASE_URL);
@@ -512,6 +513,12 @@ export function DocumentRoute() {
       })),
     [currentDocumentPath, fixtureState.remotePeers]
   );
+  useEffect(() => {
+    setPresencePeers(presencePeers);
+    return () => {
+      setPresencePeers([]);
+    };
+  }, [presencePeers, setPresencePeers]);
   const overlapSummary = useMemo(() => {
     const bySection = new Map<string, typeof fixtureState.remotePeers>();
     for (const peer of fixtureState.remotePeers) {

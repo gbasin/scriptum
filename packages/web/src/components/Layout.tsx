@@ -1,6 +1,8 @@
 import type { Workspace } from "@scriptum/shared";
 import { Outlet } from "react-router-dom";
+import { usePresenceStore } from "../store/presence";
 import { useWorkspaceStore } from "../store/workspace";
+import { AgentsSection } from "./sidebar/AgentsSection";
 import { WorkspaceDropdown } from "./sidebar/WorkspaceDropdown";
 
 export function Layout() {
@@ -10,6 +12,7 @@ export function Layout() {
   );
   const upsertWorkspace = useWorkspaceStore((state) => state.upsertWorkspace);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
+  const remotePeers = usePresenceStore((state) => state.remotePeers);
 
   const handleCreateWorkspace = () => {
     const token = Date.now().toString(36);
@@ -49,6 +52,7 @@ export function Layout() {
           onWorkspaceSelect={setActiveWorkspaceId}
           workspaces={workspaces}
         />
+        <AgentsSection peers={remotePeers} />
         <h2 style={{ marginBottom: "0.25rem", marginTop: "1rem" }}>Sidebar</h2>
         <p>Navigation and context panels.</p>
       </aside>
