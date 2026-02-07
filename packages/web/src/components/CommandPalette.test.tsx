@@ -83,6 +83,18 @@ describe("buildCommandPaletteItems", () => {
       true,
     );
     expect(items.some((item) => item.id === "command:settings")).toBe(true);
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        id: "command:new-document",
+        subtitle: "Shortcut: Cmd+N",
+      }),
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        id: "command:open-search",
+        subtitle: "Shortcut: Cmd+Shift+F",
+      }),
+    );
   });
 });
 
@@ -210,6 +222,63 @@ describe("CommandPalette", () => {
 
     expect(onCreateWorkspace).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[data-testid="command-palette"]')).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("executes shortcut command entries for new document and search panel", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const onCreateDocument = vi.fn<() => void>();
+    const onOpenSearchPanel = vi.fn<() => void>();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <CommandPalette
+            activeWorkspaceId="ws-1"
+            documents={[]}
+            onCreateDocument={onCreateDocument}
+            onCreateWorkspace={() => undefined}
+            onOpenSearchPanel={onOpenSearchPanel}
+            openDocumentIds={[]}
+            workspaces={[makeWorkspace("ws-1", "Alpha")]}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const trigger = container.querySelector(
+      '[data-testid="command-palette-trigger"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      trigger?.click();
+    });
+
+    const newDocumentCommand = document.querySelector(
+      '[data-testid="command-palette-item-command:new-document"]',
+    ) as HTMLElement | null;
+    expect(newDocumentCommand).not.toBeNull();
+    act(() => {
+      newDocumentCommand?.click();
+    });
+    expect(onCreateDocument).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      trigger?.click();
+    });
+    const openSearchCommand = document.querySelector(
+      '[data-testid="command-palette-item-command:open-search"]',
+    ) as HTMLElement | null;
+    expect(openSearchCommand).not.toBeNull();
+    act(() => {
+      openSearchCommand?.click();
+    });
+    expect(onOpenSearchPanel).toHaveBeenCalledTimes(1);
 
     act(() => {
       root.unmount();

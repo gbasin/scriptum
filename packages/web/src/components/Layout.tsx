@@ -706,7 +706,9 @@ export function Layout() {
         <CommandPalette
           activeWorkspaceId={activeWorkspaceId}
           documents={documents}
+          onCreateDocument={createUntitledDocument}
           onCreateWorkspace={handleCreateWorkspace}
+          onOpenSearchPanel={() => setSearchPanelOpen(true)}
           openDocumentIds={openDocumentIds}
           workspaces={workspaces}
         />
@@ -735,9 +737,20 @@ export function Layout() {
           />
         ) : (
           <section aria-label="Document tree section">
-            <h2 className={styles.documentTreeHeading}>
-              Documents
-            </h2>
+            <div className={styles.documentTreeHeader}>
+              <h2 className={styles.documentTreeHeading}>
+                Documents
+              </h2>
+              <button
+                className={styles.secondaryButton}
+                data-testid="new-document-button"
+                onClick={createUntitledDocument}
+                title="Cmd+N"
+                type="button"
+              >
+                + New
+              </button>
+            </div>
             <DocumentTree
               activeDocumentId={activeDocumentId}
               documents={filteredDocuments}

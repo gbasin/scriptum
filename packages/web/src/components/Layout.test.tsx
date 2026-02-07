@@ -83,6 +83,49 @@ afterEach(() => {
 });
 
 describe("Layout search panel integration", () => {
+  it("creates a new untitled document from the visible sidebar button", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const beforeCount = useDocumentsStore.getState().documents.length;
+    const createButton = container.querySelector(
+      '[data-testid="new-document-button"]',
+    ) as HTMLButtonElement | null;
+    expect(createButton).not.toBeNull();
+
+    act(() => {
+      createButton?.click();
+    });
+
+    const documentsAfterCreate = useDocumentsStore.getState().documents;
+    expect(documentsAfterCreate).toHaveLength(beforeCount + 1);
+    const createdDocument = documentsAfterCreate.find(
+      (document) => document.path === "untitled-1.md",
+    );
+    expect(createdDocument).toBeDefined();
+    expect(
+      useDocumentsStore.getState().activeDocumentIdByWorkspace["ws-alpha"],
+    ).toBe(createdDocument?.id ?? null);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("opens search panel with Cmd+Shift+F and replaces document tree", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const container = document.createElement("div");

@@ -16,9 +16,15 @@
   margin: 0.75rem 0 0;
 }
 
-.documentTreeHeading {
-  margin-bottom: var(--space-1);
+.documentTreeHeader {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
   margin-top: var(--space-4);
+}
+
+.documentTreeHeading {
+  margin: 0;
 }
 
 .editorArea {

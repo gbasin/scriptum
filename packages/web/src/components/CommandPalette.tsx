@@ -8,7 +8,11 @@ import styles from "./CommandPalette.module.css";
 const MAX_RECENT_DOCUMENTS = 5;
 
 export type CommandPaletteItemKind = "command" | "file" | "recent";
-export type CommandPaletteAction = "create-workspace" | "navigate";
+export type CommandPaletteAction =
+  | "create-workspace"
+  | "navigate"
+  | "new-document"
+  | "open-search";
 
 export interface CommandPaletteItem {
   action: CommandPaletteAction;
@@ -29,7 +33,9 @@ export interface BuildCommandPaletteItemsArgs {
 export interface CommandPaletteProps {
   activeWorkspaceId: string | null;
   documents: Document[];
+  onCreateDocument?: () => void;
   onCreateWorkspace: () => void;
+  onOpenSearchPanel?: () => void;
   openDocumentIds: string[];
   workspaces: Workspace[];
 }
@@ -127,6 +133,22 @@ export function buildCommandPaletteItems(
 
   const commandItems: CommandPaletteItem[] = [
     {
+      action: "new-document",
+      id: "command:new-document",
+      kind: "command",
+      route: null,
+      subtitle: "Shortcut: Cmd+N",
+      title: "New Document",
+    },
+    {
+      action: "open-search",
+      id: "command:open-search",
+      kind: "command",
+      route: null,
+      subtitle: "Shortcut: Cmd+Shift+F",
+      title: "Open Search Panel",
+    },
+    {
       action: "navigate",
       id: "command:settings",
       kind: "command",
@@ -216,7 +238,9 @@ function kindLabel(kind: CommandPaletteItemKind): string {
 export function CommandPalette({
   activeWorkspaceId,
   documents,
+  onCreateDocument = () => undefined,
   onCreateWorkspace,
+  onOpenSearchPanel = () => undefined,
   openDocumentIds,
   workspaces,
 }: CommandPaletteProps) {
@@ -255,13 +279,17 @@ export function CommandPalette({
     (item: CommandPaletteItem) => {
       if (item.action === "create-workspace") {
         onCreateWorkspace();
+      } else if (item.action === "new-document") {
+        onCreateDocument();
+      } else if (item.action === "open-search") {
+        onOpenSearchPanel();
       } else if (item.route) {
         navigate(item.route);
       }
 
       closePalette();
     },
-    [closePalette, navigate, onCreateWorkspace],
+    [closePalette, navigate, onCreateDocument, onCreateWorkspace, onOpenSearchPanel],
   );
 
   useEffect(() => {
