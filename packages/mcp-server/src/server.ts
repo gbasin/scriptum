@@ -9,79 +9,22 @@ import { createDaemonClient, type DaemonClient } from "./daemon-client";
 import { registerAgentsResource } from "./resources/agents";
 import { registerWorkspaceResource } from "./resources/workspace";
 import {
-  PASSTHROUGH_TOOL_INPUT_SCHEMA,
+  type AgentNameResolver,
   makeResourceResult,
   makeToolResult,
+  PASSTHROUGH_TOOL_INPUT_SCHEMA,
   parseResourceVariable,
   resolveWorkspaceForDocId,
-  toToolPayload,
-  type AgentNameResolver,
-  type ToolDefinition,
   type ToolPayload,
+  toToolPayload,
 } from "./shared";
+import { registerPassthroughTools } from "./tools/passthrough";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
 const SERVER_INFO: Implementation = {
   name: "scriptum-mcp-server",
   version: "0.0.0",
 };
-
-const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
-  {
-    name: "scriptum_read",
-    rpcMethod: "doc.read",
-    description:
-      "Read document content via daemon doc.read. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_edit",
-    rpcMethod: "doc.edit",
-    description:
-      "Edit document content via daemon doc.edit. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_list",
-    rpcMethod: "doc.tree",
-    description:
-      "List workspace documents via daemon doc.tree. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_tree",
-    rpcMethod: "doc.sections",
-    description:
-      "List document section structure via daemon doc.sections. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_conflicts",
-    rpcMethod: "agent.conflicts",
-    description:
-      "List active section conflicts via daemon agent.conflicts. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_history",
-    rpcMethod: "doc.diff",
-    description:
-      "Show document diff/history via daemon doc.diff. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_agents",
-    rpcMethod: "agent.list",
-    description:
-      "List active agents in the workspace via daemon agent.list. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_claim",
-    rpcMethod: "agent.claim",
-    description:
-      "Claim a section lease via daemon agent.claim. Forwards all tool arguments as JSON-RPC params.",
-  },
-  {
-    name: "scriptum_bundle",
-    rpcMethod: "doc.bundle",
-    description:
-      "Fetch a context bundle via daemon doc.bundle. Forwards all tool arguments as JSON-RPC params.",
-  },
-];
 
 export interface ScriptumMcpServer {
   start(): Promise<void>;
@@ -205,24 +148,7 @@ function registerToolHandlers(
     },
   );
 
-  for (const definition of PASSTHROUGH_TOOL_DEFINITIONS) {
-    server.registerTool(
-      definition.name,
-      {
-        description: definition.description,
-        inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
-      },
-      async (toolArgs) => {
-        const rpcParams = toToolPayload(toolArgs);
-        const payload = await daemonClient.request(
-          definition.rpcMethod,
-          rpcParams,
-        );
-
-        return makeToolResult(payload);
-      },
-    );
-  }
+  registerPassthroughTools(server, daemonClient);
 }
 
 function extractPreviousChangeToken(payload: ToolPayload): string | null {
