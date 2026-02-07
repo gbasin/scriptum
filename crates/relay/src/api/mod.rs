@@ -2125,10 +2125,7 @@ fn validate_member_update(payload: &UpdateMemberRequest) -> Result<(), ApiError>
 
 fn validate_invite_request(payload: &CreateInviteRequest) -> Result<(), ApiError> {
     if payload.email.trim().is_empty() || !payload.email.contains('@') {
-        return Err(ApiError::bad_request(
-            "VALIDATION_ERROR",
-            "a valid email address is required",
-        ));
+        return Err(ApiError::bad_request("VALIDATION_ERROR", "a valid email address is required"));
     }
     if payload.role != "editor" && payload.role != "viewer" {
         return Err(ApiError::bad_request(
@@ -2140,9 +2137,7 @@ fn validate_invite_request(payload: &CreateInviteRequest) -> Result<(), ApiError
         if hours == 0 || hours > MAX_INVITE_EXPIRY_HOURS {
             return Err(ApiError::bad_request(
                 "VALIDATION_ERROR",
-                format!(
-                    "expires_in_hours must be between 1 and {MAX_INVITE_EXPIRY_HOURS}"
-                ),
+                format!("expires_in_hours must be between 1 and {MAX_INVITE_EXPIRY_HOURS}"),
             ));
         }
     }
@@ -2289,9 +2284,8 @@ fn map_sqlx_error(error: sqlx::Error) -> ApiError {
 mod tests {
     use super::{
         build_router_with_store, CreateWorkspaceRequest, InviteEnvelope, MemberEnvelope,
-        MembersPageEnvelope, MemoryInvite, MemoryMembership, MemoryWorkspace,
-        MemoryWorkspaceStore, ShareLinkEnvelope, WorkspaceEnvelope, WorkspaceStore,
-        WorkspacesPageEnvelope,
+        MembersPageEnvelope, MemoryInvite, MemoryMembership, MemoryWorkspace, MemoryWorkspaceStore,
+        ShareLinkEnvelope, WorkspaceEnvelope, WorkspaceStore, WorkspacesPageEnvelope,
     };
     use crate::auth::jwt::JwtAccessTokenService;
     use axum::{
@@ -2563,6 +2557,93 @@ mod tests {
         let get_body: WorkspaceEnvelope = read_json(get_response).await;
         assert_eq!(get_body.workspace.id, create_body.workspace.id);
         assert_eq!(get_body.workspace.role.as_deref(), Some("owner"));
+    }
+
+    #[tokio::test]
+    async fn workspace_rest_response_shape_matches_contract() {
+        fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+            let mut keys = value
+                .as_object()
+                .expect("value should be an object")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.sort();
+            keys
+        }
+
+        let (router, jwt_service, user_id, workspace_id_for_token) = test_router();
+        let token = bearer_token(&jwt_service, user_id, workspace_id_for_token);
+
+        let create_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/workspaces")
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "name": "Contract", "slug": "contract" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create request should return response");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let create_json: serde_json::Value = read_json(create_response).await;
+
+        assert_eq!(sorted_keys(&create_json), vec!["workspace".to_string()]);
+        let create_workspace = &create_json["workspace"];
+        assert_eq!(
+            sorted_keys(create_workspace),
+            vec![
+                "created_at".to_string(),
+                "etag".to_string(),
+                "id".to_string(),
+                "name".to_string(),
+                "role".to_string(),
+                "slug".to_string(),
+                "updated_at".to_string(),
+            ]
+        );
+
+        let workspace_id =
+            create_workspace["id"].as_str().expect("workspace id should be string").to_string();
+
+        let list_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/workspaces?limit=10")
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("list request should return response");
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let list_json: serde_json::Value = read_json(list_response).await;
+
+        assert_eq!(sorted_keys(&list_json), vec!["items".to_string(), "next_cursor".to_string()]);
+        let list_items = list_json["items"].as_array().expect("items should be an array");
+        assert_eq!(list_items.len(), 1);
+        assert_eq!(sorted_keys(&list_items[0]), sorted_keys(create_workspace));
+
+        let get_response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/workspaces/{workspace_id}"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("get request should return response");
+        assert_eq!(get_response.status(), StatusCode::OK);
+        let get_json: serde_json::Value = read_json(get_response).await;
+        assert_eq!(sorted_keys(&get_json), vec!["workspace".to_string()]);
+        assert_eq!(sorted_keys(&get_json["workspace"]), sorted_keys(create_workspace));
     }
 
     #[tokio::test]
@@ -3236,10 +3317,8 @@ mod tests {
 
         // Verify membership was created.
         let guard = store.read().await;
-        let membership = guard
-            .memberships
-            .get(&(workspace_id, acceptor_id))
-            .expect("membership should exist");
+        let membership =
+            guard.memberships.get(&(workspace_id, acceptor_id)).expect("membership should exist");
         assert_eq!(membership.role, "viewer");
         assert_eq!(membership.status, "active");
     }
@@ -3270,10 +3349,8 @@ mod tests {
             );
         }
 
-        let router = build_router_with_store(
-            WorkspaceStore::Memory(store),
-            Arc::clone(&jwt_service),
-        );
+        let router =
+            build_router_with_store(WorkspaceStore::Memory(store), Arc::clone(&jwt_service));
         let acceptor_id = Uuid::new_v4();
         let token = bearer_token(&jwt_service, acceptor_id, workspace_id);
 
@@ -3318,10 +3395,8 @@ mod tests {
             );
         }
 
-        let router = build_router_with_store(
-            WorkspaceStore::Memory(store),
-            Arc::clone(&jwt_service),
-        );
+        let router =
+            build_router_with_store(WorkspaceStore::Memory(store), Arc::clone(&jwt_service));
         let acceptor_id = Uuid::new_v4();
         let token = bearer_token(&jwt_service, acceptor_id, workspace_id);
 
