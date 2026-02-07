@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendReplyToThread,
+  buildTimelineDiffSegments,
   commentAnchorTopPx,
   commentRangesFromThreads,
   normalizeInlineCommentThreads,
@@ -211,5 +212,25 @@ describe("document comment helpers", () => {
       "resolved"
     );
     expect(next).toEqual(threads);
+  });
+
+  it("builds diff segments from the selected snapshot against current content", () => {
+    const segments = buildTimelineDiffSegments(
+      "# Current\nHello world\n",
+      "# Current\nHello Scriptum\n"
+    );
+
+    expect(segments).toEqual([
+      { kind: "unchanged", text: "# Current\nHello " },
+      { kind: "removed", text: "world" },
+      { kind: "added", text: "Scriptum" },
+      { kind: "unchanged", text: "\n" },
+    ]);
+  });
+
+  it("returns a single unchanged segment when snapshot matches current", () => {
+    expect(buildTimelineDiffSegments("same", "same")).toEqual([
+      { kind: "unchanged", text: "same" },
+    ]);
   });
 });

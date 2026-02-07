@@ -1,5 +1,5 @@
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Document as ScriptumDocument } from "@scriptum/shared";
 import {
@@ -19,7 +19,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { TabBar, type OpenDocumentTab } from "../components/editor/TabBar";
-import { TimelineSlider } from "../components/editor/TimelineSlider";
+import {
+  TimelineSlider,
+  type HistoryViewMode,
+} from "../components/editor/TimelineSlider";
 import { StatusBar } from "../components/StatusBar";
 import { useDocumentsStore } from "../store/documents";
 import { usePresenceStore, type PeerPresence } from "../store/presence";
@@ -78,6 +81,217 @@ interface ActiveTextSelection {
   line: number;
   selectedText: string;
   to: number;
+}
+
+export interface TimelineAuthor {
+  color: string;
+  id: string;
+  name: string;
+  type: "agent" | "human";
+}
+
+export interface TimelineSnapshotEntry {
+  attribution: TimelineAuthor[];
+  content: string;
+}
+
+export interface AuthorshipSegment {
+  author: TimelineAuthor;
+  text: string;
+}
+
+export interface TimelineDiffSegment {
+  kind: "unchanged" | "removed" | "added";
+  text: string;
+}
+
+const LOCAL_TIMELINE_AUTHOR: TimelineAuthor = {
+  color: nameToColor(LOCAL_COMMENT_AUTHOR_NAME),
+  id: LOCAL_COMMENT_AUTHOR_ID,
+  name: LOCAL_COMMENT_AUTHOR_NAME,
+  type: "human",
+};
+
+const UNKNOWN_REMOTE_TIMELINE_AUTHOR: TimelineAuthor = {
+  color: nameToColor("Collaborator"),
+  id: "remote-collaborator",
+  name: "Collaborator",
+  type: "human",
+};
+
+export function timelineAuthorFromPeer(
+  peer: Pick<ScriptumTestState["remotePeers"][number], "name" | "type">
+): TimelineAuthor {
+  return {
+    color: nameToColor(peer.name),
+    id: `peer:${peer.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "remote"}`,
+    name: peer.name,
+    type: peer.type,
+  };
+}
+
+export function createTimelineSnapshotEntry(
+  content: string,
+  author: TimelineAuthor
+): TimelineSnapshotEntry {
+  return {
+    attribution: Array.from({ length: content.length }, () => author),
+    content,
+  };
+}
+
+function normalizedAttributionLength(
+  entry: TimelineSnapshotEntry
+): TimelineAuthor[] {
+  if (entry.attribution.length === entry.content.length) {
+    return entry.attribution;
+  }
+
+  return Array.from(
+    { length: entry.content.length },
+    (_unused, index) => entry.attribution[index] ?? LOCAL_TIMELINE_AUTHOR
+  );
+}
+
+export function deriveTimelineSnapshotEntry(
+  previousEntry: TimelineSnapshotEntry,
+  nextContent: string,
+  author: TimelineAuthor
+): TimelineSnapshotEntry {
+  if (previousEntry.content === nextContent) {
+    return {
+      attribution: normalizedAttributionLength(previousEntry).slice(),
+      content: previousEntry.content,
+    };
+  }
+
+  const previousContent = previousEntry.content;
+  const previousAttribution = normalizedAttributionLength(previousEntry);
+  let prefixLength = 0;
+
+  while (
+    prefixLength < previousContent.length &&
+    prefixLength < nextContent.length &&
+    previousContent[prefixLength] === nextContent[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    suffixLength < previousContent.length - prefixLength &&
+    suffixLength < nextContent.length - prefixLength &&
+    previousContent[previousContent.length - 1 - suffixLength] ===
+      nextContent[nextContent.length - 1 - suffixLength]
+  ) {
+    suffixLength += 1;
+  }
+
+  const nextMiddleLength = Math.max(
+    0,
+    nextContent.length - prefixLength - suffixLength
+  );
+  const prefixAttribution = previousAttribution.slice(0, prefixLength);
+  const suffixAttribution =
+    suffixLength > 0 ? previousAttribution.slice(previousAttribution.length - suffixLength) : [];
+  const middleAttribution = Array.from({ length: nextMiddleLength }, () => author);
+
+  return {
+    attribution: [...prefixAttribution, ...middleAttribution, ...suffixAttribution],
+    content: nextContent,
+  };
+}
+
+export function buildAuthorshipSegments(
+  entry: TimelineSnapshotEntry
+): AuthorshipSegment[] {
+  const attribution = normalizedAttributionLength(entry);
+  const { content } = entry;
+  if (content.length === 0) {
+    return [];
+  }
+
+  const segments: AuthorshipSegment[] = [];
+  let currentAuthor = attribution[0] ?? LOCAL_TIMELINE_AUTHOR;
+  let currentText = content[0] ?? "";
+
+  for (let index = 1; index < content.length; index += 1) {
+    const nextAuthor = attribution[index] ?? LOCAL_TIMELINE_AUTHOR;
+    const nextCharacter = content[index] ?? "";
+
+    if (nextAuthor.id === currentAuthor.id) {
+      currentText += nextCharacter;
+      continue;
+    }
+
+    segments.push({ author: currentAuthor, text: currentText });
+    currentAuthor = nextAuthor;
+    currentText = nextCharacter;
+  }
+
+  segments.push({ author: currentAuthor, text: currentText });
+  return segments;
+}
+
+export function buildTimelineDiffSegments(
+  currentContent: string,
+  snapshotContent: string
+): TimelineDiffSegment[] {
+  if (currentContent.length === 0 && snapshotContent.length === 0) {
+    return [];
+  }
+  if (currentContent === snapshotContent) {
+    return [{ kind: "unchanged", text: snapshotContent }];
+  }
+
+  let prefixLength = 0;
+  while (
+    prefixLength < currentContent.length &&
+    prefixLength < snapshotContent.length &&
+    currentContent[prefixLength] === snapshotContent[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    suffixLength < currentContent.length - prefixLength &&
+    suffixLength < snapshotContent.length - prefixLength &&
+    currentContent[currentContent.length - 1 - suffixLength] ===
+      snapshotContent[snapshotContent.length - 1 - suffixLength]
+  ) {
+    suffixLength += 1;
+  }
+
+  const prefix = currentContent.slice(0, prefixLength);
+  const removed = currentContent.slice(
+    prefixLength,
+    currentContent.length - suffixLength
+  );
+  const added = snapshotContent.slice(
+    prefixLength,
+    snapshotContent.length - suffixLength
+  );
+  const suffix =
+    suffixLength > 0
+      ? snapshotContent.slice(snapshotContent.length - suffixLength)
+      : "";
+
+  const segments: TimelineDiffSegment[] = [];
+  if (prefix.length > 0) {
+    segments.push({ kind: "unchanged", text: prefix });
+  }
+  if (removed.length > 0) {
+    segments.push({ kind: "removed", text: removed });
+  }
+  if (added.length > 0) {
+    segments.push({ kind: "added", text: added });
+  }
+  if (suffix.length > 0) {
+    segments.push({ kind: "unchanged", text: suffix });
+  }
+
+  return segments;
 }
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -485,10 +699,13 @@ export function DocumentRoute() {
     ReturnType<typeof createCollaborationProvider> | null
   >(null);
   const fixtureRemoteClientIdsRef = useRef<number[]>([]);
-  const [timelineSnapshots, setTimelineSnapshots] = useState<string[]>([
-    fixtureState.docContent,
+  const timelineRemotePeersRef = useRef(fixtureState.remotePeers);
+  const [timelineEntries, setTimelineEntries] = useState<TimelineSnapshotEntry[]>([
+    createTimelineSnapshotEntry(fixtureState.docContent, LOCAL_TIMELINE_AUTHOR),
   ]);
   const [timelineIndex, setTimelineIndex] = useState(0);
+  const [timelineViewMode, setTimelineViewMode] =
+    useState<HistoryViewMode>("authorship");
   const roomId = useMemo(
     () => `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
     [workspaceId, documentId]
@@ -566,6 +783,9 @@ export function DocumentRoute() {
           : "none";
 
     return { severity, warningSections };
+  }, [fixtureState.remotePeers]);
+  useEffect(() => {
+    timelineRemotePeersRef.current = fixtureState.remotePeers;
   }, [fixtureState.remotePeers]);
   const commentRanges = useMemo(
     () => commentRangesFromThreads(inlineCommentThreads),
@@ -673,20 +893,38 @@ export function DocumentRoute() {
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
               const nextContent = update.state.doc.toString();
-              setTimelineSnapshots((currentSnapshots) => {
-                const latestContent = currentSnapshots[currentSnapshots.length - 1];
-                if (latestContent === nextContent) {
-                  return currentSnapshots;
+              const isRemoteTransaction = update.transactions.some((transaction) =>
+                Boolean(transaction.annotation(Transaction.remote))
+              );
+              const nextAuthor = isRemoteTransaction
+                ? timelineRemotePeersRef.current[0]
+                  ? timelineAuthorFromPeer(timelineRemotePeersRef.current[0])
+                  : UNKNOWN_REMOTE_TIMELINE_AUTHOR
+                : LOCAL_TIMELINE_AUTHOR;
+
+              setTimelineEntries((currentEntries) => {
+                const latestEntry =
+                  currentEntries[currentEntries.length - 1] ??
+                  createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+                if (latestEntry.content === nextContent) {
+                  return currentEntries;
                 }
-                const nextSnapshots = [...currentSnapshots, nextContent];
-                if (nextSnapshots.length > MAX_TIMELINE_SNAPSHOTS) {
-                  nextSnapshots.splice(
+
+                const nextEntry = deriveTimelineSnapshotEntry(
+                  latestEntry,
+                  nextContent,
+                  nextAuthor
+                );
+                const nextEntries = [...currentEntries, nextEntry];
+                if (nextEntries.length > MAX_TIMELINE_SNAPSHOTS) {
+                  nextEntries.splice(
                     0,
-                    nextSnapshots.length - MAX_TIMELINE_SNAPSHOTS
+                    nextEntries.length - MAX_TIMELINE_SNAPSHOTS
                   );
                 }
-                setTimelineIndex(nextSnapshots.length - 1);
-                return nextSnapshots;
+
+                setTimelineIndex(nextEntries.length - 1);
+                return nextEntries;
               });
             }
 
@@ -725,7 +963,9 @@ export function DocumentRoute() {
       }),
     });
     editorViewRef.current = view;
-    setTimelineSnapshots([fixtureState.docContent]);
+    setTimelineEntries([
+      createTimelineSnapshotEntry(fixtureState.docContent, LOCAL_TIMELINE_AUTHOR),
+    ]);
     setTimelineIndex(0);
 
     return () => {
@@ -782,7 +1022,7 @@ export function DocumentRoute() {
   }, [fixtureModeEnabled, fixtureState.docContent]);
 
   const scrubToTimelineIndex = (nextIndex: number) => {
-    const snapshot = timelineSnapshots[nextIndex];
+    const snapshot = timelineEntries[nextIndex]?.content;
     if (snapshot === undefined) {
       return;
     }
@@ -981,6 +1221,40 @@ export function DocumentRoute() {
     }
     navigate(`/workspace/${workspaceId}`);
   };
+
+  const activeTimelineEntry =
+    timelineEntries[timelineIndex] ??
+    timelineEntries[timelineEntries.length - 1] ??
+    createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+  const latestTimelineEntry =
+    timelineEntries[timelineEntries.length - 1] ??
+    createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+  const timelineAuthorshipSegments = useMemo(
+    () => buildAuthorshipSegments(activeTimelineEntry),
+    [activeTimelineEntry]
+  );
+  const timelineDiffSegments = useMemo(
+    () =>
+      buildTimelineDiffSegments(
+        latestTimelineEntry.content,
+        activeTimelineEntry.content
+      ),
+    [activeTimelineEntry.content, latestTimelineEntry.content]
+  );
+  const timelineHasDiff = useMemo(
+    () =>
+      timelineDiffSegments.some(
+        (segment) => segment.kind === "added" || segment.kind === "removed"
+      ),
+    [timelineDiffSegments]
+  );
+  const timelineLegendAuthors = useMemo(() => {
+    const authorsById = new Map<string, TimelineAuthor>();
+    timelineAuthorshipSegments.forEach((segment) => {
+      authorsById.set(segment.author.id, segment.author);
+    });
+    return Array.from(authorsById.values());
+  }, [timelineAuthorshipSegments]);
 
   return (
     <section aria-label="Document workspace">
@@ -1494,10 +1768,169 @@ export function DocumentRoute() {
         pendingUpdates={pendingSyncUpdates}
         reconnectProgress={reconnectProgress}
       />
+      <section
+        aria-label="History browsing view"
+        data-testid="history-view-panel"
+        style={{
+          borderTop: "1px solid #d1d5db",
+          marginTop: "0.75rem",
+          paddingTop: "0.5rem",
+        }}
+      >
+        {timelineViewMode === "authorship" ? (
+          <>
+            <h3 style={{ fontSize: "0.875rem", margin: "0 0 0.375rem" }}>
+              Author-colored highlights
+            </h3>
+            <p
+              style={{
+                color: "#4b5563",
+                fontSize: "0.75rem",
+                margin: "0 0 0.375rem",
+              }}
+            >
+              Scrub snapshots to inspect per-character attribution.
+            </p>
+            <div
+              data-testid="history-authorship-legend"
+              style={{
+                alignItems: "center",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.375rem",
+                marginBottom: "0.375rem",
+              }}
+            >
+              {timelineLegendAuthors.map((author) => (
+                <span
+                  data-testid={`history-authorship-author-${author.id}`}
+                  key={author.id}
+                  style={{
+                    alignItems: "center",
+                    border: `1px solid ${author.color}66`,
+                    borderRadius: "9999px",
+                    color: author.color,
+                    display: "inline-flex",
+                    fontSize: "0.7rem",
+                    fontWeight: 700,
+                    gap: "0.25rem",
+                    padding: "0.1rem 0.4rem",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      background: author.color,
+                      borderRadius: "9999px",
+                      display: "inline-block",
+                      height: "0.4rem",
+                      width: "0.4rem",
+                    }}
+                  />
+                  {author.name}
+                </span>
+              ))}
+            </div>
+            {timelineAuthorshipSegments.length === 0 ? (
+              <p data-testid="history-authorship-empty" style={{ margin: 0 }}>
+                No content yet.
+              </p>
+            ) : (
+              <pre
+                data-testid="history-authorship-preview"
+                style={{
+                  background: "#f8fafc",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "0.375rem",
+                  fontFamily: "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
+                  fontSize: "0.8rem",
+                  margin: 0,
+                  overflowX: "auto",
+                  padding: "0.5rem",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {timelineAuthorshipSegments.map((segment, index) => (
+                  <span
+                    data-testid={`history-authorship-segment-${index}`}
+                    key={`${segment.author.id}:${index}`}
+                    style={{ color: segment.author.color }}
+                  >
+                    {segment.text}
+                  </span>
+                ))}
+              </pre>
+            )}
+          </>
+        ) : (
+          <>
+            <h3 style={{ fontSize: "0.875rem", margin: "0 0 0.375rem" }}>
+              Diff from current
+            </h3>
+            <p
+              style={{
+                color: "#4b5563",
+                fontSize: "0.75rem",
+                margin: "0 0 0.375rem",
+              }}
+            >
+              Comparing the selected snapshot against the latest document state.
+            </p>
+            {!timelineHasDiff ? (
+              <p data-testid="history-diff-empty" style={{ margin: 0 }}>
+                Selected snapshot matches current version.
+              </p>
+            ) : (
+              <pre
+                data-testid="history-diff-preview"
+                style={{
+                  background: "#f8fafc",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "0.375rem",
+                  fontFamily: "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
+                  fontSize: "0.8rem",
+                  margin: 0,
+                  overflowX: "auto",
+                  padding: "0.5rem",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {timelineDiffSegments.map((segment, index) => (
+                  <span
+                    data-kind={segment.kind}
+                    data-testid={`history-diff-segment-${index}`}
+                    key={`${segment.kind}:${index}`}
+                    style={{
+                      background:
+                        segment.kind === "added"
+                          ? "#dcfce7"
+                          : segment.kind === "removed"
+                            ? "#fee2e2"
+                            : "transparent",
+                      color:
+                        segment.kind === "added"
+                          ? "#166534"
+                          : segment.kind === "removed"
+                            ? "#991b1b"
+                            : "#1f2937",
+                      textDecoration:
+                        segment.kind === "removed" ? "line-through" : "none",
+                    }}
+                  >
+                    {segment.text}
+                  </span>
+                ))}
+              </pre>
+            )}
+          </>
+        )}
+      </section>
       <TimelineSlider
-        max={timelineSnapshots.length - 1}
+        max={timelineEntries.length - 1}
         onChange={scrubToTimelineIndex}
+        onViewModeChange={setTimelineViewMode}
         value={timelineIndex}
+        viewMode={timelineViewMode}
       />
     </section>
   );
