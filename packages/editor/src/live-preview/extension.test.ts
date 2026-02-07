@@ -1,9 +1,9 @@
-import { EditorState } from "@codemirror/state";
+import { type StateField, EditorState } from "@codemirror/state";
+import type { DecorationSet } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import {
   activeLines,
   codeBlockDecorations,
-  getMarkdownNodes,
   headingPreviewDecorations,
   inlineEmphasisDecorations,
   inlineLinkDecorations,
@@ -26,464 +26,83 @@ describe("livePreview", () => {
     expect(isLineActive(state, 2)).toBe(false);
   });
 
-  it("parses markdown into a tree analysis", () => {
-    const source = "# Heading\n\nBody text";
-    const analysis = getMarkdownNodes(source);
-
-    expect(analysis.rootNode).toBe("Document");
-    expect(analysis.length).toBe(source.length);
-    expect(analysis.topLevelNodeCount).toBeGreaterThan(0);
-  });
-
-  it("renders every heading level on unfocused lines", () => {
+  it("composes all module decorations on unfocused lines", () => {
     const source = [
-      "# H1",
-      "## H2",
-      "### H3",
-      "#### H4",
-      "##### H5",
-      "###### H6",
-      "body",
+      "active",
+      "# Heading",
+      "**bold** and [Scriptum](https://scriptum.dev)",
+      "| Name | Role |",
+      "| --- | --- |",
+      "| Ada | Agent |",
+      "- [x] done",
+      "> quoted",
+      "---",
+      "```ts",
+      "const x = 1",
+      "```",
+      "$$",
+      "x^2",
+      "$$",
+      "Inline $x^2$",
     ].join("\n");
 
     const state = EditorState.create({
       doc: source,
-      selection: { anchor: source.length },
-      extensions: [livePreview()],
-    });
-
-    const classes = collectHeadingClasses(state);
-    for (let level = 1; level <= 6; level += 1) {
-      expect(classes.has(`cm-livePreview-heading-h${level}`)).toBe(true);
-    }
-  });
-
-  it("keeps active heading line raw markdown", () => {
-    const state = EditorState.create({
-      doc: "# Active\n## Inactive",
       selection: { anchor: 0 },
       extensions: [livePreview()],
     });
 
-    expect(hasDecorationOnLine(state, 1)).toBe(false);
-    expect(hasDecorationOnLine(state, 2)).toBe(true);
+    expect(hasDecorationOnLine(state, headingPreviewDecorations, 2)).toBe(true);
+    expect(hasDecorationOnLine(state, inlineEmphasisDecorations, 3)).toBe(true);
+    expect(hasDecorationOnLine(state, inlineLinkDecorations, 3)).toBe(true);
+    expect(hasDecorationOnLine(state, tablePreviewDecorations, 4)).toBe(true);
+    expect(hasDecorationOnLine(state, taskBlockquoteHrDecorations, 7)).toBe(true);
+    expect(hasDecorationOnLine(state, codeBlockDecorations, 10)).toBe(true);
+    expect(hasDecorationOnLine(state, mathPreviewDecorations, 13)).toBe(true);
   });
 
-  it("updates heading decoration level after markdown heading level changes", () => {
-    let state = EditorState.create({
-      doc: "## Heading\nbody",
-      selection: { anchor: "## Heading\n".length },
-      extensions: [livePreview()],
-    });
+  it("skips all preview decorations for an active multi-line selection", () => {
+    const source = [
+      "# Heading",
+      "**bold** and [Scriptum](https://scriptum.dev)",
+      "| Name | Role |",
+      "| --- | --- |",
+      "| Ada | Agent |",
+      "- [x] done",
+      "> quoted",
+      "---",
+      "```ts",
+      "const x = 1",
+      "```",
+      "$$",
+      "x^2",
+      "$$",
+      "Inline $x^2$",
+    ].join("\n");
 
-    expect(collectHeadingClasses(state).has("cm-livePreview-heading-h2")).toBe(
-      true,
-    );
-
-    const firstLine = state.doc.line(1);
-    state = state.update({
-      changes: {
-        from: firstLine.from,
-        to: firstLine.to,
-        insert: "### Heading",
-      },
-    }).state;
-
-    const classes = collectHeadingClasses(state);
-    expect(classes.has("cm-livePreview-heading-h3")).toBe(true);
-    expect(classes.has("cm-livePreview-heading-h2")).toBe(false);
-  });
-
-  it("moves raw active line as cursor moves between lines", () => {
-    let state = EditorState.create({
-      doc: "# First\n# Second",
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    expect(hasDecorationOnLine(state, 1)).toBe(false);
-    expect(hasDecorationOnLine(state, 2)).toBe(true);
-
-    state = state.update({
-      selection: { anchor: state.doc.line(2).from },
-    }).state;
-
-    expect(hasDecorationOnLine(state, 1)).toBe(true);
-    expect(hasDecorationOnLine(state, 2)).toBe(false);
-  });
-
-  it("keeps all lines in a multi-line selection raw markdown", () => {
-    const source = ["**first**", "**second**", "---"].join("\n");
     const state = EditorState.create({
       doc: source,
       selection: { anchor: 0, head: source.length },
       extensions: [livePreview()],
     });
 
-    expect(hasInlineDecorationOnLine(state, 1)).toBe(false);
-    expect(hasInlineDecorationOnLine(state, 2)).toBe(false);
-    expect(hasTaskBlockquoteHrDecorationOnLine(state, 3)).toBe(false);
-  });
-
-  it("renders bold/italic/strikethrough on unfocused lines", () => {
-    const source = [
-      "*active line*",
-      "**bold** and _italic_ and ~~strike~~",
-    ].join("\n");
-
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const classes = collectInlineClasses(state);
-    expect(classes.has("cm-livePreview-strong")).toBe(true);
-    expect(classes.has("cm-livePreview-emphasis")).toBe(true);
-    expect(classes.has("cm-livePreview-strikethrough")).toBe(true);
-
-    expect(hasInlineDecorationOnLine(state, 1)).toBe(false);
-    expect(hasInlineDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("supports nested emphasis on unfocused lines", () => {
-    const source = ["active", "**bold _nested_**"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const classes = collectInlineClasses(state);
-    expect(classes.has("cm-livePreview-strong")).toBe(true);
-    expect(classes.has("cm-livePreview-emphasis")).toBe(true);
-  });
-
-  it("keeps active line raw for inline emphasis markers", () => {
-    const source = ["plain", "**bold** and _italic_ and ~~strike~~"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: source.indexOf("**bold**") },
-      extensions: [livePreview()],
-    });
-
-    expect(hasInlineDecorationOnLine(state, 2)).toBe(false);
-  });
-
-  it("renders markdown links and autolinks on unfocused lines", () => {
-    const source = [
-      "active line",
-      "[Scriptum](https://scriptum.dev) and <https://example.com>",
-    ].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const widgets = collectInlineWidgetKinds(state);
-    expect(widgets).toEqual(["link", "link"]);
-    expect(hasInlineLinkDecorationOnLine(state, 1)).toBe(false);
-    expect(hasInlineLinkDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("renders image previews on unfocused lines", () => {
-    const source = [
-      "active",
-      "![Alt text](https://example.com/image.png)",
-    ].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const widgets = collectInlineWidgetKinds(state);
-    expect(widgets).toEqual(["image"]);
-    expect(hasInlineLinkDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("keeps active line raw for link and image markdown", () => {
-    const source =
-      "[raw](https://example.com) ![img](https://example.com/a.png)\nline";
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    expect(hasInlineLinkDecorationOnLine(state, 1)).toBe(false);
-  });
-
-  it("renders GFM tables with alignment metadata on unfocused lines", () => {
-    const source = [
-      "active",
-      "| Name | Role | Score |",
-      "| :--- | :---: | ---: |",
-      "| Ada | Agent | 42 |",
-    ].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const tables = collectTableWidgets(state);
-    expect(tables).toEqual([
-      {
-        alignments: ["left", "center", "right"],
-        headers: ["Name", "Role", "Score"],
-      },
-    ]);
-    expect(hasTableDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("keeps active line raw for markdown table syntax", () => {
-    const source = [
-      "| Name | Role |",
-      "| :--- | :--: |",
-      "| Ada | Agent |",
-    ].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: source.indexOf("| Name |") },
-      extensions: [livePreview()],
-    });
-
-    expect(hasTableDecorationOnLine(state, 1)).toBe(false);
-    expect(hasTableDecorationOnLine(state, 2)).toBe(false);
-  });
-
-  it("renders blockquote styling on unfocused lines", () => {
-    const source = ["active", "> quoted line"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const classes = collectTaskBlockquoteHrClasses(state);
-    expect(classes.has("cm-livePreview-blockquote-line")).toBe(true);
-    expect(hasTaskBlockquoteHrDecorationOnLine(state, 1)).toBe(false);
-    expect(hasTaskBlockquoteHrDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("renders task list checkbox widgets on unfocused lines", () => {
-    const source = ["active", "- [ ] todo", "- [x] done"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    const widgets = collectTaskCheckboxStates(state);
-    expect(widgets).toEqual([false, true]);
-  });
-
-  it("renders horizontal rules on unfocused lines and keeps active line raw", () => {
-    const source = ["active", "", "---"].join("\n");
-    const inactiveHrState = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-    expect(collectTaskBlockquoteHrWidgetKinds(inactiveHrState)).toContain(
-      "horizontal-rule",
-    );
-    expect(hasTaskBlockquoteHrDecorationOnLine(inactiveHrState, 3)).toBe(true);
-
-    const activeHrState = EditorState.create({
-      doc: source,
-      selection: { anchor: source.indexOf("---") },
-      extensions: [livePreview()],
-    });
-    expect(hasTaskBlockquoteHrDecorationOnLine(activeHrState, 3)).toBe(false);
-  });
-
-  it("renders fenced code blocks with language detection on unfocused lines", () => {
-    const source = ["active", "", "```ts", "const x = 1", "```"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    expect(collectCodeBlockLanguages(state)).toEqual(["ts"]);
-    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(true);
-  });
-
-  it("keeps active fenced code blocks raw markdown", () => {
-    const source = ["active", "", "```ts", "const x = 1", "```"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: source.indexOf("```ts") },
-      extensions: [livePreview()],
-    });
-
-    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(false);
-  });
-
-  it("renders inline math on unfocused lines", () => {
-    const source = ["active", "Euler identity: $e^{i\\pi}+1=0$"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    expect(collectMathWidgetKinds(state)).toContain("math-inline");
-    expect(hasMathDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("renders block math on unfocused lines", () => {
-    const source = ["active", "$$", "\\int_0^1 x^2 dx", "$$"].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    expect(collectMathWidgetKinds(state)).toContain("math-block");
-    expect(hasMathDecorationOnLine(state, 2)).toBe(true);
-  });
-
-  it("keeps active math expressions raw markdown", () => {
-    const inlineSource = ["$x^2$", "inactive"].join("\n");
-    const inlineState = EditorState.create({
-      doc: inlineSource,
-      selection: { anchor: inlineSource.indexOf("$x^2$") },
-      extensions: [livePreview()],
-    });
-    expect(hasMathDecorationOnLine(inlineState, 1)).toBe(false);
-
-    const blockSource = ["active", "$$", "x^2", "$$"].join("\n");
-    const blockState = EditorState.create({
-      doc: blockSource,
-      selection: { anchor: blockSource.indexOf("$$") },
-      extensions: [livePreview()],
-    });
-    expect(hasMathDecorationOnLine(blockState, 2)).toBe(false);
-  });
-
-  it("renders mermaid fenced diagrams on unfocused lines", () => {
-    const source = [
-      "active",
-      "",
-      "```mermaid",
-      "graph TD",
-      "A-->B",
-      "```",
-    ].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: 0 },
-      extensions: [livePreview()],
-    });
-
-    expect(collectCodeBlockWidgetKinds(state)).toContain("mermaid-diagram");
-    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(true);
-  });
-
-  it("keeps active mermaid fenced blocks raw markdown", () => {
-    const source = [
-      "active",
-      "",
-      "```mermaid",
-      "graph TD",
-      "A-->B",
-      "```",
-    ].join("\n");
-    const state = EditorState.create({
-      doc: source,
-      selection: { anchor: source.indexOf("```mermaid") },
-      extensions: [livePreview()],
-    });
-
-    expect(collectCodeBlockWidgetKinds(state)).not.toContain("mermaid-diagram");
-    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(false);
+    expect(countDecorations(state, headingPreviewDecorations)).toBe(0);
+    expect(countDecorations(state, inlineEmphasisDecorations)).toBe(0);
+    expect(countDecorations(state, inlineLinkDecorations)).toBe(0);
+    expect(countDecorations(state, tablePreviewDecorations)).toBe(0);
+    expect(countDecorations(state, taskBlockquoteHrDecorations)).toBe(0);
+    expect(countDecorations(state, codeBlockDecorations)).toBe(0);
+    expect(countDecorations(state, mathPreviewDecorations)).toBe(0);
   });
 });
 
-function collectHeadingClasses(state: EditorState): Set<string> {
-  const classes = new Set<string>();
-  const decorations = state.field(headingPreviewDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const spec = (
-      value as {
-        spec?: { class?: unknown; attributes?: { class?: unknown } };
-      }
-    ).spec;
-    const className =
-      typeof spec?.class === "string"
-        ? spec.class
-        : typeof spec?.attributes?.class === "string"
-          ? spec.attributes.class
-          : null;
-
-    if (!className) {
-      return;
-    }
-
-    for (const token of className.split(/\s+/)) {
-      if (token.startsWith("cm-livePreview-heading-h")) {
-        classes.add(token);
-      }
-    }
-  });
-
-  return classes;
-}
-
-function hasDecorationOnLine(state: EditorState, lineNumber: number): boolean {
-  const line = state.doc.line(lineNumber);
-  const decorations = state.field(headingPreviewDecorations);
-  let foundDecoration = false;
-
-  decorations.between(line.from, line.to, () => {
-    foundDecoration = true;
-  });
-
-  return foundDecoration;
-}
-
-function collectInlineClasses(state: EditorState): Set<string> {
-  const classes = new Set<string>();
-  const decorations = state.field(inlineEmphasisDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const spec = (
-      value as {
-        spec?: { class?: unknown; attributes?: { class?: unknown } };
-      }
-    ).spec;
-    const className =
-      typeof spec?.class === "string"
-        ? spec.class
-        : typeof spec?.attributes?.class === "string"
-          ? spec.attributes.class
-          : null;
-
-    if (!className) {
-      return;
-    }
-
-    for (const token of className.split(/\s+/)) {
-      if (token.startsWith("cm-livePreview-")) {
-        classes.add(token);
-      }
-    }
-  });
-
-  return classes;
-}
-
-function hasInlineDecorationOnLine(
+function hasDecorationOnLine(
   state: EditorState,
+  field: StateField<DecorationSet>,
   lineNumber: number,
 ): boolean {
   const line = state.doc.line(lineNumber);
-  const decorations = state.field(inlineEmphasisDecorations);
+  const decorations = state.field(field);
   let foundDecoration = false;
 
   decorations.between(line.from, line.to, () => {
@@ -493,247 +112,16 @@ function hasInlineDecorationOnLine(
   return foundDecoration;
 }
 
-function collectInlineWidgetKinds(state: EditorState): string[] {
-  const kinds: string[] = [];
-  const decorations = state.field(inlineLinkDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
-    if (!widget || (widget.kind !== "link" && widget.kind !== "image")) {
-      return;
-    }
-    kinds.push(widget.kind);
-  });
-
-  return kinds;
-}
-
-function hasInlineLinkDecorationOnLine(
+function countDecorations(
   state: EditorState,
-  lineNumber: number,
-): boolean {
-  const line = state.doc.line(lineNumber);
-  const decorations = state.field(inlineLinkDecorations);
-  let foundDecoration = false;
+  field: StateField<DecorationSet>,
+): number {
+  let count = 0;
+  const decorations = state.field(field);
 
-  decorations.between(line.from, line.to, () => {
-    foundDecoration = true;
+  decorations.between(0, state.doc.length, () => {
+    count += 1;
   });
 
-  return foundDecoration;
-}
-
-function collectTableWidgets(state: EditorState): Array<{
-  headers: string[];
-  alignments: string[];
-}> {
-  const tables: Array<{ headers: string[]; alignments: string[] }> = [];
-  const decorations = state.field(tablePreviewDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (
-      value.spec as {
-        widget?: {
-          kind?: unknown;
-          headers?: unknown;
-          alignments?: unknown;
-        };
-      }
-    ).widget;
-    if (!widget || widget.kind !== "table") {
-      return;
-    }
-    if (!Array.isArray(widget.headers) || !Array.isArray(widget.alignments)) {
-      return;
-    }
-
-    tables.push({
-      alignments: widget.alignments.filter(
-        (alignment): alignment is string => typeof alignment === "string",
-      ),
-      headers: widget.headers.filter(
-        (header): header is string => typeof header === "string",
-      ),
-    });
-  });
-
-  return tables;
-}
-
-function hasTableDecorationOnLine(
-  state: EditorState,
-  lineNumber: number,
-): boolean {
-  const line = state.doc.line(lineNumber);
-  const decorations = state.field(tablePreviewDecorations);
-  let foundDecoration = false;
-
-  decorations.between(line.from, line.to, () => {
-    foundDecoration = true;
-  });
-
-  return foundDecoration;
-}
-
-function collectTaskBlockquoteHrClasses(state: EditorState): Set<string> {
-  const classes = new Set<string>();
-  const decorations = state.field(taskBlockquoteHrDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const spec = (
-      value as {
-        spec?: { class?: unknown; attributes?: { class?: unknown } };
-      }
-    ).spec;
-    const className =
-      typeof spec?.class === "string"
-        ? spec.class
-        : typeof spec?.attributes?.class === "string"
-          ? spec.attributes.class
-          : null;
-
-    if (!className) {
-      return;
-    }
-
-    for (const token of className.split(/\s+/)) {
-      if (token.startsWith("cm-livePreview-")) {
-        classes.add(token);
-      }
-    }
-  });
-
-  return classes;
-}
-
-function collectTaskCheckboxStates(state: EditorState): boolean[] {
-  const states: boolean[] = [];
-  const decorations = state.field(taskBlockquoteHrDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (
-      value.spec as { widget?: { kind?: unknown; checked?: unknown } }
-    ).widget;
-    if (!widget || widget.kind !== "task-checkbox") {
-      return;
-    }
-    states.push(Boolean(widget.checked));
-  });
-
-  return states;
-}
-
-function collectTaskBlockquoteHrWidgetKinds(state: EditorState): string[] {
-  const kinds: string[] = [];
-  const decorations = state.field(taskBlockquoteHrDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
-    if (!widget || typeof widget.kind !== "string") {
-      return;
-    }
-    kinds.push(widget.kind);
-  });
-
-  return kinds;
-}
-
-function hasTaskBlockquoteHrDecorationOnLine(
-  state: EditorState,
-  lineNumber: number,
-): boolean {
-  const line = state.doc.line(lineNumber);
-  const decorations = state.field(taskBlockquoteHrDecorations);
-  let foundDecoration = false;
-
-  decorations.between(line.from, line.to, () => {
-    foundDecoration = true;
-  });
-
-  return foundDecoration;
-}
-
-function collectCodeBlockLanguages(state: EditorState): string[] {
-  const languages: string[] = [];
-  const decorations = state.field(codeBlockDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (
-      value.spec as { widget?: { kind?: unknown; language?: unknown } }
-    ).widget;
-    if (!widget || widget.kind !== "code-block") {
-      return;
-    }
-
-    if (typeof widget.language === "string") {
-      languages.push(widget.language);
-    } else {
-      languages.push("");
-    }
-  });
-
-  return languages;
-}
-
-function collectCodeBlockWidgetKinds(state: EditorState): string[] {
-  const kinds: string[] = [];
-  const decorations = state.field(codeBlockDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
-    if (!widget || typeof widget.kind !== "string") {
-      return;
-    }
-    kinds.push(widget.kind);
-  });
-
-  return kinds;
-}
-
-function collectMathWidgetKinds(state: EditorState): string[] {
-  const kinds: string[] = [];
-  const decorations = state.field(mathPreviewDecorations);
-
-  decorations.between(0, state.doc.length, (_from, _to, value) => {
-    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
-    if (
-      !widget ||
-      (widget.kind !== "math-inline" && widget.kind !== "math-block")
-    ) {
-      return;
-    }
-    kinds.push(widget.kind);
-  });
-
-  return kinds;
-}
-
-function hasMathDecorationOnLine(
-  state: EditorState,
-  lineNumber: number,
-): boolean {
-  const line = state.doc.line(lineNumber);
-  const decorations = state.field(mathPreviewDecorations);
-  let foundDecoration = false;
-
-  decorations.between(line.from, line.to, () => {
-    foundDecoration = true;
-  });
-
-  return foundDecoration;
-}
-
-function hasCodeBlockDecorationOnLine(
-  state: EditorState,
-  lineNumber: number,
-): boolean {
-  const line = state.doc.line(lineNumber);
-  const decorations = state.field(codeBlockDecorations);
-  let foundDecoration = false;
-
-  decorations.between(line.from, line.to, () => {
-    foundDecoration = true;
-  });
-
-  return foundDecoration;
+  return count;
 }
