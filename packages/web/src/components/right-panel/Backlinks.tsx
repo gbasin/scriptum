@@ -19,6 +19,10 @@ export interface BacklinkEntry {
 export interface BacklinksProps {
   workspaceId: string;
   documentId: string;
+  backlinks?: BacklinkEntry[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   refreshToken?: string | number;
   fetchBacklinks?: (
     workspaceId: string,
@@ -138,10 +142,18 @@ export async function fetchBacklinksFromRelay(
 export function Backlinks({
   workspaceId,
   documentId,
+  backlinks: controlledBacklinks,
+  loading: controlledLoading,
+  error: controlledError,
+  onRetry,
   refreshToken,
   fetchBacklinks = fetchBacklinksFromRelay,
   onBacklinkSelect,
 }: BacklinksProps) {
+  const controlledMode =
+    controlledBacklinks !== undefined ||
+    controlledLoading !== undefined ||
+    controlledError !== undefined;
   const [backlinks, setBacklinks] = useState<BacklinkEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,8 +172,16 @@ export function Backlinks({
   }, [documentId, fetchBacklinks, workspaceId]);
 
   useEffect(() => {
+    if (controlledMode) {
+      return;
+    }
     void loadBacklinks();
-  }, [loadBacklinks, refreshToken]);
+  }, [controlledMode, loadBacklinks, refreshToken]);
+
+  const activeBacklinks = controlledBacklinks ?? backlinks;
+  const activeLoading = controlledLoading ?? loading;
+  const activeError = controlledError ?? error;
+  const handleRetry = onRetry ?? (() => void loadBacklinks());
 
   return (
     <section
@@ -171,7 +191,7 @@ export function Backlinks({
     >
       <h3 className={styles.heading}>Backlinks</h3>
 
-      {loading ? (
+      {activeLoading ? (
         <div data-testid="backlinks-loading">
           <div aria-hidden="true" className={styles.loadingList}>
             <SkeletonBlock className={clsx(styles.loadingLine, styles.loading74)} />
@@ -181,9 +201,9 @@ export function Backlinks({
         </div>
       ) : null}
 
-      {!loading && error ? (
+      {!activeLoading && activeError ? (
         <div data-testid="backlinks-error">
-          <p className={styles.errorMessage}>{error}</p>
+          <p className={styles.errorMessage}>{activeError}</p>
           <button
             className={clsx(
               controls.buttonBase,
@@ -191,7 +211,7 @@ export function Backlinks({
               styles.retryButton,
             )}
             data-testid="backlinks-retry"
-            onClick={() => void loadBacklinks()}
+            onClick={handleRetry}
             type="button"
           >
             Retry
@@ -199,19 +219,19 @@ export function Backlinks({
         </div>
       ) : null}
 
-      {!loading && !error && backlinks.length === 0 ? (
+      {!activeLoading && !activeError && activeBacklinks.length === 0 ? (
         <p className={styles.emptyState} data-testid="backlinks-empty">
           No documents link to this page.
         </p>
       ) : null}
 
-      {!loading && !error && backlinks.length > 0 ? (
+      {!activeLoading && !activeError && activeBacklinks.length > 0 ? (
         <ul
           aria-label="Incoming wiki links"
           className={styles.backlinksList}
           data-testid="backlinks-list"
         >
-          {backlinks.map((backlink) => (
+          {activeBacklinks.map((backlink) => (
             <li className={styles.backlinkListItem} key={backlink.docId}>
               <button
                 className={styles.backlinkTitleButton}

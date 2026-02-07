@@ -14,8 +14,8 @@ import { useUiStore } from "../store/ui";
 import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
 import styles from "./Layout.module.css";
+import { Backlinks } from "./right-panel/Backlinks";
 import { Outline } from "./right-panel/Outline";
-import { SkeletonBlock } from "./Skeleton";
 import { AgentsSection } from "./sidebar/AgentsSection";
 import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
 import {
@@ -127,6 +127,17 @@ export function Layout() {
   const incomingBacklinks = useMemo(
     () => buildIncomingBacklinks(workspaceDocuments, activeDocumentId),
     [workspaceDocuments, activeDocumentId],
+  );
+  const incomingBacklinkEntries = useMemo(
+    () =>
+      incomingBacklinks.map((backlink) => ({
+        docId: backlink.sourceDocumentId,
+        path: backlink.sourcePath,
+        title: backlink.sourceTitle,
+        linkText: backlink.snippet,
+        snippet: backlink.snippet,
+      })),
+    [incomingBacklinks],
   );
   const showPanelSkeletons =
     activeWorkspaceId !== null && workspaceDocuments.length === 0;
@@ -637,47 +648,13 @@ export function Layout() {
               className={styles.backlinksSection}
               data-testid="backlinks-panel"
             >
-              <h3 className={styles.backlinksTitle}>Backlinks</h3>
-              {showPanelSkeletons ? (
-                <div data-testid="backlinks-loading">
-                  <div className={styles.backlinksLoadingList}>
-                    <SkeletonBlock className={styles.backlinksLoadingLine72} />
-                    <SkeletonBlock className={styles.backlinksLoadingLine56} />
-                    <SkeletonBlock className={styles.backlinksLoadingLine67} />
-                  </div>
-                </div>
-              ) : incomingBacklinks.length === 0 ? (
-                <p className={styles.backlinksEmpty} data-testid="backlinks-empty">
-                  No incoming links to this document.
-                </p>
-              ) : (
-                <ul
-                  aria-label="Incoming wiki links"
-                  className={styles.backlinksList}
-                  data-testid="backlinks-list"
-                >
-                  {incomingBacklinks.map((backlink) => (
-                    <li className={styles.backlinksItem} key={backlink.sourceDocumentId}>
-                      <button
-                        className={styles.backlinkButton}
-                        data-testid={`backlink-item-${backlink.sourceDocumentId}`}
-                        onClick={() =>
-                          handleBacklinkSelect(backlink.sourceDocumentId)
-                        }
-                        type="button"
-                      >
-                        {backlink.sourceTitle}
-                      </button>
-                      <p
-                        className={styles.backlinkSnippet}
-                        data-testid={`backlink-snippet-${backlink.sourceDocumentId}`}
-                      >
-                        {backlink.snippet}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <Backlinks
+                backlinks={incomingBacklinkEntries}
+                documentId={activeDocumentId ?? ""}
+                loading={showPanelSkeletons}
+                onBacklinkSelect={handleBacklinkSelect}
+                workspaceId={activeWorkspaceId ?? ""}
+              />
             </section>
           ) : null}
 
