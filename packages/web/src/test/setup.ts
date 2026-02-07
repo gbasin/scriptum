@@ -19,6 +19,22 @@ const DEFAULT_VIEWPORT: FixtureViewport = {
   deviceScaleFactor: 1,
 };
 
+interface FixtureKatexRenderOptions {
+  displayMode?: boolean;
+}
+
+interface FixtureKatexRenderer {
+  render(
+    expression: string,
+    element: HTMLElement,
+    options?: FixtureKatexRenderOptions,
+  ): void;
+}
+
+interface FixtureMermaidRenderer {
+  render(id: string, source: string): { svg: string };
+}
+
 declare global {
   interface Window {
     __SCRIPTUM_FIXTURE_SETUP_DONE__?: boolean;
@@ -69,6 +85,56 @@ function installFixtureStyle(
   (targetDocument.head ?? targetDocument.documentElement).appendChild(style);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function installFixtureRenderers(
+  targetWindow: Window & typeof globalThis,
+): void {
+  const record = targetWindow as unknown as {
+    katex?: FixtureKatexRenderer;
+    mermaid?: FixtureMermaidRenderer;
+  };
+
+  if (!record.katex) {
+    record.katex = {
+      render(expression, element, options) {
+        const doc = element.ownerDocument;
+        element.textContent = "";
+
+        const katexNode = doc.createElement("span");
+        katexNode.className = "katex";
+        katexNode.textContent = expression;
+
+        if (options?.displayMode) {
+          const displayNode = doc.createElement("span");
+          displayNode.className = "katex-display";
+          displayNode.appendChild(katexNode);
+          element.appendChild(displayNode);
+          return;
+        }
+
+        element.appendChild(katexNode);
+      },
+    };
+  }
+
+  if (!record.mermaid) {
+    record.mermaid = {
+      render(id, source) {
+        return {
+          svg: `<svg data-testid=\"fixture-mermaid\" data-id=\"${escapeHtml(id)}\" viewBox=\"0 0 320 60\" xmlns=\"http://www.w3.org/2000/svg\"><text x=\"8\" y=\"32\">${escapeHtml(source)}</text></svg>`,
+        };
+      },
+    };
+  }
+}
+
 export function isFixtureModeEnabled(
   env: Record<string, unknown> = import.meta.env as Record<string, unknown>,
 ): boolean {
@@ -105,6 +171,7 @@ export function setupFixtureMode(
 
   if (targetWindow.document) {
     installFixtureStyle(targetWindow.document, viewport);
+    installFixtureRenderers(targetWindow);
     targetWindow.document.documentElement.setAttribute(
       "data-scriptum-fixture-mode",
       "true",

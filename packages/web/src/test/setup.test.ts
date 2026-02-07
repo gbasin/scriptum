@@ -89,4 +89,27 @@ describe("setupFixtureMode", () => {
     expect(setupFixtureMode(options)).toBe(true);
     expect(styles).toHaveLength(1);
   });
+
+  it("installs fixture math and diagram renderers", () => {
+    const { document } = createFakeDocument();
+    const fakeWindow = {
+      Date: { now: () => 42 } as DateConstructor,
+      document,
+    } as Window & typeof globalThis;
+
+    const applied = setupFixtureMode({
+      env: { VITE_SCRIPTUM_FIXTURE_MODE: "1" },
+      globalWindow: fakeWindow,
+    });
+
+    expect(applied).toBe(true);
+    expect(
+      typeof (fakeWindow as Window & { katex?: { render?: unknown } }).katex
+        ?.render,
+    ).toBe("function");
+    expect(
+      typeof (fakeWindow as Window & { mermaid?: { render?: unknown } }).mermaid
+        ?.render,
+    ).toBe("function");
+  });
 });

@@ -5,21 +5,30 @@
       - option "No workspaces yet" [selected]
     - button "Create new workspace"
     - list "Workspace list"
+  - region "Command palette section":
+    - button "Open command palette": Search files, commands, recent docs
+  - region "Tags section":
+    - heading "Tags" [level=2]
+    - paragraph: No tags available.
+  - region "Document tree section":
+    - heading "Documents" [level=2]
+    - paragraph: No documents yet.
   - region "Agents section":
     - heading "Agents" [level=2]
     - paragraph: No active agents.
-  - heading "Sidebar" [level=2]
-  - paragraph: Navigation and context panels.
 - main "Editor area":
   - region "Document workspace":
     - 'heading "Document: ws-smoke/doc-smoke" [level=1]'
     - navigation "Open document tabs":
       - button "doc-smoke"
       - button "Close doc-smoke"
-    - navigation "Document breadcrumb": ws-smoke / doc-smoke
+    - navigation "Document breadcrumb":
+      - button "ws-smoke"
+      - text: ""
+      - button "doc-smoke"
     - region "Editor surface":
       - heading "Editor" [level=2]
-      - text: "/# Active raw heading ## Inactive rendered heading - plain list item - \\[ \\] task open - \\[x\\] task done \\[Scriptum\\]\\(https:\\/\\/scriptum\\.dev\\) and <https:\\/\\/example\\.com> \\| Name \\| Role \\| Score \\| \\| :--- \\| ---: \\| ---: \\| \\| Ada \\| Agent \\| \\d+ \\| ```ts const answer = \\d+; ```/"
+      - text: "/# Active raw heading ## Inactive rendered heading - plain list item - \\[ \\] task open - \\[x\\] task done \\[Scriptum\\]\\(https:\\/\\/scriptum\\.dev\\) and <https:\\/\\/example\\.com> \\| Name \\| Role \\| Score \\| \\| :--- \\| ---: \\| ---: \\| \\| Ada \\| Agent \\| \\d+ \\| ```ts const answer = \\d+; ``` ```mermaid flowchart LR A\\[Draft\\] --> B\\[Review\\] B --> C\\[Publish\\] ``` Inline math: \\$E=mc\\^2\\$ \\$\\$ \\\\int_0\\^1 f\\(x\\)\\\\,dx \\$\\$/"
       - textbox:
         - link "Scriptum":
           - /url: https://scriptum.dev
@@ -48,10 +57,37 @@
       - paragraph: Awaiting collaborators.
     - status "Sync state": "Sync: Synced"
     - text: "Ln 1, Col 1 Editors: 1"
+    - region "History browsing view":
+      - heading "Author-colored highlights" [level=3]
+      - paragraph: Scrub snapshots to inspect per-character attribution.
+      - text: "/You # Active raw heading ## Inactive rendered heading - plain list item - \\[ \\] task open - \\[x\\] task done \\[Scriptum\\]\\(https:\\/\\/scriptum\\.dev\\) and <https:\\/\\/example\\.com> \\| Name \\| Role \\| Score \\| \\| :--- \\| ---: \\| ---: \\| \\| Ada \\| Agent \\| \\d+ \\| ```ts const answer = \\d+; ``` ```mermaid flowchart LR A\\[Draft\\] --> B\\[Review\\] B --> C\\[Publish\\] ``` Inline math: \\$E=mc\\^2\\$ \\$\\$ \\\\int_0\\^1 f\\(x\\)\\\\,dx \\$\\$/"
     - region "History timeline":
       - text: ""
+      - group "History view mode":
+        - button "Colored authorship" [pressed]
+        - button "Diff from current"
+      - status: "View: Colored authorship"
       - slider "History timeline slider"
       - status: Version 6/6
+- complementary "Document outline panel":
+  - heading "Outline" [level=2]
+  - button "Hide"
+  - list "Document heading outline":
+    - listitem:
+      - 'button "Document: ws-smoke/doc-smoke"'
+    - listitem:
+      - button "Editor"
+    - listitem:
+      - button "Comments"
+    - listitem:
+      - button "Presence"
+    - listitem:
+      - button "Section overlap"
+    - listitem:
+      - button "Author-colored highlights"
+  - region "Incoming backlinks":
+    - heading "Backlinks" [level=3]
+    - paragraph: No incoming links to this document.
 - region "Smoke fixture probe":
   - heading "Smoke Fixture Probe" [level=2]
   - paragraph: fixture=default

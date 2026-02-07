@@ -250,6 +250,11 @@ function collectMathBlocks(state: EditorState): ParsedMathBlock[] {
 
 function buildMathDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  const entries: Array<{
+    decoration: Decoration;
+    from: number;
+    to: number;
+  }> = [];
   const mathBlocks = collectMathBlocks(state);
   const blockLines = new Set<number>();
 
@@ -266,15 +271,15 @@ function buildMathDecorations(state: EditorState): DecorationSet {
       continue;
     }
 
-    builder.add(
-      block.from,
-      block.to,
-      Decoration.replace({
+    entries.push({
+      decoration: Decoration.replace({
         block: true,
         inclusive: false,
         widget: new MathWidget(block.expression, true),
       }),
-    );
+      from: block.from,
+      to: block.to,
+    });
   }
 
   let inFence = false;
@@ -295,15 +300,26 @@ function buildMathDecorations(state: EditorState): DecorationSet {
 
     const tokens = extractInlineMathTokens(line.text, line.from);
     for (const token of tokens) {
-      builder.add(
-        token.from,
-        token.to,
-        Decoration.replace({
+      entries.push({
+        decoration: Decoration.replace({
           inclusive: false,
           widget: new MathWidget(token.expression, false),
         }),
-      );
+        from: token.from,
+        to: token.to,
+      });
     }
+  }
+
+  entries.sort((left, right) => {
+    if (left.from !== right.from) {
+      return left.from - right.from;
+    }
+    return left.to - right.to;
+  });
+
+  for (const entry of entries) {
+    builder.add(entry.from, entry.to, entry.decoration);
   }
 
   return builder.finish();

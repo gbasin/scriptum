@@ -47,6 +47,27 @@ describe("math live preview", () => {
     expect(kinds.filter((kind) => kind === "math-block")).toHaveLength(1);
   });
 
+  it("supports inline math before block math without crashing decoration ordering", () => {
+    const source = [
+      "active",
+      "Inline $x^2$ first",
+      "",
+      "$$",
+      "\\int_0^1 f(x)\\,dx",
+      "$$",
+    ].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    const kinds = collectMathWidgetKinds(state);
+    expect(kinds).toContain("math-inline");
+    expect(kinds).toContain("math-block");
+    expect(kinds).toHaveLength(2);
+  });
+
   it("keeps active math expressions as raw markdown", () => {
     const inlineSource = ["$x^2$", "inactive"].join("\n");
     const inlineState = EditorState.create({

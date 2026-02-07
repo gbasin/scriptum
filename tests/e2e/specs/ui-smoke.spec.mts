@@ -64,7 +64,9 @@ test.describe("ui smoke fixtures @smoke", () => {
   for (const fixture of smokeFixtures) {
     test(`${fixture.name} @smoke`, async ({ page }) => {
       await page.goto(fixture.route);
-      await expect(page.getByText(fixture.expectations.heading)).toBeVisible();
+      await expect(
+        page.getByText(fixture.expectations.heading).first(),
+      ).toBeVisible();
 
       await applyFixtureState(page, fixture.state);
       if (fixture.state) {
@@ -225,7 +227,11 @@ async function stabilizeLivePreviewFixture(page: Page): Promise<void> {
 
 async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
   const probe = page.getByTestId("editor-host");
-  await expect(probe.locator(".cm-editor")).toBeVisible();
+  await expect(probe.locator(".cm-editor")).toBeVisible({ timeout: 20_000 });
+  await expect(probe.locator(".cm-content .cm-line").first()).toContainText(
+    "# Active raw heading",
+    { timeout: 20_000 },
+  );
 
   const snapshot = await probe
     .locator(".cm-content .cm-line")
@@ -236,6 +242,9 @@ async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
       return {
         firstLine,
         secondLine,
+        editorText:
+          document.querySelector('[data-testid="editor-host"] .cm-content')
+            ?.textContent ?? "",
         hasCodeBlock: Boolean(
           document.querySelector(
             '[data-testid="editor-host"] .cm-livePreview-codeBlock',
@@ -261,6 +270,36 @@ async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
             '[data-testid="editor-host"] .cm-livePreview-task-checkbox',
           ),
         ),
+        hasInlineMathWidget: Boolean(
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-mathInline',
+          ),
+        ),
+        hasDisplayMathWidget: Boolean(
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-mathBlock',
+          ),
+        ),
+        hasInlineKatexClass: Boolean(
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-mathInline .katex',
+          ),
+        ),
+        hasDisplayKatexClass: Boolean(
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-mathBlock .katex',
+          ),
+        ),
+        hasCenteredDisplayEquation: Boolean(
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-mathBlock .katex-display',
+          ),
+        ),
+        hasMathFallback: Boolean(
+          document.querySelector(
+            '[data-testid="editor-host"] .cm-livePreview-mathFallback',
+          ),
+        ),
       };
     });
 
@@ -274,4 +313,12 @@ async function assertLivePreviewRawVsRich(page: Page): Promise<void> {
   expect(snapshot.hasLink).toBe(true);
   expect(snapshot.hasTable).toBe(true);
   expect(snapshot.hasCodeBlock).toBe(true);
+  expect(snapshot.hasInlineMathWidget).toBe(true);
+  expect(snapshot.hasDisplayMathWidget).toBe(true);
+  expect(snapshot.hasInlineKatexClass).toBe(true);
+  expect(snapshot.hasDisplayKatexClass).toBe(true);
+  expect(snapshot.hasCenteredDisplayEquation).toBe(true);
+  expect(snapshot.hasMathFallback).toBe(false);
+  expect(snapshot.editorText).not.toContain("$E=mc^2$");
+  expect(snapshot.editorText).not.toContain("$$");
 }
