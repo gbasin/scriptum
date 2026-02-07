@@ -1,4 +1,6 @@
 import { BrowserRouter, useRoutes } from "react-router-dom";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import styles from "./App.module.css";
 import { appRoutes } from "./router";
 
 export function AppRoutes() {
@@ -7,8 +9,12 @@ export function AppRoutes() {
 
 export function App() {
   return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
+    <div className={styles.appShell}>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </ErrorBoundary>
+    </div>
   );
 }
