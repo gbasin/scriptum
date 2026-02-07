@@ -51,6 +51,8 @@ pub fn require_supported(version: &str) -> Result<(), RelayError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
@@ -117,5 +119,24 @@ mod tests {
         // Must be exact match, not prefix/suffix
         assert!(require_supported("scriptum-sync.v1-beta").is_err());
         assert!(require_supported("scriptum-sync.v").is_err());
+    }
+
+    #[test]
+    fn compatibility_matrix_accepts_all_supported_versions_and_keeps_unique_order() {
+        let versions = supported_versions();
+        assert!(!versions.is_empty(), "supported version list must not be empty");
+        assert_eq!(
+            versions[0], CURRENT_VERSION,
+            "the current version must remain the first (N) entry",
+        );
+
+        let mut seen = HashSet::new();
+        for version in versions {
+            assert!(seen.insert(*version), "duplicate supported version entry: {version}");
+            assert!(
+                require_supported(version).is_ok(),
+                "supported version should be accepted: {version}",
+            );
+        }
     }
 }

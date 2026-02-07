@@ -1,5 +1,5 @@
 use scriptum_common::protocol::jsonrpc::{
-    Request, RequestId, Response, INVALID_PARAMS, METHOD_NOT_FOUND,
+    Request, RequestId, Response, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND,
 };
 use scriptum_daemon::rpc::methods::{handle_raw_request, RpcServerState};
 use serde_json::json;
@@ -99,7 +99,56 @@ async fn mcp_passthrough_methods_accept_documented_param_shapes() {
     }
 }
 
+#[tokio::test]
+async fn jsonrpc_version_matrix_supports_current_and_rejects_legacy() {
+    let state = RpcServerState::default();
+
+    for version in ["2.0"] {
+        let response = call_raw_json(
+            &state,
+            json!({
+                "jsonrpc": version,
+                "id": format!("supported-{version}"),
+                "method": "rpc.ping",
+                "params": {}
+            }),
+        )
+        .await;
+
+        if let Some(error) = response.error {
+            assert_ne!(
+                error.code, INVALID_REQUEST,
+                "json-rpc version `{version}` should be accepted",
+            );
+        }
+    }
+
+    for version in ["1.0", "1.1", "2.1"] {
+        let response = call_raw_json(
+            &state,
+            json!({
+                "jsonrpc": version,
+                "id": format!("unsupported-{version}"),
+                "method": "rpc.ping",
+                "params": {}
+            }),
+        )
+        .await;
+
+        let error = response.error.expect("unsupported version should return an error");
+        assert_eq!(
+            error.code, INVALID_REQUEST,
+            "json-rpc version `{version}` should be rejected",
+        );
+    }
+}
+
 async fn call_raw(state: &RpcServerState, request: &Request) -> Response {
     let raw = serde_json::to_vec(request).expect("request should serialize");
+    handle_raw_request(&raw, state).await
+}
+
+async fn call_raw_json(state: &RpcServerState, payload: serde_json::Value) -> Response {
+    let raw = serde_json::to_vec(&payload).expect("payload should serialize");
     handle_raw_request(&raw, state).await
 }

@@ -1,0 +1,39 @@
+name: Compatibility Matrix
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compatibility:
+    name: Compatibility (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: rest
+            command: cargo test -p scriptum-relay workspace_rest_response_shape_matches_contract -- --nocapture
+          - target: websocket
+            command: >-
+              cargo test -p scriptum-relay compatibility_matrix_accepts_all_supported_versions_and_keeps_unique_order -- --nocapture &&
+              cargo test -p scriptum-relay create_sync_session_returns_expected_contract -- --nocapture &&
+              cargo test -p scriptum-relay create_sync_session_rejects_unsupported_protocol_with_upgrade_required -- --nocapture
+          - target: json-rpc
+            command: cargo test -p scriptum-daemon --test jsonrpc_contract_integration jsonrpc_version_matrix_supports_current_and_rejects_legacy -- --nocapture
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run compatibility checks
+        run: ${{ matrix.command }}
