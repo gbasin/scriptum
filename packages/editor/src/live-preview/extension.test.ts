@@ -9,6 +9,7 @@ import {
   inlineLinkDecorations,
   isLineActive,
   livePreview,
+  mathPreviewDecorations,
   tablePreviewDecorations,
   taskBlockquoteHrDecorations,
 } from "./extension.js";
@@ -314,6 +315,72 @@ describe("livePreview", () => {
 
     expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(false);
   });
+
+  it("renders inline math on unfocused lines", () => {
+    const source = ["active", "Euler identity: $e^{i\\pi}+1=0$"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    expect(collectMathWidgetKinds(state)).toContain("math-inline");
+    expect(hasMathDecorationOnLine(state, 2)).toBe(true);
+  });
+
+  it("renders block math on unfocused lines", () => {
+    const source = ["active", "$$", "\\int_0^1 x^2 dx", "$$"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    expect(collectMathWidgetKinds(state)).toContain("math-block");
+    expect(hasMathDecorationOnLine(state, 2)).toBe(true);
+  });
+
+  it("keeps active math expressions raw markdown", () => {
+    const inlineSource = ["$x^2$", "inactive"].join("\n");
+    const inlineState = EditorState.create({
+      doc: inlineSource,
+      selection: { anchor: inlineSource.indexOf("$x^2$") },
+      extensions: [livePreview()],
+    });
+    expect(hasMathDecorationOnLine(inlineState, 1)).toBe(false);
+
+    const blockSource = ["active", "$$", "x^2", "$$"].join("\n");
+    const blockState = EditorState.create({
+      doc: blockSource,
+      selection: { anchor: blockSource.indexOf("$$") },
+      extensions: [livePreview()],
+    });
+    expect(hasMathDecorationOnLine(blockState, 2)).toBe(false);
+  });
+
+  it("renders mermaid fenced diagrams on unfocused lines", () => {
+    const source = ["active", "", "```mermaid", "graph TD", "A-->B", "```"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: 0 },
+      extensions: [livePreview()],
+    });
+
+    expect(collectCodeBlockWidgetKinds(state)).toContain("mermaid-diagram");
+    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(true);
+  });
+
+  it("keeps active mermaid fenced blocks raw markdown", () => {
+    const source = ["active", "", "```mermaid", "graph TD", "A-->B", "```"].join("\n");
+    const state = EditorState.create({
+      doc: source,
+      selection: { anchor: source.indexOf("```mermaid") },
+      extensions: [livePreview()],
+    });
+
+    expect(collectCodeBlockWidgetKinds(state)).not.toContain("mermaid-diagram");
+    expect(hasCodeBlockDecorationOnLine(state, 3)).toBe(false);
+  });
 });
 
 function collectHeadingClasses(state: EditorState): Set<string> {
@@ -564,6 +631,48 @@ function collectCodeBlockLanguages(state: EditorState): string[] {
   });
 
   return languages;
+}
+
+function collectCodeBlockWidgetKinds(state: EditorState): string[] {
+  const kinds: string[] = [];
+  const decorations = state.field(codeBlockDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
+    if (!widget || typeof widget.kind !== "string") {
+      return;
+    }
+    kinds.push(widget.kind);
+  });
+
+  return kinds;
+}
+
+function collectMathWidgetKinds(state: EditorState): string[] {
+  const kinds: string[] = [];
+  const decorations = state.field(mathPreviewDecorations);
+
+  decorations.between(0, state.doc.length, (_from, _to, value) => {
+    const widget = (value.spec as { widget?: { kind?: unknown } }).widget;
+    if (!widget || (widget.kind !== "math-inline" && widget.kind !== "math-block")) {
+      return;
+    }
+    kinds.push(widget.kind);
+  });
+
+  return kinds;
+}
+
+function hasMathDecorationOnLine(state: EditorState, lineNumber: number): boolean {
+  const line = state.doc.line(lineNumber);
+  const decorations = state.field(mathPreviewDecorations);
+  let foundDecoration = false;
+
+  decorations.between(line.from, line.to, () => {
+    foundDecoration = true;
+  });
+
+  return foundDecoration;
 }
 
 function hasCodeBlockDecorationOnLine(state: EditorState, lineNumber: number): boolean {
