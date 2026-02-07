@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod comments;
 pub mod documents;
 pub mod search;
@@ -38,6 +39,7 @@ use uuid::Uuid;
 use crate::{
     auth::{
         jwt::JwtAccessTokenService,
+        oauth::OAuthState,
         middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
     },
     db::pool::{check_pool_health, create_pg_pool, PoolConfig},
@@ -634,7 +636,10 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub async fn build_router_from_env(jwt_service: Arc<JwtAccessTokenService>) -> Result<Router> {
+pub async fn build_router_from_env(
+    jwt_service: Arc<JwtAccessTokenService>,
+    oauth_state: OAuthState,
+) -> Result<Router> {
     let database_url = env::var("SCRIPTUM_RELAY_DATABASE_URL")
         .context("SCRIPTUM_RELAY_DATABASE_URL must be set for workspace API")?;
 
@@ -646,6 +651,7 @@ pub async fn build_router_from_env(jwt_service: Arc<JwtAccessTokenService>) -> R
         .context("relay PostgreSQL health check failed for workspace API")?;
 
     Ok(build_router_with_store(WorkspaceStore::Postgres(pool.clone()), Arc::clone(&jwt_service))
+        .merge(auth::router(oauth_state))
         .merge(comments::router(pool.clone(), Arc::clone(&jwt_service)))
         .merge(search::router(pool, jwt_service)))
 }

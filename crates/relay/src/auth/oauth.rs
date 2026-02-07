@@ -1027,8 +1027,11 @@ async fn handle_token_refresh(
 
 async fn handle_logout(
     State(state): State<OAuthState>,
+    headers: HeaderMap,
     Json(payload): Json<RefreshTokenRequest>,
 ) -> Result<StatusCode, RelayError> {
+    extract_user_id_from_bearer(&state, &headers)?;
+
     let token_hash = Sha256::digest(payload.refresh_token.as_bytes()).to_vec();
 
     let (session_id, _) = state
@@ -1065,7 +1068,9 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
 
-    use crate::error::RelayError;
+    use crate::{auth::jwt::JwtAccessTokenService, error::RelayError};
+
+    const TEST_JWT_SECRET: &str = "scriptum_test_jwt_secret_that_is_definitely_long_enough";
 
     fn test_router(max_requests: usize) -> (axum::Router, Arc<OAuthFlowStore>) {
         let flow_store = Arc::new(OAuthFlowStore::default());
@@ -1591,13 +1596,15 @@ mod tests {
             .expect("request should build")
     }
 
-    fn logout_request(payload: Value) -> Request<Body> {
-        Request::builder()
+    fn logout_request(payload: Value, access_token: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder()
             .method(Method::POST)
             .uri("/v1/auth/logout")
-            .header("content-type", "application/json")
-            .body(Body::from(payload.to_string()))
-            .expect("request should build")
+            .header("content-type", "application/json");
+        if let Some(token) = access_token {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(payload.to_string())).expect("request should build")
     }
 
     async fn seed_refresh(
@@ -1611,6 +1618,13 @@ mod tests {
         let expires_at = Utc::now() + ttl;
         store.insert(session_id, user_id, token_hash, family_id, expires_at).await;
         raw_token
+    }
+
+    fn issue_test_access_token(user_id: Uuid) -> String {
+        JwtAccessTokenService::new(TEST_JWT_SECRET)
+            .expect("jwt service should initialize")
+            .issue_workspace_token(user_id, Uuid::nil())
+            .expect("token should be issued")
     }
 
     #[tokio::test]
@@ -1708,10 +1722,11 @@ mod tests {
         let user_id = Uuid::new_v4();
         let family_id = Uuid::new_v4();
         let raw_token = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
+        let access_token = issue_test_access_token(user_id);
 
         let response = app
             .clone()
-            .oneshot(logout_request(json!({ "refresh_token": raw_token })))
+            .oneshot(logout_request(json!({ "refresh_token": raw_token }), Some(&access_token)))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
@@ -1725,9 +1740,28 @@ mod tests {
     #[tokio::test]
     async fn logout_rejects_unknown_token() {
         let (app, _) = test_refresh_router_with_store();
+        let access_token = issue_test_access_token(Uuid::new_v4());
 
-        let response =
-            app.oneshot(logout_request(json!({ "refresh_token": "unknown-token" }))).await.unwrap();
+        let response = app
+            .oneshot(logout_request(
+                json!({ "refresh_token": "unknown-token" }),
+                Some(&access_token),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn logout_requires_bearer_token() {
+        let (app, store) = test_refresh_router_with_store();
+        let raw_token =
+            seed_refresh(&store, Uuid::new_v4(), Uuid::new_v4(), Duration::days(30)).await;
+
+        let response = app
+            .oneshot(logout_request(json!({ "refresh_token": raw_token }), None))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

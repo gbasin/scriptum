@@ -157,9 +157,8 @@ async fn main() -> anyhow::Result<()> {
         session_store,
         doc_store,
         membership_store,
-        oauth_state,
         cfg.ws_base_url.clone(),
-        api::build_router_from_env(jwt_service)
+        api::build_router_from_env(jwt_service, oauth_state)
             .await
             .context("failed to build relay workspace API router")?,
         readiness_probe,
@@ -183,7 +182,6 @@ fn build_router(
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
     membership_store: ws::WorkspaceMembershipStore,
-    oauth_state: OAuthState,
     ws_base_url: String,
     api_router: Router,
     readiness_probe: Arc<ReadinessProbe>,
@@ -195,7 +193,6 @@ fn build_router(
             .route("/healthz", get(health))
             .route("/ready", get(ready))
             .route("/metrics", get(prometheus_metrics))
-            .merge(auth::oauth::router(oauth_state))
             .merge(ws::router(
                 jwt_service,
                 session_store,
@@ -424,7 +421,7 @@ mod tests {
         workspace_id_from_path, DbCheckFuture, ReadinessProbe, MAX_REQUEST_BODY_BYTES,
     };
     use crate::{
-        auth::{jwt::JwtAccessTokenService, oauth::OAuthState},
+        auth::jwt::JwtAccessTokenService,
         error::{ErrorCode, REQUEST_ID_HEADER, TRACE_ID_HEADER},
         metrics::RelayMetrics,
         ws::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore},
@@ -453,7 +450,6 @@ mod tests {
             session_store,
             doc_store,
             WorkspaceMembershipStore::for_tests(),
-            OAuthState::from_env(),
             "ws://localhost:8080".to_string(),
             Router::new(),
             readiness_probe,
