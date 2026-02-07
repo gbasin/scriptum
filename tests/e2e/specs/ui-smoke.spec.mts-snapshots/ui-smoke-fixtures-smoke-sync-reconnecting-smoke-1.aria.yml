@@ -5,6 +5,9 @@
       - option "No workspaces yet" [selected]
     - button "Create new workspace"
     - list "Workspace list"
+  - region "Agents section":
+    - heading "Agents" [level=2]
+    - paragraph: No active agents.
   - heading "Sidebar" [level=2]
   - paragraph: Navigation and context panels.
 - main "Editor area":
@@ -30,12 +33,19 @@
       - heading "Section overlap" [level=2]
       - paragraph: "Severity: info"
       - paragraph: No direct section collisions detected.
+      - text: ""
     - status "Sync state": "Sync: Reconnecting"
-    - text: "Ln 1, Col 1 Editors: 2"
+    - text: "/Ln 1, Col 1 Editors: 2 Pending: 7 Syncing\\.\\.\\. 3\\/\\d+ updates/"
+    - region "History timeline":
+      - text: ""
+      - slider "History timeline slider"
+      - status: Version 6/6
 - region "Smoke fixture probe":
   - heading "Smoke Fixture Probe" [level=2]
   - paragraph: fixture=default
   - paragraph: sync=reconnecting
   - paragraph: cursor=0:0
   - paragraph: peers=Alex:human@1:2
-  - paragraph: git=dirty:true ahead:1 behind:1
+  - paragraph: pending=7
+  - paragraph: /reconnect=3\/\d+/
+  - paragraph: git=dirty:true ahead:1 behind:1 last:bead123

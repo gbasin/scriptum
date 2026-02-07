@@ -5,6 +5,10 @@
       - option "No workspaces yet" [selected]
     - button "Create new workspace"
     - list "Workspace list"
+  - region "Agents section":
+    - heading "Agents" [level=2]
+    - list:
+      - listitem: "Relay Agent Status: active Editing: doc-smoke"
   - heading "Sidebar" [level=2]
   - paragraph: Navigation and context panels.
 - main "Editor area":
@@ -23,14 +27,26 @@
       - paragraph: No comments yet.
     - region "Presence stack":
       - heading "Presence" [level=2]
+      - group "Online users"
       - list:
         - listitem: Relay Agent (agent)
+    - region "Section overlap":
+      - heading "Section overlap" [level=2]
+      - paragraph: "Severity: info"
+      - paragraph: No direct section collisions detected.
+      - text: "AGENT: Relay Agent"
     - status "Sync state": "Sync: Reconnecting"
     - text: "/Ln 3, Col 1 Editors: 2 Pending: \\d+ Syncing\\.\\.\\. \\d+\\/\\d+ updates/"
+    - region "History timeline":
+      - text: ""
+      - slider "History timeline slider"
+      - status: Version 6/6
 - region "Smoke fixture probe":
   - heading "Smoke Fixture Probe" [level=2]
   - paragraph: fixture=overlap-warning
   - paragraph: sync=reconnecting
   - paragraph: cursor=2:0
   - paragraph: peers=Relay Agent:agent@2:5
-  - paragraph: git=dirty:true ahead:1 behind:0
+  - paragraph: /pending=\d+/
+  - paragraph: /reconnect=\d+\/\d+/
+  - paragraph: git=dirty:true ahead:1 behind:0 last:none

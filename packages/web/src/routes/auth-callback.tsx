@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AuthClient } from "../auth/client";
 import { useAuthStore } from "../store/auth";
+import { isFixtureModeEnabled } from "../test/setup";
 
 const RELAY_URL = import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
 
@@ -13,9 +14,13 @@ export function AuthCallbackRoute() {
   const handleCallback = useAuthStore((s) => s.handleCallback);
   const status = useAuthStore((s) => s.status);
   const error = useAuthStore((s) => s.error);
+  const fixtureModeEnabled = isFixtureModeEnabled();
   const started = useRef(false);
 
   useEffect(() => {
+    if (fixtureModeEnabled) {
+      return;
+    }
     if (started.current) return;
     started.current = true;
 
@@ -29,13 +34,16 @@ export function AuthCallbackRoute() {
 
     const client = new AuthClient({ baseUrl: RELAY_URL });
     void handleCallback(client, code, state);
-  }, [searchParams, handleCallback, navigate]);
+  }, [fixtureModeEnabled, searchParams, handleCallback, navigate]);
 
   useEffect(() => {
+    if (fixtureModeEnabled) {
+      return;
+    }
     if (status === "authenticated") {
       navigate("/", { replace: true });
     }
-  }, [status, navigate]);
+  }, [fixtureModeEnabled, status, navigate]);
 
   if (error) {
     return (
