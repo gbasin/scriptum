@@ -15,8 +15,10 @@ use axum::{
     http::{header::AUTHORIZATION, Method, Request, StatusCode},
     Router,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{Duration, Utc};
 use futures_util::{SinkExt, StreamExt};
+use scriptum_common::crdt::origin::{AuthorType, OriginTag};
 use scriptum_common::protocol::ws::WsMessage;
 use std::{env, fs, sync::Arc};
 use tokio::net::TcpListener;
@@ -1807,6 +1809,17 @@ async fn yjs_update_captures_session_attribution_in_update_log() {
     .await
     .expect("subscribe should succeed");
 
+    let mismatched_origin = OriginTag {
+        author_id: "spoofed-agent".to_string(),
+        author_type: AuthorType::Agent,
+        timestamp: Utc::now(),
+    };
+    let payload_b64 = BASE64_STANDARD.encode(
+        mismatched_origin
+            .to_bytes()
+            .expect("test origin tag should encode"),
+    );
+
     handle_yjs_update_message(
         &session_store,
         &doc_store,
@@ -1815,7 +1828,7 @@ async fn yjs_update_captures_session_attribution_in_update_log() {
         client_id,
         client_update_id,
         0,
-        "payload".to_string(),
+        payload_b64,
     )
     .await
     .expect("yjs_update should apply");

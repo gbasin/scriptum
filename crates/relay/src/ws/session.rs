@@ -3,7 +3,9 @@ use crate::awareness::AwarenessStore;
 use crate::db::pool::{check_pool_health, create_pg_pool, PoolConfig};
 use crate::metrics;
 use anyhow::Context;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{Duration, Utc};
+use scriptum_common::crdt::origin::{AuthorType, OriginTag};
 use scriptum_common::protocol::ws::WsMessage;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,6 +14,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{mpsc, RwLock};
+use tracing::warn;
 use uuid::Uuid;
 
 pub(crate) const HEARTBEAT_INTERVAL_MS: u32 = 15_000;
@@ -268,6 +271,15 @@ impl DocSyncStore {
                 };
             }
 
+            maybe_warn_origin_tag_attribution_mismatch(
+                workspace_id,
+                doc_id,
+                client_id,
+                client_update_id,
+                &payload_b64,
+                &attribution,
+            );
+
             let next_server_seq = state.head_server_seq.saturating_add(1);
             state.head_server_seq = next_server_seq;
             state.dedupe.insert((client_id, client_update_id), next_server_seq);
@@ -357,6 +369,58 @@ fn workspace_outbox_depth(docs: &HashMap<(Uuid, Uuid), DocSyncState>, workspace_
         .filter(|((doc_workspace_id, _), _)| *doc_workspace_id == workspace_id)
         .map(|(_, state)| state.updates.len() as i64)
         .sum()
+}
+
+fn maybe_warn_origin_tag_attribution_mismatch(
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    client_id: Uuid,
+    client_update_id: Uuid,
+    payload_b64: &str,
+    attribution: &UpdateAttribution,
+) {
+    let Ok(payload) = BASE64_STANDARD.decode(payload_b64) else {
+        return;
+    };
+
+    let Ok(origin_tag) = OriginTag::from_bytes(&payload) else {
+        return;
+    };
+
+    let Some((expected_author_id, expected_author_type)) =
+        expected_origin_from_attribution(attribution)
+    else {
+        return;
+    };
+
+    if origin_tag.author_id == expected_author_id && origin_tag.author_type == expected_author_type
+    {
+        return;
+    }
+
+    warn!(
+        workspace_id = %workspace_id,
+        doc_id = %doc_id,
+        client_id = %client_id,
+        client_update_id = %client_update_id,
+        expected_author_id = %expected_author_id,
+        expected_author_type = ?expected_author_type,
+        actual_author_id = %origin_tag.author_id,
+        actual_author_type = ?origin_tag.author_type,
+        "embedded origin tag does not match websocket session attribution"
+    );
+}
+
+fn expected_origin_from_attribution(
+    attribution: &UpdateAttribution,
+) -> Option<(String, AuthorType)> {
+    if let Some(agent_id) = attribution.agent_id.as_ref() {
+        return Some((agent_id.clone(), AuthorType::Agent));
+    }
+
+    attribution
+        .user_id
+        .map(|user_id| (user_id.to_string(), AuthorType::Human))
 }
 
 impl SyncSessionStore {
