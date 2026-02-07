@@ -1,5 +1,7 @@
 import { nameToColor } from "@scriptum/editor";
+import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
+import styles from "./CursorLabel.module.css";
 
 const DEFAULT_AUTO_HIDE_MS = 3_000;
 
@@ -79,29 +81,15 @@ export function CursorLabel({
   return (
     <div
       aria-label={`${peer.name} cursor label`}
+      className={styles.label}
       data-testid="cursor-label"
-      style={{
-        alignItems: "center",
-        backgroundColor: color,
-        border: "1px solid rgba(0, 0, 0, 0.22)",
-        borderRadius: "6px",
-        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.22)",
-        color: "#ffffff",
-        display: "inline-flex",
-        fontSize: "12px",
-        fontWeight: 600,
-        gap: "6px",
-        left: `${peer.cursorPosition.x}px`,
-        lineHeight: 1,
-        maxWidth: "240px",
-        padding: "4px 8px",
-        pointerEvents: "none",
-        position: "absolute",
-        top: `${peer.cursorPosition.y}px`,
-        transform: "translate(-50%, calc(-100% - 10px))",
-        whiteSpace: "nowrap",
-        zIndex: 30,
-      }}
+      style={
+        {
+          "--cursor-label-color": color,
+          "--cursor-x": `${peer.cursorPosition.x}px`,
+          "--cursor-y": `${peer.cursorPosition.y}px`,
+        } as CSSProperties
+      }
     >
       {peer.type === "agent" ? <RobotIcon /> : null}
       <span data-testid="cursor-label-name">{peer.name}</span>

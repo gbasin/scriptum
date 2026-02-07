@@ -169,7 +169,6 @@ describe("Outline", () => {
     ).find((button) => button.textContent?.includes("intentionally very long"));
 
     expect(headingButton).toBeDefined();
-    expect(headingButton?.style.textOverflow).toBe("ellipsis");
     expect(headingButton?.title).toContain("intentionally very long");
 
     harness.unmount();

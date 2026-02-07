@@ -1,3 +1,5 @@
+import styles from "./Breadcrumb.module.css";
+
 export interface BreadcrumbSegment {
   label: string;
   path: string;
@@ -47,33 +49,11 @@ export function Breadcrumb({ path, workspaceLabel, onNavigate }: BreadcrumbProps
   };
 
   return (
-    <nav
-      aria-label="Document breadcrumb"
-      data-testid="breadcrumb"
-      style={{
-        color: "#475569",
-        fontSize: "0.82rem",
-        marginBottom: "0.75rem",
-        marginTop: "0.45rem",
-      }}
-    >
+    <nav aria-label="Document breadcrumb" className={styles.root} data-testid="breadcrumb">
       <button
+        className={onNavigate ? styles.segmentButton : styles.segmentButtonDisabled}
         data-testid="breadcrumb-root"
         onClick={() => triggerNavigate(null)}
-        style={{
-          background: "none",
-          border: "none",
-          color: "inherit",
-          cursor: onNavigate ? "pointer" : "default",
-          margin: 0,
-          maxWidth: "14rem",
-          overflow: "hidden",
-          padding: 0,
-          textAlign: "inherit",
-          textOverflow: "ellipsis",
-          verticalAlign: "bottom",
-          whiteSpace: "nowrap",
-        }}
         title={workspaceLabel}
         type="button"
       >
@@ -82,25 +62,18 @@ export function Breadcrumb({ path, workspaceLabel, onNavigate }: BreadcrumbProps
       {segments.map((segment) => {
         const label = truncateBreadcrumbLabel(segment.label);
         return (
-          <span data-testid={`breadcrumb-${segment.path}`} key={segment.path}>
-            {" / "}
+          <span
+            className={styles.segmentWrapper}
+            data-testid={`breadcrumb-${segment.path}`}
+            key={segment.path}
+          >
+            <span aria-hidden="true" className={styles.separator}>
+              {" / "}
+            </span>
             <button
+              className={onNavigate ? styles.segmentButton : styles.segmentButtonDisabled}
               data-testid={`breadcrumb-segment-${segment.path}`}
               onClick={() => triggerNavigate(segment.path)}
-              style={{
-                background: "none",
-                border: "none",
-                color: "inherit",
-                cursor: onNavigate ? "pointer" : "default",
-                margin: 0,
-                maxWidth: "14rem",
-                overflow: "hidden",
-                padding: 0,
-                textAlign: "inherit",
-                textOverflow: "ellipsis",
-                verticalAlign: "bottom",
-                whiteSpace: "nowrap",
-              }}
               title={segment.label}
               type="button"
             >

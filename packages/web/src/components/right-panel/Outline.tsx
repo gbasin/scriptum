@@ -1,7 +1,17 @@
+import clsx from "clsx";
 import { useEffect, useState } from "react";
 import { SkeletonBlock } from "../Skeleton";
+import styles from "./Outline.module.css";
 
 const OUTLINE_ACTIVE_OFFSET_PX = 120;
+const LEVEL_CLASSNAME: Record<number, string> = {
+  1: styles.level1,
+  2: styles.level2,
+  3: styles.level3,
+  4: styles.level4,
+  5: styles.level5,
+  6: styles.level6,
+};
 
 export interface OutlineHeading {
   id: string;
@@ -151,11 +161,11 @@ export function Outline({ editorContainer, loading = false }: OutlineProps) {
   if (loading) {
     return (
       <div data-testid="outline-loading">
-        <div aria-hidden="true" style={{ display: "grid", gap: "0.375rem" }}>
-          <SkeletonBlock style={{ height: "0.78rem", width: "78%" }} />
-          <SkeletonBlock style={{ height: "0.78rem", width: "62%" }} />
-          <SkeletonBlock style={{ height: "0.78rem", width: "72%" }} />
-          <SkeletonBlock style={{ height: "0.78rem", width: "52%" }} />
+        <div aria-hidden="true" className={styles.loadingList}>
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading78)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading62)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading72)} />
+          <SkeletonBlock className={clsx(styles.loadingLine, styles.loading52)} />
         </div>
       </div>
     );
@@ -163,7 +173,7 @@ export function Outline({ editorContainer, loading = false }: OutlineProps) {
 
   if (headings.length === 0) {
     return (
-      <p data-testid="outline-empty" style={{ color: "#6b7280", margin: 0 }}>
+      <p className={styles.emptyState} data-testid="outline-empty">
         No headings in this document.
       </p>
     );
@@ -172,33 +182,20 @@ export function Outline({ editorContainer, loading = false }: OutlineProps) {
   return (
     <ul
       aria-label="Document heading outline"
+      className={styles.list}
       data-testid="outline-list"
-      style={{ listStyle: "none", margin: 0, padding: 0 }}
     >
       {headings.map((heading) => (
         <li key={heading.id}>
           <button
+            className={clsx(
+              styles.headingButton,
+              LEVEL_CLASSNAME[heading.level] ?? styles.level1,
+              heading.id === activeHeadingId && styles.headingButtonActive,
+            )}
             data-active={heading.id === activeHeadingId}
             data-testid={`outline-heading-${heading.id}`}
             onClick={() => handleHeadingClick(heading.id)}
-            style={{
-              background:
-                heading.id === activeHeadingId ? "#e0e7ff" : "transparent",
-              border: "none",
-              borderRadius: "0.375rem",
-              color: "#111827",
-              cursor: "pointer",
-              display: "block",
-              fontSize: "0.875rem",
-              marginBottom: "0.25rem",
-              overflow: "hidden",
-              padding: "0.3rem 0.4rem",
-              paddingLeft: `${0.4 + (heading.level - 1) * 0.6}rem`,
-              textAlign: "left",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              width: "100%",
-            }}
             title={heading.text}
             type="button"
           >

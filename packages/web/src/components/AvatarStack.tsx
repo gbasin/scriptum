@@ -1,5 +1,8 @@
+import clsx from "clsx";
+import type { CSSProperties } from "react";
 import { useMemo } from "react";
 import type { PeerPresence } from "../store/presence";
+import styles from "./AvatarStack.module.css";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,25 +68,17 @@ function Avatar({
   return (
     <div
       aria-label={`${peer.name}${isAgent ? " (agent)" : ""}`}
+      className={clsx(styles.avatar, isAgent && styles.avatarAgent)}
       data-testid={`avatar-${peer.name}`}
-      style={{
-        alignItems: "center",
-        backgroundColor: color,
-        border: `2px solid ${isAgent ? "#374151" : "#fff"}`,
-        borderRadius: "50%",
-        color: "#fff",
-        display: "flex",
-        fontSize: `${Math.max(size * 0.4, 10)}px`,
-        fontWeight: 600,
-        height: `${size}px`,
-        justifyContent: "center",
-        left: `${offset}px`,
-        lineHeight: 1,
-        position: "absolute",
-        top: 0,
-        width: `${size}px`,
-        zIndex: 10 - Math.floor(offset / (size * 0.6)),
-      }}
+      style={
+        {
+          "--avatar-bg-color": color,
+          "--avatar-font-size": `${Math.max(size * 0.4, 10)}px`,
+          "--avatar-offset": `${offset}px`,
+          "--avatar-size": `${size}px`,
+          "--avatar-z-index": `${10 - Math.floor(offset / (size * 0.6))}`,
+        } as CSSProperties
+      }
       title={peer.name}
     >
       {initials}
@@ -103,24 +98,15 @@ function OverflowIndicator({
   return (
     <div
       aria-label={`${count} more`}
+      className={styles.overflowIndicator}
       data-testid="avatar-overflow"
-      style={{
-        alignItems: "center",
-        backgroundColor: "#6b7280",
-        border: "2px solid #fff",
-        borderRadius: "50%",
-        color: "#fff",
-        display: "flex",
-        fontSize: `${Math.max(size * 0.35, 9)}px`,
-        fontWeight: 600,
-        height: `${size}px`,
-        justifyContent: "center",
-        left: `${offset}px`,
-        lineHeight: 1,
-        position: "absolute",
-        top: 0,
-        width: `${size}px`,
-      }}
+      style={
+        {
+          "--avatar-font-size": `${Math.max(size * 0.35, 9)}px`,
+          "--avatar-offset": `${offset}px`,
+          "--avatar-size": `${size}px`,
+        } as CSSProperties
+      }
       title={`${count} more online`}
     >
       +{count}
@@ -155,14 +141,15 @@ export function AvatarStack({
   return (
     <div
       aria-label="Online users"
+      className={styles.stack}
       data-testid="avatar-stack"
       role="group"
-      style={{
-        display: "inline-flex",
-        height: `${size}px`,
-        position: "relative",
-        width: `${totalWidth}px`,
-      }}
+      style={
+        {
+          "--stack-height": `${size}px`,
+          "--stack-width": `${totalWidth}px`,
+        } as CSSProperties
+      }
     >
       {visiblePeers.map((peer, index) => (
         <Avatar

@@ -111,8 +111,6 @@ describe("AvatarStack", () => {
     const html = renderToString(<AvatarStack peers={peers} />);
 
     expect(html).toContain("avatar-claude-agent");
-    // Agent border color
-    expect(html).toContain("#374151");
     expect(html).toContain("(agent)");
   });
 
@@ -128,7 +126,7 @@ describe("AvatarStack", () => {
     const peers = [makePeer("alice")];
     const html = renderToString(<AvatarStack peers={peers} size={48} />);
 
-    expect(html).toContain("height:48px");
-    expect(html).toContain("width:48px");
+    expect(html).toContain("--stack-height:48px");
+    expect(html).toContain("--avatar-size:48px");
   });
 });

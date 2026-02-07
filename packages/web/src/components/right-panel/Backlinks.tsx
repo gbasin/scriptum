@@ -1,6 +1,9 @@
+import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
 import { getAccessToken } from "../../lib/auth";
+import controls from "../../styles/Controls.module.css";
 import { SkeletonBlock } from "../Skeleton";
+import styles from "./Backlinks.module.css";
 
 const RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
@@ -163,27 +166,32 @@ export function Backlinks({
   return (
     <section
       aria-label="Incoming backlinks panel"
+      className={styles.root}
       data-testid="backlinks-panel"
     >
-      <h3 style={{ margin: "0 0 0.5rem" }}>Backlinks</h3>
+      <h3 className={styles.heading}>Backlinks</h3>
 
       {loading ? (
         <div data-testid="backlinks-loading">
-          <div aria-hidden="true" style={{ display: "grid", gap: "0.45rem" }}>
-            <SkeletonBlock style={{ height: "0.78rem", width: "74%" }} />
-            <SkeletonBlock style={{ height: "0.78rem", width: "59%" }} />
-            <SkeletonBlock style={{ height: "0.78rem", width: "68%" }} />
+          <div aria-hidden="true" className={styles.loadingList}>
+            <SkeletonBlock className={clsx(styles.loadingLine, styles.loading74)} />
+            <SkeletonBlock className={clsx(styles.loadingLine, styles.loading59)} />
+            <SkeletonBlock className={clsx(styles.loadingLine, styles.loading68)} />
           </div>
         </div>
       ) : null}
 
       {!loading && error ? (
         <div data-testid="backlinks-error">
-          <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p>
+          <p className={styles.errorMessage}>{error}</p>
           <button
+            className={clsx(
+              controls.buttonBase,
+              controls.buttonSecondary,
+              styles.retryButton,
+            )}
             data-testid="backlinks-retry"
             onClick={() => void loadBacklinks()}
-            style={{ marginTop: "0.4rem" }}
             type="button"
           >
             Retry
@@ -192,10 +200,7 @@ export function Backlinks({
       ) : null}
 
       {!loading && !error && backlinks.length === 0 ? (
-        <p
-          data-testid="backlinks-empty"
-          style={{ color: "#6b7280", margin: 0 }}
-        >
+        <p className={styles.emptyState} data-testid="backlinks-empty">
           No documents link to this page.
         </p>
       ) : null}
@@ -203,55 +208,34 @@ export function Backlinks({
       {!loading && !error && backlinks.length > 0 ? (
         <ul
           aria-label="Incoming wiki links"
+          className={styles.backlinksList}
           data-testid="backlinks-list"
-          style={{ listStyle: "none", margin: 0, padding: 0 }}
         >
           {backlinks.map((backlink) => (
-            <li key={backlink.docId} style={{ marginBottom: "0.75rem" }}>
+            <li className={styles.backlinkListItem} key={backlink.docId}>
               <button
+                className={styles.backlinkTitleButton}
                 data-testid={`backlink-item-${backlink.docId}`}
                 onClick={() => onBacklinkSelect?.(backlink.docId)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#1d4ed8",
-                  cursor: "pointer",
-                  fontSize: "0.875rem",
-                  fontWeight: 600,
-                  padding: 0,
-                  textAlign: "left",
-                }}
                 type="button"
               >
                 {backlink.title}
               </button>
               <p
                 data-testid={`backlink-path-${backlink.docId}`}
-                style={{
-                  color: "#4b5563",
-                  fontSize: "0.78rem",
-                  margin: "0.15rem 0 0",
-                }}
+                className={styles.backlinkPath}
               >
                 {backlink.path}
               </p>
               <p
                 data-testid={`backlink-link-${backlink.docId}`}
-                style={{
-                  color: "#111827",
-                  fontSize: "0.78rem",
-                  margin: "0.15rem 0 0",
-                }}
+                className={styles.backlinkLinkText}
               >
                 {backlink.linkText}
               </p>
               <p
                 data-testid={`backlink-snippet-${backlink.docId}`}
-                style={{
-                  color: "#6b7280",
-                  fontSize: "0.8rem",
-                  margin: "0.15rem 0 0",
-                }}
+                className={styles.backlinkSnippet}
               >
                 {backlink.snippet}
               </p>

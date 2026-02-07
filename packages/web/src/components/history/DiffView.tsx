@@ -2,7 +2,9 @@ import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { Decoration, EditorView } from "@codemirror/view";
 import { nameToColor } from "@scriptum/editor";
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef } from "react";
+import styles from "./DiffView.module.css";
 
 export type DiffViewMode = "authorship" | "diff";
 
@@ -280,56 +282,41 @@ export function DiffView({
   }, [decorations, doc]);
 
   return (
-    <section aria-label="History diff view" data-testid="history-diffview">
+    <section
+      aria-label="History diff view"
+      className={styles.root}
+      data-testid="history-diffview"
+    >
       {viewMode === "authorship" ? (
         <>
-          <h3 style={{ fontSize: "0.875rem", margin: "0 0 0.375rem" }}>
+          <h3 className={styles.heading}>
             Author-colored highlights
           </h3>
           <div
+            className={styles.legend}
             data-testid="history-diffview-authorship-legend"
-            style={{
-              alignItems: "center",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "0.375rem",
-              marginBottom: "0.375rem",
-            }}
           >
             {authorshipModel.authors.map((author) => (
               <span
+                className={styles.legendChip}
                 data-testid={`history-diffview-author-${author.name}`}
                 key={author.name}
-                style={{
-                  alignItems: "center",
-                  border: `1px solid ${colorWithAlpha(author.color, "66")}`,
-                  borderRadius: "9999px",
-                  color: author.color,
-                  display: "inline-flex",
-                  fontSize: "0.7rem",
-                  fontWeight: 700,
-                  gap: "0.25rem",
-                  padding: "0.1rem 0.4rem",
-                }}
+                style={
+                  {
+                    "--author-color": author.color,
+                    "--author-color-border": colorWithAlpha(author.color, "66"),
+                  } as CSSProperties
+                }
               >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    background: author.color,
-                    borderRadius: "9999px",
-                    display: "inline-block",
-                    height: "0.4rem",
-                    width: "0.4rem",
-                  }}
-                />
+                <span aria-hidden="true" className={styles.legendChipDot} />
                 {author.name}
               </span>
             ))}
           </div>
           {historicalContent.length === 0 ? (
             <p
+              className={styles.emptyState}
               data-testid="history-diffview-authorship-empty"
-              style={{ margin: 0 }}
             >
               No content yet.
             </p>
@@ -337,11 +324,11 @@ export function DiffView({
         </>
       ) : (
         <>
-          <h3 style={{ fontSize: "0.875rem", margin: "0 0 0.375rem" }}>
+          <h3 className={styles.heading}>
             Diff from current
           </h3>
           {!hasDiff ? (
-            <p data-testid="history-diffview-diff-empty" style={{ margin: 0 }}>
+            <p className={styles.emptyState} data-testid="history-diffview-diff-empty">
               Selected snapshot matches current version.
             </p>
           ) : null}

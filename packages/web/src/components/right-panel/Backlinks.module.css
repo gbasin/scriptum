@@ -1,0 +1,93 @@
+.root {
+  text-wrap: pretty;
+}
+
+.heading {
+  margin: 0 0 var(--space-2);
+  text-wrap: balance;
+}
+
+.loadingList {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.loadingLine {
+  height: 0.78rem;
+}
+
+.loading74 {
+  width: 74%;
+}
+
+.loading59 {
+  width: 59%;
+}
+
+.loading68 {
+  width: 68%;
+}
+
+.errorMessage {
+  color: oklch(0.62 0.23 28);
+  margin: 0;
+}
+
+.retryButton {
+  margin-top: 0.4rem;
+}
+
+.emptyState {
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.backlinksList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.backlinkListItem {
+  margin-bottom: var(--space-3);
+}
+
+.backlinkTitleButton {
+  background: transparent;
+  border: 0;
+  color: var(--color-accent-hex);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0;
+  text-align: left;
+}
+
+.backlinkTitleButton:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.backlinkTitleButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.backlinkPath {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  margin: 0.15rem 0 0;
+}
+
+.backlinkLinkText {
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  margin: 0.15rem 0 0;
+}
+
+.backlinkSnippet {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  margin: 0.15rem 0 0;
+  text-wrap: pretty;
+}

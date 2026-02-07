@@ -1,0 +1,26 @@
+.label {
+  --cursor-label-color: var(--color-accent-hex);
+  --cursor-x: 0px;
+  --cursor-y: 0px;
+
+  align-items: center;
+  background-color: var(--cursor-label-color);
+  border: 1px solid oklch(0 0 0 / 0.22);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.22);
+  color: #fff;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 6px;
+  left: var(--cursor-x);
+  line-height: 1;
+  max-width: 240px;
+  padding: 4px 8px;
+  pointer-events: none;
+  position: absolute;
+  top: var(--cursor-y);
+  transform: translate(-50%, calc(-100% - 10px));
+  white-space: nowrap;
+  z-index: 30;
+}

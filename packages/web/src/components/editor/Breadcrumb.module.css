@@ -1,0 +1,61 @@
+.root {
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  margin: 0.45rem 0 0.75rem;
+}
+
+.segmentWrapper {
+  align-items: baseline;
+  display: inline-flex;
+}
+
+.separator {
+  color: var(--color-text-muted);
+}
+
+.segmentButton {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  margin: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  padding: 0;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  text-wrap: balance;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.segmentButton:hover {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+}
+
+.segmentButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+.segmentButtonDisabled {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: default;
+  margin: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  padding: 0;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  text-wrap: balance;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.segmentButtonDisabled:hover {
+  color: inherit;
+  text-decoration: none;
+}

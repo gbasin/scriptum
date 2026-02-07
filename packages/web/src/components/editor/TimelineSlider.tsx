@@ -1,3 +1,6 @@
+import clsx from "clsx";
+import styles from "./TimelineSlider.module.css";
+
 export type HistoryViewMode = "authorship" | "diff";
 
 export interface TimelineSliderProps {
@@ -31,61 +34,38 @@ export function TimelineSlider({
     viewMode === "diff" ? "diff" : "authorship";
 
   return (
-    <section
-      aria-label="History timeline"
-      data-testid="history-timeline"
-      style={{
-        borderTop: "1px solid #d1d5db",
-        marginTop: "0.75rem",
-        paddingTop: "0.5rem",
-      }}
-    >
-      <label
-        htmlFor="history-timeline-slider"
-        style={{
-          display: "block",
-          fontSize: "0.8rem",
-          fontWeight: 600,
-          marginBottom: "0.375rem",
-        }}
-      >
+    <section aria-label="History timeline" className={styles.root} data-testid="history-timeline">
+      <label className={styles.label} htmlFor="history-timeline-slider">
         History timeline
       </label>
       <div
         aria-label="History view mode"
+        className={styles.viewToggleGroup}
         data-testid="history-view-toggle"
         role="group"
-        style={{ display: "flex", gap: "0.375rem", marginBottom: "0.375rem" }}
       >
         <button
           aria-pressed={normalizedViewMode === "authorship"}
+          className={clsx(
+            styles.viewToggleButton,
+            styles.viewToggleAuthorship,
+            normalizedViewMode === "authorship" && styles.viewToggleAuthorshipActive,
+          )}
           data-testid="history-view-toggle-authorship"
           onClick={() => onViewModeChange("authorship")}
-          style={{
-            background:
-              normalizedViewMode === "authorship" ? "#dbeafe" : "#f3f4f6",
-            border: "1px solid #93c5fd",
-            borderRadius: "0.375rem",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            padding: "0.2rem 0.5rem",
-          }}
           type="button"
         >
           Colored authorship
         </button>
         <button
           aria-pressed={normalizedViewMode === "diff"}
+          className={clsx(
+            styles.viewToggleButton,
+            styles.viewToggleDiff,
+            normalizedViewMode === "diff" && styles.viewToggleDiffActive,
+          )}
           data-testid="history-view-toggle-diff"
           onClick={() => onViewModeChange("diff")}
-          style={{
-            background: normalizedViewMode === "diff" ? "#fee2e2" : "#f3f4f6",
-            border: "1px solid #fca5a5",
-            borderRadius: "0.375rem",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            padding: "0.2rem 0.5rem",
-          }}
           type="button"
         >
           Diff from current
@@ -93,13 +73,8 @@ export function TimelineSlider({
       </div>
       <output
         aria-live="polite"
+        className={styles.modeLabel}
         data-testid="history-view-mode-label"
-        style={{
-          color: "#4b5563",
-          display: "block",
-          fontSize: "0.75rem",
-          marginBottom: "0.25rem",
-        }}
       >
         View:{" "}
         {normalizedViewMode === "authorship"
@@ -108,6 +83,7 @@ export function TimelineSlider({
       </output>
       <input
         aria-label="History timeline slider"
+        className={styles.slider}
         data-testid="history-timeline-slider"
         id="history-timeline-slider"
         max={clampedMax}
@@ -117,19 +93,13 @@ export function TimelineSlider({
           onChange(clampTimelineValue(nextValue, clampedMax));
         }}
         step={1}
-        style={{ width: "100%" }}
         type="range"
         value={clampedValue}
       />
       <output
         aria-live="polite"
+        className={clsx(styles.positionLabel, styles.tabularNumbers)}
         data-testid="history-timeline-position"
-        style={{
-          color: "#4b5563",
-          display: "block",
-          fontSize: "0.75rem",
-          marginTop: "0.25rem",
-        }}
       >
         Version {activeVersion}/{totalVersions}
       </output>

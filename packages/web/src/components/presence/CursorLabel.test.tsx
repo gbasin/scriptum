@@ -21,14 +21,6 @@ function makePeer(overrides: Partial<CursorLabelPeer> = {}): CursorLabelPeer {
   };
 }
 
-function hexToRgb(hex: string): string {
-  const normalized = hex.replace("#", "");
-  const red = Number.parseInt(normalized.slice(0, 2), 16);
-  const green = Number.parseInt(normalized.slice(2, 4), 16);
-  const blue = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgb(${red}, ${green}, ${blue})`;
-}
-
 function renderCursorLabel(peer: CursorLabelPeer, autoHideMs = 3_000) {
   const container = document.createElement("div");
   container.style.position = "relative";
@@ -89,11 +81,10 @@ describe("CursorLabel", () => {
     expect(
       label?.querySelector('[data-testid="cursor-label-agent-icon"]'),
     ).not.toBeNull();
-    expect(label?.style.left).toBe("120px");
-    expect(label?.style.top).toBe("48px");
-    expect(label?.style.transform).toContain("translate(-50%");
-    expect(label?.style.backgroundColor).toBe(
-      hexToRgb(nameToColor("Scriptum Bot")),
+    expect(label?.style.getPropertyValue("--cursor-x")).toBe("120px");
+    expect(label?.style.getPropertyValue("--cursor-y")).toBe("48px");
+    expect(label?.style.getPropertyValue("--cursor-label-color")).toBe(
+      nameToColor("Scriptum Bot"),
     );
 
     harness.unmount();
@@ -136,8 +127,8 @@ describe("CursorLabel", () => {
     harness.render(makePeer({ cursorPosition: { x: 168, y: 62 } }));
     const label = harness.queryLabel();
     expect(label).not.toBeNull();
-    expect(label?.style.left).toBe("168px");
-    expect(label?.style.top).toBe("62px");
+    expect(label?.style.getPropertyValue("--cursor-x")).toBe("168px");
+    expect(label?.style.getPropertyValue("--cursor-y")).toBe("62px");
 
     harness.unmount();
   });

@@ -1,0 +1,47 @@
+.stack {
+  --stack-height: 2rem;
+  --stack-width: 4rem;
+
+  display: inline-flex;
+  height: var(--stack-height);
+  position: relative;
+  width: var(--stack-width);
+}
+
+.avatar,
+.overflowIndicator {
+  --avatar-size: 2rem;
+  --avatar-offset: 0px;
+  --avatar-font-size: 12px;
+
+  align-items: center;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  color: #fff;
+  display: flex;
+  font-size: var(--avatar-font-size);
+  font-weight: 600;
+  height: var(--avatar-size);
+  justify-content: center;
+  left: var(--avatar-offset);
+  line-height: 1;
+  position: absolute;
+  top: 0;
+  width: var(--avatar-size);
+}
+
+.avatar {
+  --avatar-bg-color: #64748b;
+  --avatar-z-index: 1;
+
+  background-color: var(--avatar-bg-color);
+  z-index: var(--avatar-z-index);
+}
+
+.avatarAgent {
+  border-color: var(--color-border-strong);
+}
+
+.overflowIndicator {
+  background-color: var(--color-text-muted);
+}

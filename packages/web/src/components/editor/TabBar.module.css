@@ -1,0 +1,92 @@
+.root {
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-border-muted);
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  padding-bottom: var(--space-1);
+}
+
+.emptyState {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  padding: 0.35rem 0.5rem;
+  text-wrap: pretty;
+}
+
+.tab {
+  align-items: center;
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  border-bottom-color: var(--color-border-muted);
+  border-radius: var(--radius-1) var(--radius-1) 0 0;
+  display: inline-flex;
+  gap: 0.35rem;
+  margin-bottom: -1px;
+  max-width: 18rem;
+  padding: 0.25rem 0.4rem;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.tab:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-strong);
+}
+
+.tabActive {
+  background: var(--color-bg-surface-1);
+  border-color: color-mix(in oklab, var(--color-accent-hex) 38%, var(--color-border-muted));
+  border-bottom-color: var(--color-bg-surface-1);
+}
+
+.selectTabButton {
+  background: none;
+  border: 0;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  flex: 1;
+  font-size: 0.85rem;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  text-wrap: pretty;
+  white-space: nowrap;
+}
+
+.selectTabButton:hover {
+  color: var(--color-text-primary);
+}
+
+.selectTabButtonActive {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.closeTabButton {
+  background: none;
+  border: 0;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.closeTabButton:hover {
+  color: var(--color-text-primary);
+}
+
+.closeTabButton:focus-visible,
+.selectTabButton:focus-visible {
+  outline: 2px solid var(--color-accent-hex);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition: none;
+  }
+}
