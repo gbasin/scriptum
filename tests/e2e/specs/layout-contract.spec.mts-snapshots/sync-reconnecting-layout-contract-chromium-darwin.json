@@ -1,0 +1,100 @@
+{
+  "fixtureName": "sync-reconnecting",
+  "route": "/workspace/ws-smoke/document/doc-smoke",
+  "viewport": {
+    "width": 1280,
+    "height": 720,
+    "devicePixelRatio": 1
+  },
+  "rootTokens": {},
+  "elements": {
+    "html": {
+      "selector": "html",
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1280,
+        "height": 816
+      },
+      "typography": {
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "normal",
+        "letterSpacing": "normal"
+      },
+      "spacing": {
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px"
+      },
+      "tokens": {}
+    },
+    "body": {
+      "selector": "body",
+      "bounds": {
+        "x": 8,
+        "y": 8,
+        "width": 1280,
+        "height": 800
+      },
+      "typography": {
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "normal",
+        "letterSpacing": "normal"
+      },
+      "spacing": {
+        "marginTop": "8px",
+        "marginBottom": "8px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px"
+      },
+      "tokens": {}
+    },
+    "appRoot": {
+      "selector": "#root",
+      "bounds": {
+        "x": 8,
+        "y": 8,
+        "width": 1280,
+        "height": 0
+      },
+      "typography": {
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "normal",
+        "letterSpacing": "normal"
+      },
+      "spacing": {
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px"
+      },
+      "tokens": {}
+    },
+    "smokeProbe": {
+      "selector": "[data-testid=\"smoke-fixture-probe\"]",
+      "bounds": {
+        "x": 1242,
+        "y": 682,
+        "width": 22,
+        "height": 22
+      },
+      "typography": {
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal"
+      },
+      "spacing": {
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "10px",
+        "paddingBottom": "10px"
+      },
+      "tokens": {}
+    }
+  }
+}
