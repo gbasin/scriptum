@@ -1,6 +1,8 @@
+use crate::crdt::origin::{AuthorType, OriginTag};
+use chrono::Utc;
 use yrs::{Doc, Text, TextRef, Transact};
 
-pub const FILE_WATCHER_ORIGIN: &str = "file-watcher";
+pub const FILE_WATCHER_AUTHOR_ID: &str = "file-watcher";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextPatchOp {
@@ -42,18 +44,21 @@ pub fn diff_to_patch_ops(old_text: &str, new_text: &str) -> Vec<TextPatchOp> {
 
 /// Applies precomputed patch operations to a Yjs text value.
 ///
-/// Operations are executed within a transaction tagged by `origin`.
+/// Operations are executed within a transaction tagged by `origin_tag`.
 pub fn apply_patch_ops_to_ytext(
     doc: &Doc,
     ytext: &TextRef,
     patch_ops: &[TextPatchOp],
-    origin: &str,
+    origin_tag: &OriginTag,
 ) {
     if patch_ops.is_empty() {
         return;
     }
 
-    let mut txn = doc.transact_mut_with(origin);
+    let origin_bytes = origin_tag
+        .to_bytes()
+        .expect("origin tag should encode for transaction origin bytes");
+    let mut txn = doc.transact_mut_with(origin_bytes.as_slice());
     let mut offset: i64 = 0;
 
     for patch_op in patch_ops {
@@ -80,7 +85,12 @@ pub fn apply_text_diff_to_ytext(
     new_text: &str,
 ) -> Vec<TextPatchOp> {
     let patch_ops = diff_to_patch_ops(old_text, new_text);
-    apply_patch_ops_to_ytext(doc, ytext, &patch_ops, FILE_WATCHER_ORIGIN);
+    let origin_tag = OriginTag {
+        author_id: FILE_WATCHER_AUTHOR_ID.to_string(),
+        author_type: AuthorType::Agent,
+        timestamp: Utc::now(),
+    };
+    apply_patch_ops_to_ytext(doc, ytext, &patch_ops, &origin_tag);
     patch_ops
 }
 
@@ -416,7 +426,10 @@ fn edits_to_patch_ops(edits: &[CharEdit]) -> Vec<TextPatchOp> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_text_diff_to_ytext, diff_to_patch_ops, TextPatchOp, FILE_WATCHER_ORIGIN};
+    use super::{
+        apply_text_diff_to_ytext, diff_to_patch_ops, TextPatchOp, FILE_WATCHER_AUTHOR_ID,
+    };
+    use crate::crdt::origin::{AuthorType, OriginTag};
     use std::sync::{Arc, Mutex};
     use yrs::{Doc, GetString, Text, Transact};
 
@@ -594,7 +607,9 @@ mod tests {
             .expect("origin lock should be available")
             .clone()
             .expect("origin should be captured");
-        assert_eq!(origin, FILE_WATCHER_ORIGIN.as_bytes());
+        let origin_tag = OriginTag::from_bytes(&origin).expect("origin tag should decode");
+        assert_eq!(origin_tag.author_id, FILE_WATCHER_AUTHOR_ID);
+        assert_eq!(origin_tag.author_type, AuthorType::Agent);
     }
 
     #[test]
