@@ -5,6 +5,7 @@
 import {
   type EditorState,
   type Extension,
+  RangeSet,
   StateEffect,
   StateField,
 } from "@codemirror/state";
@@ -160,7 +161,7 @@ export const attributionState = StateField.define<AttributionState>({
     }
 
     const decorations = buildDecorations(transaction.state, next);
-    if (!changed && decorations.eq(current.decorations)) {
+    if (!changed && RangeSet.eq([decorations], [current.decorations])) {
       return current;
     }
 

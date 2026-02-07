@@ -5,6 +5,7 @@
 import {
   type EditorState,
   type Extension,
+  RangeSet,
   StateEffect,
   StateField,
 } from "@codemirror/state";
@@ -106,7 +107,7 @@ export const leaseBadgeState = StateField.define<LeaseBadgeState>({
     }
 
     const decorations = buildDecorations(transaction.state, nextLeases);
-    if (!leasesChanged && decorations.eq(current.decorations)) {
+    if (!leasesChanged && RangeSet.eq([decorations], [current.decorations])) {
       return current;
     }
 

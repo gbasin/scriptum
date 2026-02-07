@@ -1,6 +1,7 @@
 import {
   type EditorState,
   type Extension,
+  RangeSet,
   StateEffect,
   StateField,
 } from "@codemirror/state";
@@ -62,7 +63,10 @@ export const sectionOverlapIndicatorState =
       }
 
       const decorations = buildDecorations(transaction.state, nextOverlaps);
-      if (!overlapsChanged && decorations.eq(current.decorations)) {
+      if (
+        !overlapsChanged &&
+        RangeSet.eq([decorations], [current.decorations])
+      ) {
         return current;
       }
 
