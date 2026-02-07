@@ -343,7 +343,9 @@ mod tests {
             .expect("system time should be after unix epoch")
             .as_nanos();
 
-        std::env::temp_dir().join(format!("scriptum-{prefix}-{nanos}.db"))
+        let dir = std::env::temp_dir().join(format!("scriptum-test-{prefix}-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("should create temp test dir");
+        dir.join("meta.db")
     }
 
     fn cleanup_sqlite_files(path: &PathBuf) {

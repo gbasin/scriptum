@@ -323,7 +323,9 @@ mod tests {
             .expect("system time should be after epoch")
             .as_nanos();
         let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("scriptum-{prefix}-{nanos}-{seq}.db"))
+        let dir = std::env::temp_dir().join(format!("scriptum-test-{prefix}-{nanos}-{seq}"));
+        std::fs::create_dir_all(&dir).expect("should create temp test dir");
+        dir.join("meta.db")
     }
 
     fn cleanup(path: &PathBuf) {
