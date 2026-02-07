@@ -1,19 +1,12 @@
-import {
-  McpServer,
-  ResourceTemplate,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
 import { createDaemonClient, type DaemonClient } from "./daemon-client";
 import { registerAgentsResource } from "./resources/agents";
+import { registerDocResources } from "./resources/docs";
 import { registerWorkspaceResource } from "./resources/workspace";
-import {
-  type AgentNameResolver,
-  makeResourceResult,
-  parseResourceVariable,
-  resolveWorkspaceForDocId,
-} from "./shared";
+import { type AgentNameResolver } from "./shared";
 import { registerPassthroughTools } from "./tools/passthrough";
 import { registerStatusTool } from "./tools/status";
 import { registerSubscribeTool } from "./tools/subscribe";
@@ -113,51 +106,5 @@ function registerResourceHandlers(
 ): void {
   registerWorkspaceResource(server, daemonClient);
   registerAgentsResource(server, daemonClient, resolveAgentName);
-
-  server.registerResource(
-    "scriptum-doc-sections",
-    new ResourceTemplate("scriptum://docs/{id}/sections", { list: undefined }),
-    {
-      title: "Scriptum Document Sections",
-      description: "Read section tree for a document by ID.",
-      mimeType: "application/json",
-    },
-    async (uri, variables) => {
-      const docId = parseResourceVariable(variables, "id");
-      const workspace = await resolveWorkspaceForDocId(daemonClient, docId);
-      if (!workspace) {
-        throw new Error(`document ${docId} not found in any workspace`);
-      }
-
-      const payload = await daemonClient.request("doc.sections", {
-        workspace_id: workspace.workspace_id,
-        doc_id: docId,
-      });
-      return makeResourceResult(uri, payload);
-    },
-  );
-
-  server.registerResource(
-    "scriptum-doc",
-    new ResourceTemplate("scriptum://docs/{id}", { list: undefined }),
-    {
-      title: "Scriptum Document Content",
-      description: "Read markdown document content by document ID.",
-      mimeType: "application/json",
-    },
-    async (uri, variables) => {
-      const docId = parseResourceVariable(variables, "id");
-      const workspace = await resolveWorkspaceForDocId(daemonClient, docId);
-      if (!workspace) {
-        throw new Error(`document ${docId} not found in any workspace`);
-      }
-
-      const payload = await daemonClient.request("doc.read", {
-        workspace_id: workspace.workspace_id,
-        doc_id: docId,
-        include_content: true,
-      });
-      return makeResourceResult(uri, payload);
-    },
-  );
+  registerDocResources(server, daemonClient);
 }
