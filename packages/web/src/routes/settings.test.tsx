@@ -4,9 +4,25 @@ import type { Workspace } from "@scriptum/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { UseAuthResult } from "../hooks/useAuth";
+import { useAuth } from "../hooks/useAuth";
 import { useWorkspaceStore } from "../store/workspace";
 import { SettingsRoute } from "./settings";
+
+const mockNavigate = vi.fn();
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
+
+vi.mock("../hooks/useAuth", () => ({
+  useAuth: vi.fn(),
+}));
 
 declare global {
   // eslint-disable-next-line no-var
@@ -25,11 +41,30 @@ function makeWorkspace(): Workspace {
   };
 }
 
+function authResult(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
+  return {
+    status: "authenticated",
+    user: {
+      id: "user-1",
+      email: "user@example.com",
+      display_name: "Scriptum User",
+    },
+    accessToken: "access-token",
+    error: null,
+    isAuthenticated: true,
+    login: vi.fn(async () => undefined),
+    logout: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   useWorkspaceStore.getState().reset();
   const workspace = makeWorkspace();
   useWorkspaceStore.getState().upsertWorkspace(workspace);
   useWorkspaceStore.getState().setActiveWorkspaceId(workspace.id);
+  vi.mocked(useAuth).mockReturnValue(authResult());
+  mockNavigate.mockReset();
 });
 
 afterEach(() => {
@@ -166,6 +201,39 @@ describe("SettingsRoute", () => {
     expect(persistedWorkspace?.config?.editor.fontFamily).toBe("sans");
     expect(persistedWorkspace?.config?.editor.tabSize).toBe(2);
     expect(persistedWorkspace?.config?.editor.lineNumbers).toBe(false);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("logs out and navigates back to index", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const logout = vi.fn(async () => undefined);
+    vi.mocked(useAuth).mockReturnValue(authResult({ logout }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <SettingsRoute />
+        </MemoryRouter>,
+      );
+    });
+
+    const logoutButton = container.querySelector(
+      '[data-testid="settings-logout"]',
+    ) as HTMLButtonElement | null;
+    expect(logoutButton).not.toBeNull();
+
+    await act(async () => {
+      logoutButton?.click();
+    });
+
+    expect(logout).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith("/", { replace: true });
 
     act(() => {
       root.unmount();

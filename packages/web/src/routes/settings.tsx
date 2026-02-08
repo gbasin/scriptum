@@ -1,6 +1,8 @@
 import type { WorkspaceConfig } from "@scriptum/shared";
 import clsx from "clsx";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth";
 import { defaultWorkspaceConfig, useWorkspaceStore } from "../store/workspace";
 import controls from "../styles/Controls.module.css";
 import styles from "./settings.module.css";
@@ -31,6 +33,8 @@ function asPositiveInt(value: string, fallback: number): number {
 }
 
 export function SettingsRoute() {
+  const navigate = useNavigate();
+  const { logout } = useAuth();
   const activeWorkspaceId = useWorkspaceStore(
     (state) => state.activeWorkspaceId,
   );
@@ -90,6 +94,14 @@ export function SettingsRoute() {
     persist(nextConfig);
   };
 
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      navigate("/", { replace: true });
+    }
+  };
+
   return (
     <section
       aria-label="Settings"
@@ -100,6 +112,18 @@ export function SettingsRoute() {
       <p className={styles.workspaceName} data-testid="settings-workspace-name">
         Workspace: <strong>{activeWorkspace.name}</strong>
       </p>
+      <div className={styles.accountActions}>
+        <button
+          className={clsx(controls.buttonBase, controls.buttonDanger)}
+          data-testid="settings-logout"
+          onClick={() => {
+            void handleLogout();
+          }}
+          type="button"
+        >
+          Log out
+        </button>
+      </div>
 
       <div
         aria-label="Settings tabs"

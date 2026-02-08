@@ -16,6 +16,11 @@
   margin: 0;
 }
 
+.accountActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
