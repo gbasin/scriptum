@@ -3,12 +3,18 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type * as Y from "yjs";
+import * as Y from "yjs";
+import type { IdbCrdtStore } from "../lib/idb-store";
 
 const createCollaborationProviderMock = vi.hoisted(() => vi.fn());
+const openIdbCrdtStoreMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@scriptum/editor", () => ({
   createCollaborationProvider: createCollaborationProviderMock,
+}));
+
+vi.mock("../lib/idb-store", () => ({
+  openIdbCrdtStore: openIdbCrdtStoreMock,
 }));
 
 import { type UseYjsOptions, type UseYjsResult, useYjs } from "./useYjs";
@@ -80,6 +86,28 @@ class FakeCollaborationProvider {
   }
 }
 
+function createMockIdbStore(
+  overrides: Partial<IdbCrdtStore> = {},
+): IdbCrdtStore {
+  return {
+    saveSnapshot: vi.fn(async () => {}),
+    loadSnapshot: vi.fn(async () => null),
+    queueUpdate: vi.fn(async () => {}),
+    getQueuedUpdates: vi.fn(async () => [] as Uint8Array[]),
+    clearQueuedUpdates: vi.fn(async () => {}),
+    deleteDocument: vi.fn(async () => {}),
+    close: vi.fn(),
+    ...overrides,
+  };
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 function renderUseYjs(options: UseYjsOptions) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -123,6 +151,8 @@ describe("useYjs", () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     createCollaborationProviderMock.mockReset();
+    openIdbCrdtStoreMock.mockReset();
+    openIdbCrdtStoreMock.mockResolvedValue(createMockIdbStore());
   });
 
   afterEach(() => {
@@ -275,5 +305,187 @@ describe("useYjs", () => {
     );
 
     harness.unmount();
+  });
+
+  it("loads snapshot and queued updates before connecting in web runtime", async () => {
+    let fakeProvider: FakeCollaborationProvider | null = null;
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        return fakeProvider as unknown as object;
+      },
+    );
+
+    const persistedDoc = new Y.Doc();
+    persistedDoc.getText("content").insert(0, "hello");
+    const snapshot = Y.encodeStateAsUpdate(persistedDoc);
+    const vectorAtSnapshot = Y.encodeStateVector(persistedDoc);
+    persistedDoc.getText("content").insert(5, " world");
+    const queuedUpdate = Y.encodeStateAsUpdate(persistedDoc, vectorAtSnapshot);
+
+    const store = createMockIdbStore({
+      loadSnapshot: vi.fn(async () => snapshot),
+      getQueuedUpdates: vi.fn(async () => [queuedUpdate]),
+    });
+    openIdbCrdtStoreMock.mockResolvedValue(store);
+
+    const harness = renderUseYjs({
+      daemonWsUrl: "ws://127.0.0.1:39091/yjs",
+      docId: "doc-web",
+      runtime: "web",
+      workspaceId: "ws-web",
+    });
+    await flushAsyncWork();
+
+    const provider = requireProvider(fakeProvider);
+    expect(store.loadSnapshot).toHaveBeenCalledWith("ws-web:doc-web");
+    expect(store.getQueuedUpdates).toHaveBeenCalledWith("ws-web:doc-web");
+    expect(provider.connect).toHaveBeenCalledTimes(1);
+    expect(harness.latest().ytext?.toString()).toBe("hello world");
+
+    harness.unmount();
+  });
+
+  it("queues Y.Doc updates for offline replay in web runtime", async () => {
+    let fakeProvider: FakeCollaborationProvider | null = null;
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        return fakeProvider as unknown as object;
+      },
+    );
+
+    const store = createMockIdbStore();
+    openIdbCrdtStoreMock.mockResolvedValue(store);
+
+    const harness = renderUseYjs({
+      daemonWsUrl: "ws://127.0.0.1:39091/yjs",
+      docId: "doc-queue",
+      runtime: "web",
+      workspaceId: "ws-web",
+    });
+    await flushAsyncWork();
+    requireProvider(fakeProvider);
+
+    const ytext = harness.latest().ytext;
+    if (!ytext) {
+      throw new Error("expected ytext to be initialized");
+    }
+    act(() => {
+      ytext.insert(0, "queued");
+    });
+    await flushAsyncWork();
+
+    expect(store.queueUpdate).toHaveBeenCalledTimes(1);
+    expect(store.queueUpdate).toHaveBeenCalledWith(
+      "ws-web:doc-queue",
+      expect.any(Uint8Array),
+    );
+
+    harness.unmount();
+  });
+
+  it("clears queued updates and saves a snapshot after successful sync", async () => {
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        return new FakeCollaborationProvider(input.doc) as unknown as object;
+      },
+    );
+
+    const store = createMockIdbStore();
+    openIdbCrdtStoreMock.mockResolvedValue(store);
+
+    const harness = renderUseYjs({
+      daemonWsUrl: "ws://127.0.0.1:39091/yjs",
+      docId: "doc-sync",
+      runtime: "web",
+      workspaceId: "ws-web",
+    });
+    await flushAsyncWork();
+
+    expect(store.clearQueuedUpdates).toHaveBeenCalledWith("ws-web:doc-sync");
+    expect(store.saveSnapshot).toHaveBeenCalledWith(
+      "ws-web:doc-sync",
+      expect.any(Uint8Array),
+    );
+
+    harness.unmount();
+  });
+
+  it("replays queued updates when reconnecting in web runtime", async () => {
+    vi.useFakeTimers();
+
+    let fakeProvider: FakeCollaborationProvider | null = null;
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        fakeProvider = new FakeCollaborationProvider(input.doc);
+        return fakeProvider as unknown as object;
+      },
+    );
+
+    const replayDoc = new Y.Doc();
+    replayDoc.getText("content").insert(0, "offline-edit");
+    const reconnectUpdate = Y.encodeStateAsUpdate(replayDoc);
+
+    const getQueuedUpdatesMock = vi
+      .fn<() => Promise<Uint8Array[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([reconnectUpdate]);
+    const store = createMockIdbStore({
+      getQueuedUpdates: getQueuedUpdatesMock,
+    });
+    openIdbCrdtStoreMock.mockResolvedValue(store);
+
+    const harness = renderUseYjs({
+      daemonWsUrl: "ws://127.0.0.1:39091/yjs",
+      docId: "doc-replay",
+      reconnectDelayMs: 25,
+      runtime: "web",
+      workspaceId: "ws-web",
+    });
+    await flushAsyncWork();
+
+    const provider = requireProvider(fakeProvider);
+    expect(provider.connect).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      provider.provider.emitStatus("disconnected");
+    });
+    expect(harness.latest().status).toBe("disconnected");
+
+    await act(async () => {
+      vi.advanceTimersByTime(25);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(provider.connect).toHaveBeenCalledTimes(2);
+    expect(store.getQueuedUpdates).toHaveBeenCalledTimes(2);
+    expect(harness.latest().ytext?.toString()).toBe("offline-edit");
+
+    harness.unmount();
+  });
+
+  it("closes the IndexedDB store on unmount in web runtime", async () => {
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        return new FakeCollaborationProvider(input.doc) as unknown as object;
+      },
+    );
+
+    const store = createMockIdbStore();
+    openIdbCrdtStoreMock.mockResolvedValue(store);
+
+    const harness = renderUseYjs({
+      daemonWsUrl: "ws://127.0.0.1:39091/yjs",
+      docId: "doc-close",
+      runtime: "web",
+      workspaceId: "ws-web",
+    });
+    await flushAsyncWork();
+
+    harness.unmount();
+    await flushAsyncWork();
+    expect(store.close).toHaveBeenCalledTimes(1);
   });
 });

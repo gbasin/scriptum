@@ -6,9 +6,11 @@ import {
 } from "@scriptum/editor";
 import { useEffect, useMemo, useState } from "react";
 import * as Y from "yjs";
+import { type IdbCrdtStore, openIdbCrdtStore } from "../lib/idb-store";
 
 const DEFAULT_DAEMON_WS_URL = "ws://127.0.0.1:39091/yjs";
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
+const PERSISTENCE_REPLAY_ORIGIN = "idb-persistence-replay";
 
 export type YjsRuntime = "desktop" | "web";
 export type YjsProviderStatus =
@@ -122,6 +124,9 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
 
     let disposed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let persistenceStore: IdbCrdtStore | null = null;
+    let persistenceQueue: Promise<void> = Promise.resolve();
+    const persistenceEnabled = runtime === "web";
 
     const doc = new Y.Doc();
     const collaboration = createCollaborationProvider({
@@ -133,6 +138,57 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
       webrtcSignalingUrl: webrtcSignalingUrl ?? undefined,
       webrtcProviderFactory,
     });
+
+    const runPersistenceTask = (
+      task: (store: IdbCrdtStore) => Promise<void>,
+    ) => {
+      if (persistenceStore === null) {
+        return;
+      }
+      persistenceQueue = persistenceQueue
+        .then(async () => {
+          if (disposed || persistenceStore === null) {
+            return;
+          }
+          await task(persistenceStore);
+        })
+        .catch(() => {});
+    };
+
+    const queueDocUpdate = (update: Uint8Array, origin: unknown) => {
+      if (
+        persistenceStore === null ||
+        origin === PERSISTENCE_REPLAY_ORIGIN ||
+        disposed
+      ) {
+        return;
+      }
+      const updateCopy = update.slice();
+      runPersistenceTask(async (store) => {
+        await store.queueUpdate(room, updateCopy);
+      });
+    };
+
+    const replayQueuedUpdates = async () => {
+      if (persistenceStore === null) {
+        return;
+      }
+      const updates = await persistenceStore.getQueuedUpdates(room);
+      for (const update of updates) {
+        Y.applyUpdate(doc, update, PERSISTENCE_REPLAY_ORIGIN);
+      }
+    };
+
+    const persistSyncedSnapshot = () => {
+      if (persistenceStore === null || disposed) {
+        return;
+      }
+      const snapshot = Y.encodeStateAsUpdate(doc);
+      runPersistenceTask(async (store) => {
+        await store.clearQueuedUpdates(room);
+        await store.saveSnapshot(room, snapshot);
+      });
+    };
 
     const clearReconnectTimer = () => {
       if (reconnectTimer !== null) {
@@ -147,16 +203,22 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
       }
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        connectProvider();
+        void connectProvider();
       }, reconnectDelayMs);
     };
 
-    const connectProvider = () => {
+    const connectProvider = async () => {
       if (disposed) {
         return;
       }
       setStatus("connecting");
       try {
+        if (persistenceEnabled) {
+          await replayQueuedUpdates();
+        }
+        if (disposed) {
+          return;
+        }
         collaboration.connect();
       } catch {
         if (disposed) {
@@ -174,20 +236,50 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
       if (nextStatus === "connected") {
         clearReconnectTimer();
         setStatus("connected");
+        persistSyncedSnapshot();
         return;
       }
       setStatus("disconnected");
       scheduleReconnect();
     });
 
-    setProvider(collaboration);
-    setYdoc(doc);
-    setYtext(collaboration.yText);
-    connectProvider();
+    const initialize = async () => {
+      if (persistenceEnabled) {
+        try {
+          persistenceStore = await openIdbCrdtStore();
+          const snapshot = await persistenceStore.loadSnapshot(room);
+          if (snapshot !== null) {
+            Y.applyUpdate(doc, snapshot, PERSISTENCE_REPLAY_ORIGIN);
+          }
+          doc.on("update", queueDocUpdate);
+        } catch {
+          persistenceStore = null;
+        }
+      }
+
+      if (disposed) {
+        return;
+      }
+
+      setProvider(collaboration);
+      setYdoc(doc);
+      setYtext(collaboration.yText);
+      void connectProvider();
+    };
+
+    void initialize();
 
     return () => {
       disposed = true;
       clearReconnectTimer();
+      doc.off("update", queueDocUpdate);
+      const storeToClose = persistenceStore;
+      persistenceStore = null;
+      if (storeToClose !== null) {
+        void persistenceQueue.finally(() => {
+          storeToClose.close();
+        });
+      }
       collaboration.disconnect();
       collaboration.destroy();
       doc.destroy();
@@ -196,6 +288,7 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
     docId,
     enabled,
     providerFactory,
+    runtime,
     reconnectDelayMs,
     room,
     url,
