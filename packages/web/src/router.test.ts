@@ -29,7 +29,10 @@ describe("appRoutes", () => {
     expect(matchedRouteIds("/settings")).toEqual(["app-layout", "settings"]);
   });
 
-  it("returns no match for unknown paths", () => {
-    expect(matchedRouteIds("/missing")).toEqual([]);
+  it("routes unknown paths to the not-found route", () => {
+    expect(matchedRouteIds("/missing")).toEqual(["not-found"]);
+    expect(matchedRouteIds("/workspace/ws-123/unknown")).toEqual([
+      "not-found",
+    ]);
   });
 });

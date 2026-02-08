@@ -1,0 +1,22 @@
+.root {
+  margin: var(--space-8) auto;
+  max-width: 34rem;
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  margin: 0 0 var(--space-2);
+}
+
+.description {
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-4);
+}
+
+.homeLink {
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: underline;
+}
