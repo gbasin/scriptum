@@ -433,6 +433,48 @@ describe("Layout responsive panels", () => {
   });
 });
 
+describe("Layout route error boundary", () => {
+  function ThrowingRoute() {
+    throw new Error("route-crash");
+    return <div />;
+  }
+
+  it("shows route fallback while keeping layout chrome visible", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<ThrowingRoute />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    expect(
+      container.querySelector('[data-testid="route-error-boundary"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("View failed to render");
+    expect(
+      container.querySelector('[data-testid="app-sidebar"]'),
+    ).not.toBeNull();
+    expect(consoleError).toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+});
+
 describe("Layout backlinks panel", () => {
   it("resolves incoming wiki links by path, filename, and title", () => {
     const documents = [

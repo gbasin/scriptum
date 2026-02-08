@@ -73,8 +73,52 @@ describe("ErrorBoundary", () => {
       container.querySelector('[data-testid="app-error-boundary"]'),
     ).not.toBeNull();
     const reloadButton = container.querySelector(
-      '[data-testid="app-error-reload"]',
+      '[data-testid="app-error-boundary-reload"]',
     ) as HTMLButtonElement | null;
+
+    act(() => {
+      reloadButton?.click();
+    });
+
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("supports inline fallback copy overrides", () => {
+    const onReload = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const { container, root } = renderBoundary(
+      <ErrorBoundary
+        inline
+        message="Editor failed but the rest of the view is still available."
+        onReload={onReload}
+        reloadLabel="Retry editor"
+        testId="editor-error-boundary"
+        title="Editor failed to load"
+      >
+        <ThrowOnRender />
+      </ErrorBoundary>,
+    );
+
+    expect(
+      container.querySelector('[data-testid="editor-error-boundary"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("Editor failed to load");
+    expect(container.textContent).toContain(
+      "Editor failed but the rest of the view is still available.",
+    );
+
+    const reloadButton = container.querySelector(
+      '[data-testid="editor-error-boundary-reload"]',
+    ) as HTMLButtonElement | null;
+    expect(reloadButton?.textContent).toBe("Retry editor");
 
     act(() => {
       reloadButton?.click();

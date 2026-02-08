@@ -41,6 +41,7 @@ import { DiffView } from "../components/history/DiffView";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ShareDialog } from "../components/share/ShareDialog";
 import { useToast } from "../hooks/useToast";
 import type { CreateCommentInput } from "../lib/api-client";
@@ -901,6 +902,23 @@ function editorTypographyTheme(fontFamily: WorkspaceEditorFontFamily) {
   });
 }
 
+function toError(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string" && value.length > 0) {
+    return new Error(value);
+  }
+  return new Error(fallbackMessage);
+}
+
+function EditorRuntimeErrorThrower(props: { error: Error | null }) {
+  if (props.error) {
+    throw props.error;
+  }
+  return null;
+}
+
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
   const navigate = useNavigate();
@@ -938,6 +956,9 @@ export function DocumentRoute() {
     : 1;
   const [syncState, setSyncState] = useState<ScriptumTestState["syncState"]>(
     fixtureModeEnabled ? fixtureState.syncState : "reconnecting",
+  );
+  const [editorRuntimeError, setEditorRuntimeError] = useState<Error | null>(
+    null,
   );
   const setPresencePeers = usePresenceStore((state) => state.setPeers);
   const pendingChanges = useSyncStore((state) => state.pendingChanges);
@@ -1160,171 +1181,187 @@ export function DocumentRoute() {
       return;
     }
 
+    let provider: ReturnType<typeof createCollaborationProvider> | null = null;
+    let view: EditorView | null = null;
+
     host.innerHTML = "";
     setDropUploadProgress(null);
-    const provider = createCollaborationProvider({
-      connectOnCreate: false,
-      room: roomId,
-      url: daemonWsBaseUrl,
-      webrtcSignalingUrl: webrtcSignalingUrl ?? undefined,
-      webrtcProviderFactory,
-    });
-    collaborationProviderRef.current = provider;
+    setEditorRuntimeError(null);
 
-    if (fixtureState.docContent.length > 0) {
-      provider.yText.insert(0, fixtureState.docContent);
-    }
+    try {
+      provider = createCollaborationProvider({
+        connectOnCreate: false,
+        room: roomId,
+        url: daemonWsBaseUrl,
+        webrtcSignalingUrl: webrtcSignalingUrl ?? undefined,
+        webrtcProviderFactory,
+      });
+      collaborationProviderRef.current = provider;
 
-    provider.provider.on("status", ({ status }) => {
-      if (fixtureModeEnabled) {
-        return;
+      if (fixtureState.docContent.length > 0) {
+        provider.yText.insert(0, fixtureState.docContent);
       }
-      setSyncState(status === "connected" ? "synced" : "reconnecting");
-    });
-    if (!fixtureModeEnabled) {
-      provider.connect();
-      setSyncState("reconnecting");
-    }
-    if (REALTIME_E2E_MODE) {
-      const localAwarenessName = `User ${provider.provider.awareness.clientID}`;
-      provider.provider.awareness.setLocalStateField("user", {
-        color: nameToColor(localAwarenessName),
-        name: localAwarenessName,
-        type: "human",
+
+      provider.provider.on("status", ({ status }) => {
+        if (fixtureModeEnabled) {
+          return;
+        }
+        setSyncState(status === "connected" ? "synced" : "reconnecting");
       });
-      provider.provider.awareness.setLocalStateField("cursor", {
-        anchor: 0,
-        head: 0,
-      });
-    }
+      if (!fixtureModeEnabled) {
+        provider.connect();
+        setSyncState("reconnecting");
+      }
+      if (REALTIME_E2E_MODE) {
+        const localAwarenessName = `User ${provider.provider.awareness.clientID}`;
+        provider.provider.awareness.setLocalStateField("user", {
+          color: nameToColor(localAwarenessName),
+          name: localAwarenessName,
+          type: "human",
+        });
+        provider.provider.awareness.setLocalStateField("cursor", {
+          anchor: 0,
+          head: 0,
+        });
+      }
 
-    const view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: fixtureState.docContent,
-        extensions: [
-          markdown(),
-          livePreviewExtension(),
-          slashCommandsExtension(),
-          reconciliationInlineExtension(),
-          commentHighlightExtension(),
-          commentGutterExtension(),
-          provider.extension(),
-          remoteCursorExtension({ awareness: provider.provider.awareness }),
-          dragDropUploadExtension({
-            onError: (_error, _file) => {
-              // Progress UI includes failure counts; no extra UI surface needed here.
-            },
-            onProgress: (progress) => {
-              setDropUploadProgress(progress);
-            },
-            uploadFile: uploadDroppedFileAsDataUrl,
-          }),
-          editorFontCompartmentRef.current.of(
-            editorTypographyTheme(editorRuntimeConfig.fontFamily),
-          ),
-          editorTabSizeCompartmentRef.current.of(
-            EditorState.tabSize.of(editorRuntimeConfig.tabSize),
-          ),
-          editorLineNumbersCompartmentRef.current.of(
-            editorRuntimeConfig.lineNumbers ? lineNumbers() : [],
-          ),
-          EditorView.lineWrapping,
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
-              const nextContent = update.state.doc.toString();
-              const isRemoteTransaction = update.transactions.some(
-                (transaction) =>
-                  Boolean(transaction.annotation(Transaction.remote)),
-              );
-              const nextAuthor = isRemoteTransaction
-                ? timelineRemotePeersRef.current[0]
-                  ? timelineAuthorFromPeer(timelineRemotePeersRef.current[0])
-                  : UNKNOWN_REMOTE_TIMELINE_AUTHOR
-                : LOCAL_TIMELINE_AUTHOR;
-
-              setTimelineEntries((currentEntries) => {
-                const latestEntry =
-                  currentEntries[currentEntries.length - 1] ??
-                  createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
-                if (latestEntry.content === nextContent) {
-                  return currentEntries;
-                }
-
-                const nextEntry = deriveTimelineSnapshotEntry(
-                  latestEntry,
-                  nextContent,
-                  nextAuthor,
+      view = new EditorView({
+        parent: host,
+        state: EditorState.create({
+          doc: fixtureState.docContent,
+          extensions: [
+            markdown(),
+            livePreviewExtension(),
+            slashCommandsExtension(),
+            reconciliationInlineExtension(),
+            commentHighlightExtension(),
+            commentGutterExtension(),
+            provider.extension(),
+            remoteCursorExtension({ awareness: provider.provider.awareness }),
+            dragDropUploadExtension({
+              onError: (_error, _file) => {
+                // Progress UI includes failure counts; no extra UI surface needed here.
+              },
+              onProgress: (progress) => {
+                setDropUploadProgress(progress);
+              },
+              uploadFile: uploadDroppedFileAsDataUrl,
+            }),
+            editorFontCompartmentRef.current.of(
+              editorTypographyTheme(editorRuntimeConfig.fontFamily),
+            ),
+            editorTabSizeCompartmentRef.current.of(
+              EditorState.tabSize.of(editorRuntimeConfig.tabSize),
+            ),
+            editorLineNumbersCompartmentRef.current.of(
+              editorRuntimeConfig.lineNumbers ? lineNumbers() : [],
+            ),
+            EditorView.lineWrapping,
+            EditorView.updateListener.of((update) => {
+              if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
+                const nextContent = update.state.doc.toString();
+                const isRemoteTransaction = update.transactions.some(
+                  (transaction) =>
+                    Boolean(transaction.annotation(Transaction.remote)),
                 );
-                const nextEntries = [...currentEntries, nextEntry];
-                if (nextEntries.length > MAX_TIMELINE_SNAPSHOTS) {
-                  nextEntries.splice(
-                    0,
-                    nextEntries.length - MAX_TIMELINE_SNAPSHOTS,
+                const nextAuthor = isRemoteTransaction
+                  ? timelineRemotePeersRef.current[0]
+                    ? timelineAuthorFromPeer(timelineRemotePeersRef.current[0])
+                    : UNKNOWN_REMOTE_TIMELINE_AUTHOR
+                  : LOCAL_TIMELINE_AUTHOR;
+
+                setTimelineEntries((currentEntries) => {
+                  const latestEntry =
+                    currentEntries[currentEntries.length - 1] ??
+                    createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+                  if (latestEntry.content === nextContent) {
+                    return currentEntries;
+                  }
+
+                  const nextEntry = deriveTimelineSnapshotEntry(
+                    latestEntry,
+                    nextContent,
+                    nextAuthor,
                   );
-                }
+                  const nextEntries = [...currentEntries, nextEntry];
+                  if (nextEntries.length > MAX_TIMELINE_SNAPSHOTS) {
+                    nextEntries.splice(
+                      0,
+                      nextEntries.length - MAX_TIMELINE_SNAPSHOTS,
+                    );
+                  }
 
-                setTimelineIndex(nextEntries.length - 1);
-                return nextEntries;
+                  setTimelineIndex(nextEntries.length - 1);
+                  return nextEntries;
+                });
+              }
+
+              if (!update.selectionSet) {
+                return;
+              }
+
+              const mainSelection = update.state.selection.main;
+              const line = update.state.doc.lineAt(mainSelection.head);
+              setCursor({
+                ch: mainSelection.head - line.from,
+                line: line.number - 1,
               });
-            }
+              if (REALTIME_E2E_MODE) {
+                provider?.provider.awareness.setLocalStateField("cursor", {
+                  anchor: mainSelection.anchor,
+                  head: mainSelection.head,
+                });
+              }
 
-            if (!update.selectionSet) {
-              return;
-            }
+              if (mainSelection.empty) {
+                setActiveSelection(null);
+                return;
+              }
 
-            const mainSelection = update.state.selection.main;
-            const line = update.state.doc.lineAt(mainSelection.head);
-            setCursor({
-              ch: mainSelection.head - line.from,
-              line: line.number - 1,
-            });
-            if (REALTIME_E2E_MODE) {
-              provider.provider.awareness.setLocalStateField("cursor", {
-                anchor: mainSelection.anchor,
-                head: mainSelection.head,
+              const selectedText = update.state.sliceDoc(
+                mainSelection.from,
+                mainSelection.to,
+              );
+              if (selectedText.trim().length === 0) {
+                setActiveSelection(null);
+                return;
+              }
+
+              setActiveSelection({
+                from: mainSelection.from,
+                line: update.state.doc.lineAt(mainSelection.from).number,
+                selectedText,
+                to: mainSelection.to,
               });
-            }
+            }),
+          ],
+        }),
+      });
+      editorViewRef.current = view;
+      setTimelineEntries([
+        createTimelineSnapshotEntry(
+          fixtureState.docContent,
+          LOCAL_TIMELINE_AUTHOR,
+        ),
+      ]);
+      setTimelineIndex(0);
 
-            if (mainSelection.empty) {
-              setActiveSelection(null);
-              return;
-            }
-
-            const selectedText = update.state.sliceDoc(
-              mainSelection.from,
-              mainSelection.to,
-            );
-            if (selectedText.trim().length === 0) {
-              setActiveSelection(null);
-              return;
-            }
-
-            setActiveSelection({
-              from: mainSelection.from,
-              line: update.state.doc.lineAt(mainSelection.from).number,
-              selectedText,
-              to: mainSelection.to,
-            });
-          }),
-        ],
-      }),
-    });
-    editorViewRef.current = view;
-    setTimelineEntries([
-      createTimelineSnapshotEntry(
-        fixtureState.docContent,
-        LOCAL_TIMELINE_AUTHOR,
-      ),
-    ]);
-    setTimelineIndex(0);
-
-    return () => {
+      return () => {
+        editorViewRef.current = null;
+        collaborationProviderRef.current = null;
+        view?.destroy();
+        provider?.destroy();
+      };
+    } catch (error) {
       editorViewRef.current = null;
       collaborationProviderRef.current = null;
-      view.destroy();
-      provider.destroy();
-    };
+      view?.destroy();
+      provider?.destroy();
+      setSyncState("error");
+      setEditorRuntimeError(
+        toError(error, "Editor initialization failed unexpectedly."),
+      );
+    }
   }, [daemonWsBaseUrl, fixtureModeEnabled, roomId]);
 
   useEffect(() => {
@@ -1773,92 +1810,101 @@ export function DocumentRoute() {
 
       <section aria-label="Editor surface" data-testid="editor-surface">
         <h2>Editor</h2>
-        {showEditorLoadingSkeleton ? (
-          <div data-testid="editor-loading-skeleton">
-            <div
-              aria-hidden="true"
+        <ErrorBoundary
+          inline
+          message="The editor crashed, but the rest of the document view is still available."
+          reloadLabel="Reload editor"
+          testId="editor-error-boundary"
+          title="Editor failed to load"
+        >
+          <EditorRuntimeErrorThrower error={editorRuntimeError} />
+          {showEditorLoadingSkeleton ? (
+            <div data-testid="editor-loading-skeleton">
+              <div
+                aria-hidden="true"
+                style={{
+                  display: "grid",
+                  gap: "0.45rem",
+                  marginBottom: "0.5rem",
+                  maxWidth: "28rem",
+                }}
+              >
+                <SkeletonBlock style={{ height: "0.8rem", width: "36%" }} />
+                <SkeletonBlock style={{ height: "0.8rem", width: "64%" }} />
+                <SkeletonBlock style={{ height: "0.8rem", width: "52%" }} />
+              </div>
+            </div>
+          ) : null}
+          {fixtureModeEnabled ? (
+            <pre data-testid="editor-content">{fixtureState.docContent}</pre>
+          ) : null}
+
+          {dropUploadProgress ? (
+            <output
+              aria-live="polite"
+              data-testid="drop-upload-progress"
               style={{
-                display: "grid",
-                gap: "0.45rem",
+                background:
+                  dropUploadProgress.phase === "completed" &&
+                  dropUploadProgress.failedFiles > 0
+                    ? "#fee2e2"
+                    : "#dbeafe",
+                border:
+                  dropUploadProgress.phase === "completed" &&
+                  dropUploadProgress.failedFiles > 0
+                    ? "1px solid #fca5a5"
+                    : "1px solid #93c5fd",
+                borderRadius: "0.375rem",
+                color:
+                  dropUploadProgress.phase === "completed" &&
+                  dropUploadProgress.failedFiles > 0
+                    ? "#991b1b"
+                    : "#1e3a8a",
+                fontSize: "0.8rem",
                 marginBottom: "0.5rem",
-                maxWidth: "28rem",
+                padding: "0.375rem 0.5rem",
               }}
             >
-              <SkeletonBlock style={{ height: "0.8rem", width: "36%" }} />
-              <SkeletonBlock style={{ height: "0.8rem", width: "64%" }} />
-              <SkeletonBlock style={{ height: "0.8rem", width: "52%" }} />
-            </div>
+              {formatDropUploadProgress(dropUploadProgress)}
+            </output>
+          ) : null}
+
+          <div style={{ position: "relative" }}>
+            <div
+              data-testid="editor-host"
+              ref={editorHostRef}
+              style={{
+                border: "1px solid #d1d5db",
+                borderRadius: "0.5rem",
+                minHeight: "20rem",
+                overflow: "hidden",
+              }}
+            />
+
+            <CommentPopover
+              activeThread={activeCommentPopoverThread}
+              anchorTopPx={commentAnchorTop}
+              createThread={createInlineCommentThread}
+              documentId={documentId ?? "unknown-document"}
+              onThreadChange={handleCommentPopoverThreadChange}
+              reopenThread={reopenInlineCommentThread}
+              replyToThread={replyToInlineCommentThread}
+              resolveThread={resolveInlineCommentThread}
+              selection={
+                activeSelection
+                  ? {
+                      sectionId: null,
+                      startOffsetUtf16: activeSelection.from,
+                      endOffsetUtf16: activeSelection.to,
+                      headSeq: timelineIndex,
+                      selectedText: activeSelection.selectedText,
+                    }
+                  : null
+              }
+              workspaceId={workspaceId ?? "unknown-workspace"}
+            />
           </div>
-        ) : null}
-        {fixtureModeEnabled ? (
-          <pre data-testid="editor-content">{fixtureState.docContent}</pre>
-        ) : null}
-
-        {dropUploadProgress ? (
-          <output
-            aria-live="polite"
-            data-testid="drop-upload-progress"
-            style={{
-              background:
-                dropUploadProgress.phase === "completed" &&
-                dropUploadProgress.failedFiles > 0
-                  ? "#fee2e2"
-                  : "#dbeafe",
-              border:
-                dropUploadProgress.phase === "completed" &&
-                dropUploadProgress.failedFiles > 0
-                  ? "1px solid #fca5a5"
-                  : "1px solid #93c5fd",
-              borderRadius: "0.375rem",
-              color:
-                dropUploadProgress.phase === "completed" &&
-                dropUploadProgress.failedFiles > 0
-                  ? "#991b1b"
-                  : "#1e3a8a",
-              fontSize: "0.8rem",
-              marginBottom: "0.5rem",
-              padding: "0.375rem 0.5rem",
-            }}
-          >
-            {formatDropUploadProgress(dropUploadProgress)}
-          </output>
-        ) : null}
-
-        <div style={{ position: "relative" }}>
-          <div
-            data-testid="editor-host"
-            ref={editorHostRef}
-            style={{
-              border: "1px solid #d1d5db",
-              borderRadius: "0.5rem",
-              minHeight: "20rem",
-              overflow: "hidden",
-            }}
-          />
-
-          <CommentPopover
-            activeThread={activeCommentPopoverThread}
-            anchorTopPx={commentAnchorTop}
-            createThread={createInlineCommentThread}
-            documentId={documentId ?? "unknown-document"}
-            onThreadChange={handleCommentPopoverThreadChange}
-            reopenThread={reopenInlineCommentThread}
-            replyToThread={replyToInlineCommentThread}
-            resolveThread={resolveInlineCommentThread}
-            selection={
-              activeSelection
-                ? {
-                    sectionId: null,
-                    startOffsetUtf16: activeSelection.from,
-                    endOffsetUtf16: activeSelection.to,
-                    headSeq: timelineIndex,
-                    selectedText: activeSelection.selectedText,
-                  }
-                : null
-            }
-            workspaceId={workspaceId ?? "unknown-workspace"}
-          />
-        </div>
+        </ErrorBoundary>
       </section>
 
       <section aria-label="Comment threads" data-testid="comment-threads">

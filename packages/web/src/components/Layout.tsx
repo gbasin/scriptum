@@ -14,6 +14,7 @@ import { usePresenceStore } from "../store/presence";
 import { useUiStore } from "../store/ui";
 import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
+import { ErrorBoundary } from "./ErrorBoundary";
 import styles from "./Layout.module.css";
 import { Backlinks } from "./right-panel/Backlinks";
 import { Outline } from "./right-panel/Outline";
@@ -599,7 +600,15 @@ export function Layout() {
           setOutlineContainer(node);
         }}
       >
-        <Outlet />
+        <ErrorBoundary
+          inline
+          message="This view crashed. Reload to recover while keeping navigation available."
+          reloadLabel="Reload view"
+          testId="route-error-boundary"
+          title="View failed to render"
+        >
+          <Outlet />
+        </ErrorBoundary>
       </main>
       {rightPanelOpen ? (
         <aside

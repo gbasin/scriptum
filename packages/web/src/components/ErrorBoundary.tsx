@@ -4,6 +4,11 @@ import styles from "./ErrorBoundary.module.css";
 interface ErrorBoundaryProps {
   children: ReactNode;
   onReload?: () => void;
+  title?: string;
+  message?: string;
+  reloadLabel?: string;
+  testId?: string;
+  inline?: boolean;
 }
 
 interface ErrorBoundaryState {
@@ -38,23 +43,32 @@ export class ErrorBoundary extends Component<
 
   override render() {
     if (this.state.hasError) {
+      const title = this.props.title ?? "Something went wrong";
+      const message =
+        this.props.message ??
+        "Scriptum hit an unexpected error. Reload the app to recover.";
+      const reloadLabel = this.props.reloadLabel ?? "Reload";
+      const testId = this.props.testId ?? "app-error-boundary";
+
       return (
         <section
           aria-live="assertive"
-          className={styles.fallback}
-          data-testid="app-error-boundary"
+          className={
+            this.props.inline
+              ? `${styles.fallback} ${styles.inlineFallback}`
+              : styles.fallback
+          }
+          data-testid={testId}
         >
-          <h1 className={styles.title}>Something went wrong</h1>
-          <p className={styles.message}>
-            Scriptum hit an unexpected error. Reload the app to recover.
-          </p>
+          <h1 className={styles.title}>{title}</h1>
+          <p className={styles.message}>{message}</p>
           <button
             className={styles.reloadButton}
-            data-testid="app-error-reload"
+            data-testid={`${testId}-reload`}
             onClick={this.handleReload}
             type="button"
           >
-            Reload
+            {reloadLabel}
           </button>
         </section>
       );
