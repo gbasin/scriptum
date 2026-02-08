@@ -195,6 +195,25 @@ function findSiblingPaths(nodes: TreeNode[], parent: string): string[] | null {
   return null;
 }
 
+function flattenVisibleTreeNodes(
+  nodes: TreeNode[],
+  expanded: Set<string>,
+): TreeNode[] {
+  const visible: TreeNode[] = [];
+
+  const walk = (treeNodes: TreeNode[]) => {
+    for (const node of treeNodes) {
+      visible.push(node);
+      if (node.children.length > 0 && expanded.has(node.fullPath)) {
+        walk(node.children);
+      }
+    }
+  };
+
+  walk(nodes);
+  return visible;
+}
+
 // -- Icon helpers --------------------------------------------------------------
 
 export function fileIcon(name: string): string {
@@ -226,6 +245,7 @@ function TreeNodeItem({
   editingDocumentId,
   editingPath,
   expanded,
+  focusedPath,
   node,
   onContextAction,
   onDragEndDocument,
@@ -234,6 +254,7 @@ function TreeNodeItem({
   onDocumentSelect,
   onDropOnFile,
   onDropOnFolder,
+  onFocusPath,
   onRenameCancel,
   onRenameChange,
   onRenameCommit,
@@ -245,6 +266,7 @@ function TreeNodeItem({
   editingDocumentId: string | null;
   editingPath: string;
   expanded: Set<string>;
+  focusedPath: string | null;
   node: TreeNode;
   onContextAction: (action: ContextMenuAction, doc: Document) => void;
   onDragEndDocument: () => void;
@@ -253,6 +275,7 @@ function TreeNodeItem({
   onDocumentSelect?: (documentId: string) => void;
   onDropOnFile: (node: TreeNode) => void;
   onDropOnFolder: (node: TreeNode) => void;
+  onFocusPath: (path: string) => void;
   onRenameCancel: () => void;
   onRenameChange: (value: string) => void;
   onRenameCommit: (documentId: string) => void;
@@ -263,8 +286,10 @@ function TreeNodeItem({
   const isActive = node.document?.id === activeDocumentId;
   const isEditing = node.document?.id === editingDocumentId;
   const isDropTarget = dropTargetPath === node.fullPath;
+  const isFocused = focusedPath === node.fullPath;
 
   const handleClick = () => {
+    onFocusPath(node.fullPath);
     if (isFolder) {
       onToggle(node.fullPath);
     } else if (node.document && onDocumentSelect) {
@@ -331,8 +356,9 @@ function TreeNodeItem({
       <li
         className={styles.treeItem}
         data-testid={`tree-node-${node.fullPath}`}
+        data-tree-path={node.fullPath}
         role="treeitem"
-        tabIndex={0}
+        tabIndex={-1}
       >
         <div className={styles.renameRow}>
           <span aria-hidden="true" className={styles.treeIcon}>
@@ -370,6 +396,7 @@ function TreeNodeItem({
       onDragOver={handleDragOver}
       onDragStart={handleDragStart}
       onDrop={handleDrop}
+      tabIndex={-1}
       type="button"
     >
       <span aria-hidden="true" className={styles.treeIcon}>
@@ -391,8 +418,10 @@ function TreeNodeItem({
         data-active={isActive || undefined}
         data-drop-target={isDropTarget || undefined}
         data-testid={`tree-node-${node.fullPath}`}
+        data-tree-path={node.fullPath}
+        onFocus={() => onFocusPath(node.fullPath)}
         role="treeitem"
-        tabIndex={0}
+        tabIndex={isFocused ? 0 : -1}
       >
         {node.document ? (
           <ContextMenu.Root>
@@ -436,6 +465,7 @@ function TreeNodeItem({
                 editingDocumentId={editingDocumentId}
                 editingPath={editingPath}
                 expanded={expanded}
+                focusedPath={focusedPath}
                 key={child.fullPath}
                 node={child}
                 onContextAction={onContextAction}
@@ -445,6 +475,7 @@ function TreeNodeItem({
                 onDocumentSelect={onDocumentSelect}
                 onDropOnFile={onDropOnFile}
                 onDropOnFolder={onDropOnFolder}
+                onFocusPath={onFocusPath}
                 onRenameCancel={onRenameCancel}
                 onRenameChange={onRenameChange}
                 onRenameCommit={onRenameCommit}
@@ -489,10 +520,24 @@ export function DocumentTree({
   );
   const [editingPath, setEditingPath] = useState("");
   const consumedPendingRenameIdRef = useRef<string | null>(null);
+  const treeRef = useRef<HTMLUListElement | null>(null);
   const orderedTree = useMemo(
     () => applyPreferredOrder(tree, preferredOrderByParent),
     [preferredOrderByParent, tree],
   );
+  const visibleTreeNodes = useMemo(
+    () => flattenVisibleTreeNodes(orderedTree, expanded),
+    [expanded, orderedTree],
+  );
+  const activeDocumentPath = useMemo(
+    () =>
+      activeDocumentId
+        ? (documents.find((document) => document.id === activeDocumentId)?.path ??
+          null)
+        : null,
+    [activeDocumentId, documents],
+  );
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pendingRenameDocumentId) {
@@ -514,6 +559,50 @@ export function DocumentTree({
     setEditingDocumentId(pendingDocument.id);
     setEditingPath(pendingDocument.path);
   }, [documents, pendingRenameDocumentId]);
+
+  useEffect(() => {
+    if (editingDocumentId) {
+      return;
+    }
+
+    const hasFocusedPath =
+      focusedPath !== null &&
+      visibleTreeNodes.some((node) => node.fullPath === focusedPath);
+    if (hasFocusedPath) {
+      return;
+    }
+
+    if (
+      activeDocumentPath &&
+      visibleTreeNodes.some((node) => node.fullPath === activeDocumentPath)
+    ) {
+      setFocusedPath(activeDocumentPath);
+      return;
+    }
+
+    setFocusedPath(visibleTreeNodes[0]?.fullPath ?? null);
+  }, [
+    activeDocumentPath,
+    editingDocumentId,
+    focusedPath,
+    visibleTreeNodes,
+  ]);
+
+  useEffect(() => {
+    if (editingDocumentId || !focusedPath || !treeRef.current) {
+      return;
+    }
+
+    const treeItem = Array.from(
+      treeRef.current.querySelectorAll<HTMLElement>("[data-tree-path]"),
+    ).find((element) => element.getAttribute("data-tree-path") === focusedPath);
+
+    if (!treeItem || treeItem === document.activeElement) {
+      return;
+    }
+
+    treeItem.focus();
+  }, [editingDocumentId, focusedPath]);
 
   const handleToggle = useCallback((path: string) => {
     setExpanded((previous) => {
@@ -648,6 +737,125 @@ export function DocumentTree({
     [clearDragState, draggingDocumentPath, onRenameDocument, orderedTree],
   );
 
+  const handleTreeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLUListElement>) => {
+      if (editingDocumentId || visibleTreeNodes.length === 0) {
+        return;
+      }
+
+      const currentPath = focusedPath ?? visibleTreeNodes[0]?.fullPath ?? null;
+      if (!currentPath) {
+        return;
+      }
+
+      const currentIndex = visibleTreeNodes.findIndex(
+        (node) => node.fullPath === currentPath,
+      );
+      if (currentIndex < 0) {
+        return;
+      }
+
+      const currentNode = visibleTreeNodes[currentIndex];
+      if (!currentNode) {
+        return;
+      }
+
+      switch (event.key) {
+        case "ArrowDown": {
+          event.preventDefault();
+          const nextNode =
+            visibleTreeNodes[Math.min(currentIndex + 1, visibleTreeNodes.length - 1)];
+          setFocusedPath(nextNode?.fullPath ?? currentPath);
+          return;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const previousNode =
+            visibleTreeNodes[Math.max(currentIndex - 1, 0)];
+          setFocusedPath(previousNode?.fullPath ?? currentPath);
+          return;
+        }
+        case "Home": {
+          event.preventDefault();
+          setFocusedPath(visibleTreeNodes[0]?.fullPath ?? currentPath);
+          return;
+        }
+        case "End": {
+          event.preventDefault();
+          setFocusedPath(
+            visibleTreeNodes[visibleTreeNodes.length - 1]?.fullPath ??
+              currentPath,
+          );
+          return;
+        }
+        case "ArrowRight": {
+          if (currentNode.children.length === 0) {
+            return;
+          }
+
+          event.preventDefault();
+          if (!expanded.has(currentNode.fullPath)) {
+            setExpanded((previous) => {
+              const next = new Set(previous);
+              next.add(currentNode.fullPath);
+              return next;
+            });
+            return;
+          }
+
+          const firstChild = currentNode.children[0];
+          if (firstChild) {
+            setFocusedPath(firstChild.fullPath);
+          }
+          return;
+        }
+        case "ArrowLeft": {
+          if (
+            currentNode.children.length > 0 &&
+            expanded.has(currentNode.fullPath)
+          ) {
+            event.preventDefault();
+            setExpanded((previous) => {
+              const next = new Set(previous);
+              next.delete(currentNode.fullPath);
+              return next;
+            });
+            return;
+          }
+
+          const parent = parentPath(currentNode.fullPath);
+          if (parent.length > 0) {
+            event.preventDefault();
+            setFocusedPath(parent);
+          }
+          return;
+        }
+        case "Enter": {
+          event.preventDefault();
+          if (currentNode.children.length > 0) {
+            handleToggle(currentNode.fullPath);
+            return;
+          }
+
+          if (currentNode.document && onDocumentSelect) {
+            onDocumentSelect(currentNode.document.id);
+          }
+          return;
+        }
+        default:
+          return;
+      }
+    },
+    [
+      editingDocumentId,
+      expanded,
+      focusedPath,
+      handleToggle,
+      onDocumentSelect,
+      visibleTreeNodes,
+    ],
+  );
+
   if (loading) {
     return (
       <div data-testid="document-tree-loading">
@@ -683,7 +891,12 @@ export function DocumentTree({
   return (
     <nav aria-label="Document tree" data-testid="document-tree">
       {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: role="tree" is correct for ARIA tree widget */}
-      <ul className={styles.tree} role="tree">
+      <ul
+        className={styles.tree}
+        onKeyDown={handleTreeKeyDown}
+        ref={treeRef}
+        role="tree"
+      >
         {orderedTree.map((node) => (
           <TreeNodeItem
             activeDocumentId={activeDocumentId}
@@ -692,6 +905,7 @@ export function DocumentTree({
             editingDocumentId={editingDocumentId}
             editingPath={editingPath}
             expanded={expanded}
+            focusedPath={focusedPath}
             key={node.fullPath}
             node={node}
             onContextAction={handleContextAction}
@@ -703,6 +917,7 @@ export function DocumentTree({
             onDocumentSelect={onDocumentSelect}
             onDropOnFile={handleDropOnFile}
             onDropOnFolder={handleDropOnFolder}
+            onFocusPath={setFocusedPath}
             onRenameCancel={cancelRenameDocument}
             onRenameChange={setEditingPath}
             onRenameCommit={commitRenameDocument}

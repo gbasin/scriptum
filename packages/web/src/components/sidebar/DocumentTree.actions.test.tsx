@@ -180,4 +180,89 @@ describe("DocumentTree workspace actions", () => {
       root.unmount();
     });
   });
+
+  it("supports keyboard arrow navigation with roving tabindex", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const onDocumentSelect = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <DocumentTree
+          activeDocumentId={null}
+          documents={[
+            makeDocument({ id: "doc-a", path: "docs/api.md" }),
+            makeDocument({ id: "doc-r", path: "docs/readme.md" }),
+            makeDocument({ id: "doc-c", path: "changelog.md" }),
+          ]}
+          onDocumentSelect={onDocumentSelect}
+        />,
+      );
+    });
+
+    const docsItem = container.querySelector(
+      '[data-testid="tree-node-docs"]',
+    ) as HTMLLIElement | null;
+    const apiItem = container.querySelector(
+      '[data-testid="tree-node-docs/api.md"]',
+    ) as HTMLLIElement | null;
+    const changelogItem = container.querySelector(
+      '[data-testid="tree-node-changelog.md"]',
+    ) as HTMLLIElement | null;
+
+    expect(docsItem).not.toBeNull();
+    expect(apiItem).not.toBeNull();
+    expect(changelogItem).not.toBeNull();
+    expect(docsItem?.tabIndex).toBe(0);
+    expect(apiItem?.tabIndex).toBe(-1);
+
+    act(() => {
+      docsItem?.focus();
+      docsItem?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    expect(document.activeElement).toBe(apiItem);
+
+    act(() => {
+      apiItem?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" }),
+      );
+    });
+    expect(document.activeElement).toBe(docsItem);
+
+    act(() => {
+      docsItem?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" }),
+      );
+    });
+    expect(docsItem?.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => {
+      docsItem?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }),
+      );
+    });
+    expect(docsItem?.getAttribute("aria-expanded")).toBe("true");
+
+    act(() => {
+      docsItem?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "End" }),
+      );
+    });
+    expect(document.activeElement).toBe(changelogItem);
+
+    act(() => {
+      changelogItem?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+    expect(onDocumentSelect).toHaveBeenCalledWith("doc-c");
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });
