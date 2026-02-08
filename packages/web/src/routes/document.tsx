@@ -10,6 +10,7 @@ import type {
   CommentThread,
   WorkspaceEditorFontFamily,
 } from "@scriptum/shared";
+import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
@@ -76,6 +77,7 @@ import {
   sharePermissionLabel,
   storeShareLinkRecord,
 } from "./share-links";
+import styles from "./document.module.css";
 
 export {
   buildOpenDocumentTabs,
@@ -1035,18 +1037,10 @@ export function DocumentRoute() {
           <EditorRuntimeErrorThrower error={editorRuntimeError} />
           {showEditorLoadingSkeleton ? (
             <div data-testid="editor-loading-skeleton">
-              <div
-                aria-hidden="true"
-                style={{
-                  display: "grid",
-                  gap: "0.45rem",
-                  marginBottom: "0.5rem",
-                  maxWidth: "28rem",
-                }}
-              >
-                <SkeletonBlock style={{ height: "0.8rem", width: "36%" }} />
-                <SkeletonBlock style={{ height: "0.8rem", width: "64%" }} />
-                <SkeletonBlock style={{ height: "0.8rem", width: "52%" }} />
+              <div aria-hidden="true" className={styles.editorLoadingRows}>
+                <SkeletonBlock className={styles.editorLoadingLineShort} />
+                <SkeletonBlock className={styles.editorLoadingLineLong} />
+                <SkeletonBlock className={styles.editorLoadingLineMedium} />
               </div>
             </div>
           ) : null}
@@ -1058,42 +1052,23 @@ export function DocumentRoute() {
             <output
               aria-live="polite"
               data-testid="drop-upload-progress"
-              style={{
-                background:
-                  dropUploadProgress.phase === "completed" &&
+              className={clsx(
+                styles.dropUploadProgress,
+                dropUploadProgress.phase === "completed" &&
                   dropUploadProgress.failedFiles > 0
-                    ? "#fee2e2"
-                    : "#dbeafe",
-                border:
-                  dropUploadProgress.phase === "completed" &&
-                  dropUploadProgress.failedFiles > 0
-                    ? "1px solid #fca5a5"
-                    : "1px solid #93c5fd",
-                borderRadius: "0.375rem",
-                color:
-                  dropUploadProgress.phase === "completed" &&
-                  dropUploadProgress.failedFiles > 0
-                    ? "#991b1b"
-                    : "#1e3a8a",
-                fontSize: "0.8rem",
-                marginBottom: "0.5rem",
-                padding: "0.375rem 0.5rem",
-              }}
+                  ? styles.dropUploadProgressError
+                  : styles.dropUploadProgressInfo,
+              )}
             >
               {formatDropUploadProgress(dropUploadProgress)}
             </output>
           ) : null}
 
-          <div style={{ position: "relative" }}>
+          <div className={styles.editorContainer}>
             <div
               data-testid="editor-host"
               ref={editorHostRef}
-              style={{
-                border: "1px solid #d1d5db",
-                borderRadius: "0.5rem",
-                minHeight: "20rem",
-                overflow: "hidden",
-              }}
+              className={styles.editorHost}
             />
 
             <CommentPopover
@@ -1130,14 +1105,7 @@ export function DocumentRoute() {
           <ul>
             {inlineCommentThreads.map((thread) => (
               <li key={thread.id}>
-                <div
-                  style={{
-                    alignItems: "center",
-                    display: "flex",
-                    gap: "0.5rem",
-                    marginBottom: "0.25rem",
-                  }}
-                >
+                <div className={styles.threadHeader}>
                   <strong>
                     {thread.status === "resolved" ? "Resolved" : "Open"}
                   </strong>{" "}
@@ -1163,37 +1131,27 @@ export function DocumentRoute() {
                 {thread.status === "resolved" ? (
                   <div
                     data-testid={`comment-thread-collapsed-${thread.id}`}
-                    style={{
-                      alignItems: "center",
-                      color: "#6b7280",
-                      display: "inline-flex",
-                      fontSize: "0.75rem",
-                      gap: "0.375rem",
-                    }}
+                    className={styles.threadCollapsed}
                   >
                     <span
                       aria-hidden="true"
                       data-testid={`comment-thread-collapsed-dot-${thread.id}`}
-                      style={{
-                        background: "#6b7280",
-                        borderRadius: "9999px",
-                        display: "inline-block",
-                        height: "0.4rem",
-                        width: "0.4rem",
-                      }}
+                      className={styles.threadCollapsedDot}
                     />
                     Collapsed in margin
                   </div>
                 ) : (
                   thread.messages.map((message) => (
                     <article key={message.id}>
-                      <p style={{ marginBottom: "0.125rem" }}>
+                      <p className={styles.threadMessageMeta}>
                         <strong>{message.authorName}</strong>{" "}
                         <time dateTime={message.createdAt}>
                           {message.createdAt}
                         </time>
                       </p>
-                      <p style={{ marginTop: 0 }}>{message.bodyMd}</p>
+                      <p className={styles.threadMessageBody}>
+                        {message.bodyMd}
+                      </p>
                     </article>
                   ))
                 )}
@@ -1238,17 +1196,12 @@ export function DocumentRoute() {
                       data-peer-type={peer.type}
                       data-testid={`attribution-badge-${badgeSuffix(peer.name)}`}
                       key={`${section}:${peer.name}`}
-                      style={{
-                        backgroundColor:
-                          peer.type === "agent" ? "#dbeafe" : "#dcfce7",
-                        border: "1px solid #93c5fd",
-                        borderRadius: "9999px",
-                        display: "inline-flex",
-                        fontSize: "0.7rem",
-                        fontWeight: 700,
-                        marginRight: "0.375rem",
-                        padding: "0.1rem 0.45rem",
-                      }}
+                      className={clsx(
+                        styles.attributionBadge,
+                        peer.type === "agent"
+                          ? styles.attributionBadgeAgent
+                          : styles.attributionBadgeHuman,
+                      )}
                     >
                       {peer.type === "agent" ? "AGENT" : "HUMAN"}: {peer.name}
                     </span>
@@ -1266,17 +1219,12 @@ export function DocumentRoute() {
                   data-peer-type={peer.type}
                   data-testid={`attribution-badge-${badgeSuffix(peer.name)}`}
                   key={`info:${peer.name}`}
-                  style={{
-                    backgroundColor:
-                      peer.type === "agent" ? "#dbeafe" : "#dcfce7",
-                    border: "1px solid #93c5fd",
-                    borderRadius: "9999px",
-                    display: "inline-flex",
-                    fontSize: "0.7rem",
-                    fontWeight: 700,
-                    marginRight: "0.375rem",
-                    padding: "0.1rem 0.45rem",
-                  }}
+                  className={clsx(
+                    styles.attributionBadge,
+                    peer.type === "agent"
+                      ? styles.attributionBadgeAgent
+                      : styles.attributionBadgeHuman,
+                  )}
                 >
                   {peer.type === "agent" ? "AGENT" : "HUMAN"}: {peer.name}
                 </span>
@@ -1298,11 +1246,7 @@ export function DocumentRoute() {
       <section
         aria-label="History browsing view"
         data-testid="history-view-panel"
-        style={{
-          borderTop: "1px solid #d1d5db",
-          marginTop: "0.75rem",
-          paddingTop: "0.5rem",
-        }}
+        className={styles.historyPanel}
       >
         <DiffView
           authorshipMap={timelineAuthorshipMap}
