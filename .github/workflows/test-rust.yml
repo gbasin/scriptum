@@ -25,5 +25,5 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      - name: Run Rust tests
-        run: cargo nextest run --workspace --all-targets
+      - name: Run canonical Rust test pipeline
+        run: ./scripts/ci/pipeline.sh test-rust

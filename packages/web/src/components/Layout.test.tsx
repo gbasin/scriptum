@@ -433,7 +433,7 @@ describe("Layout responsive panels", () => {
 });
 
 describe("Layout route error boundary", () => {
-  function ThrowingRoute() {
+  function ThrowingRoute(): never {
     throw new Error("route-crash");
   }
 

@@ -17,5 +17,5 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run golden file tests
-        run: cargo test -p scriptum-common --test golden_runner -- --nocapture
+      - name: Run canonical golden test pipeline
+        run: ./scripts/ci/pipeline.sh golden

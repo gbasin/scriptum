@@ -6,6 +6,9 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "ci:job": "scripts/ci/pipeline.sh",
+    "ci:fast": "scripts/ci/pipeline.sh fast",
+    "ci:full": "scripts/ci/pipeline.sh full",
     "test:ui:smoke": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --grep @smoke",
     "test:ui": "pnpm exec playwright test -c tests/e2e/playwright.config.mts",
     "test:desktop:webdriver": "pnpm exec playwright test -c tests/e2e/desktop-webdriver.config.mts --grep @desktop",

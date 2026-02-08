@@ -23,8 +23,5 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run daemon CRDT convergence property suite
-        run: cargo test -p scriptum-daemon --test crdt_convergence_property -- --nocapture
-
-      - name: Run daemon diff-to-Yjs property suite
-        run: cargo test -p scriptum-daemon --test diff_to_yjs_property -- --nocapture
+      - name: Run canonical CRDT property pipeline
+        run: ./scripts/ci/pipeline.sh property-crdt

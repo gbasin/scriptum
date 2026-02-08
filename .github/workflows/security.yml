@@ -25,15 +25,6 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
 
-      - name: AuthZ bypass checks
-        run: cargo test -p scriptum-relay --test security_authz -- --nocapture
-
-      - name: Path traversal checks
-        run: cargo test -p scriptum-daemon --test security_path_traversal -- --nocapture
-
-      - name: Token replay checks
-        run: cargo test -p scriptum-relay --test security_token -- --nocapture
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -46,11 +37,5 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: XSS sanitization checks
-        run: pnpm --filter @scriptum/editor exec vitest run src/live-preview/security.test.ts
-
-      - name: Brute-force rate limiting checks
-        run: cargo test -p scriptum-relay start_rate_limits_and_sets_retry_after_header -- --nocapture
-
-      - name: Dependency policy checks
-        run: cargo deny check
+      - name: Run canonical security pipeline
+        run: ./scripts/ci/pipeline.sh security

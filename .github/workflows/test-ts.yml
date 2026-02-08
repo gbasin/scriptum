@@ -31,5 +31,5 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run TypeScript tests
-        run: pnpm test
+      - name: Run canonical TypeScript test pipeline
+        run: ./scripts/ci/pipeline.sh test-ts

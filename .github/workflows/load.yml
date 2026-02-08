@@ -40,5 +40,5 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run websocket load suite
-        run: tests/load/run-relay-load.sh pre-release
+      - name: Run canonical relay websocket load pipeline
+        run: ./scripts/ci/pipeline.sh load-relay-websocket

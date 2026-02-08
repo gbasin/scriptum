@@ -35,8 +35,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run daemon watcher integration tests
-        run: cargo test -p scriptum-daemon --test daemon_file_watcher_integration -- --nocapture
+      - name: Run canonical daemon watcher integration pipeline
+        run: ./scripts/ci/pipeline.sh integration-daemon-watcher
 
   relay-websocket:
     name: Relay + WebSocket
@@ -65,8 +65,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run relay websocket integration test
-        run: cargo test -p scriptum-relay websocket_integration_ack_and_broadcast_to_other_subscriber -- --nocapture
+      - name: Run canonical relay websocket integration pipeline
+        run: ./scripts/ci/pipeline.sh integration-relay-websocket
 
   git-worker:
     name: Git Worker
@@ -95,8 +95,5 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run git worker and leader tests
-        run: |
-          cargo test -p scriptum-daemon git::worker::tests -- --nocapture
-          cargo test -p scriptum-daemon git::leader::tests -- --nocapture
-          cargo test -p scriptum-daemon --test git_worker_e2e_integration -- --nocapture
+      - name: Run canonical git worker integration pipeline
+        run: ./scripts/ci/pipeline.sh integration-git-worker

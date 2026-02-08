@@ -36,14 +36,5 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Biome check
-        run: pnpm check
-
-      - name: Rust format check
-        run: cargo fmt --all -- --check
-
-      - name: Rust clippy
-        run: cargo clippy --workspace --all-targets
-
-      - name: TypeScript noEmit
-        run: pnpm -r --if-present run typecheck
+      - name: Run canonical lint pipeline
+        run: ./scripts/ci/pipeline.sh lint
