@@ -34,12 +34,12 @@ interface AuthorshipSegment {
 
 const baseTheme = EditorView.theme({
   "&": {
-    border: "1px solid #e5e7eb",
+    border: "1px solid var(--color-border-muted)",
     borderRadius: "0.375rem",
     fontSize: "0.8rem",
   },
   ".cm-content": {
-    fontFamily: "ui-monospace, SFMono-Regular, SFMono, Menlo, monospace",
+    fontFamily: "var(--font-mono)",
     minHeight: "3rem",
     padding: "0.5rem",
     whiteSpace: "pre-wrap",
@@ -54,12 +54,12 @@ const baseTheme = EditorView.theme({
     borderRadius: "0.2rem",
   },
   ".cm-scriptum-diff-added": {
-    backgroundColor: "#dcfce7",
-    color: "#166534",
+    backgroundColor: "var(--color-success-soft)",
+    color: "var(--color-text-primary)",
   },
   ".cm-scriptum-diff-removed": {
-    backgroundColor: "#fee2e2",
-    color: "#991b1b",
+    backgroundColor: "var(--color-danger-soft)",
+    color: "var(--color-danger-text)",
     textDecoration: "line-through",
   },
 });
