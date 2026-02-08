@@ -340,6 +340,9 @@ export function DocumentRoute() {
     useState<ShareLinkExpirationOption>("none");
   const [shareMaxUsesInput, setShareMaxUsesInput] = useState("3");
   const [generatedShareUrl, setGeneratedShareUrl] = useState("");
+  const [shareGenerationError, setShareGenerationError] = useState<
+    string | null
+  >(null);
   const [dropUploadProgress, setDropUploadProgress] =
     useState<DropUploadProgress | null>(null);
   const activeEditors = fixtureModeEnabled
@@ -895,47 +898,67 @@ export function DocumentRoute() {
 
   const openShareDialog = () => {
     setGeneratedShareUrl("");
+    setShareGenerationError(null);
     setShareDialogOpen(true);
   };
 
   const closeShareDialog = () => {
     setShareDialogOpen(false);
+    setShareGenerationError(null);
   };
 
-  const generateShareLink = () => {
+  const generateShareLink = async () => {
     if (!workspaceId) {
-      toast.error("Cannot generate a share link without an active workspace.");
+      const message =
+        "Cannot generate a share link without an active workspace.";
+      setShareGenerationError(message);
+      toast.error(message);
       return;
     }
 
     if (typeof window === "undefined") {
-      toast.error("Cannot generate a share link outside the browser.");
+      const message = "Cannot generate a share link outside the browser.";
+      setShareGenerationError(message);
+      toast.error(message);
       return;
     }
 
-    const resolvedTargetType: ShareLinkTargetType =
-      shareTargetType === "document" && documentId ? "document" : "workspace";
-    const resolvedTargetId =
-      resolvedTargetType === "document"
-        ? (documentId ?? workspaceId)
-        : workspaceId;
-    const token = makeClientId("share");
-    const record = createShareLinkRecord({
-      token,
-      targetType: resolvedTargetType,
-      targetId: resolvedTargetId,
-      permission: sharePermission,
-      expiresAt: expirationIsoFromOption(shareExpirationOption),
-      maxUses: parseShareLinkMaxUses(shareMaxUsesInput),
-    });
+    try {
+      setShareGenerationError(null);
 
-    storeShareLinkRecord(record);
-    setGeneratedShareUrl(
-      buildShareLinkUrl(record.token, window.location.origin),
-    );
-    toast.success(
-      `Generated ${resolvedTargetType === "document" ? "document" : "workspace"} share link.`,
-    );
+      const resolvedTargetType: ShareLinkTargetType =
+        shareTargetType === "document" && documentId
+          ? "document"
+          : "workspace";
+      const resolvedTargetId =
+        resolvedTargetType === "document"
+          ? (documentId ?? workspaceId)
+          : workspaceId;
+      const token = makeClientId("share");
+      const record = createShareLinkRecord({
+        token,
+        targetType: resolvedTargetType,
+        targetId: resolvedTargetId,
+        permission: sharePermission,
+        expiresAt: expirationIsoFromOption(shareExpirationOption),
+        maxUses: parseShareLinkMaxUses(shareMaxUsesInput),
+      });
+
+      await Promise.resolve(storeShareLinkRecord(record));
+      setGeneratedShareUrl(
+        buildShareLinkUrl(record.token, window.location.origin),
+      );
+      toast.success(
+        `Generated ${resolvedTargetType === "document" ? "document" : "workspace"} share link.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Failed to generate share link. Please try again.";
+      setShareGenerationError(message);
+      toast.error(message);
+    }
   };
 
   const selectTab = (nextDocumentId: string) => {
@@ -1008,6 +1031,7 @@ export function DocumentRoute() {
           {isShareDialogOpen ? (
             <ShareDialog
               documentId={documentId}
+              generationError={shareGenerationError}
               generatedShareUrl={generatedShareUrl}
               onClose={closeShareDialog}
               onExpirationOptionChange={setShareExpirationOption}

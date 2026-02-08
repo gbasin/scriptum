@@ -7,10 +7,11 @@ import styles from "./ShareDialog.module.css";
 
 interface ShareDialogProps {
   documentId: string | undefined;
+  generationError?: string | null;
   generatedShareUrl: string;
   onClose: () => void;
   onExpirationOptionChange: (option: ShareLinkExpirationOption) => void;
-  onGenerate: () => void;
+  onGenerate: () => void | Promise<void>;
   onMaxUsesInputChange: (value: string) => void;
   onPermissionChange: (permission: ShareLinkPermission) => void;
   onTargetTypeChange: (targetType: ShareLinkTargetType) => void;
@@ -23,6 +24,7 @@ interface ShareDialogProps {
 
 export function ShareDialog({
   documentId,
+  generationError = null,
   generatedShareUrl,
   onClose,
   onExpirationOptionChange,
@@ -114,6 +116,12 @@ export function ShareDialog({
           Generate link
         </button>
       </div>
+
+      {generationError ? (
+        <p className={styles.errorMessage} data-testid="share-link-error">
+          {generationError}
+        </p>
+      ) : null}
 
       {generatedShareUrl ? (
         <div className={styles.generatedPanel}>

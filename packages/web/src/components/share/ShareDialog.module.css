@@ -17,3 +17,12 @@
 .generatedPanel {
   margin-top: var(--space-2);
 }
+
+.errorMessage {
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-1);
+  color: var(--color-danger-text);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-1) var(--space-2);
+}
