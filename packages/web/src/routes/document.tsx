@@ -1,38 +1,21 @@
-import { markdown } from "@codemirror/lang-markdown";
-import { Compartment, EditorState, Transaction } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import {
-  type CommentDecorationRange,
-  commentGutterExtension,
-  commentHighlightExtension,
-  createCollaborationProvider,
   type DropUploadProgress,
-  dragDropUploadExtension,
-  livePreviewExtension,
   nameToColor,
-  reconciliationInlineExtension,
-  remoteCursorExtension,
-  setCommentGutterRanges,
-  setCommentHighlightRanges,
   setReconciliationInlineEntries,
-  slashCommandsExtension,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import type {
   CommentMessage,
   CommentThread,
-  Document as ScriptumDocument,
   WorkspaceEditorFontFamily,
 } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
-import {
-  CommentPopover,
-  type ThreadWithMessages,
-} from "../components/comments/CommentPopover";
+import { CommentPopover, type ThreadWithMessages } from "../components/comments/CommentPopover";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
-import { type OpenDocumentTab, TabBar } from "../components/editor/TabBar";
+import { TabBar } from "../components/editor/TabBar";
 import {
   type HistoryViewMode,
   TimelineSlider,
@@ -43,8 +26,40 @@ import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ShareDialog } from "../components/share/ShareDialog";
+import { useScriptumEditor } from "../hooks/useScriptumEditor";
 import { useToast } from "../hooks/useToast";
 import type { CreateCommentInput } from "../lib/api-client";
+import {
+  buildOpenDocumentTabs,
+  nextDocumentIdAfterClose,
+} from "../lib/document-utils";
+import {
+  appendReplyToThread,
+  commentAnchorTopPx,
+  commentRangesFromThreads,
+  LOCAL_COMMENT_AUTHOR_ID,
+  LOCAL_COMMENT_AUTHOR_NAME,
+  normalizeInlineCommentThreads,
+  toCommentMessage,
+  toInlineCommentThread,
+  toThreadWithMessages,
+  type InlineCommentMessage,
+  type InlineCommentThread,
+  UNKNOWN_COMMENT_TIMESTAMP,
+  updateInlineCommentMessageBody,
+  updateInlineCommentThreadStatus,
+} from "../lib/inline-comments";
+import {
+  authorshipMapFromTimelineEntry,
+  buildAuthorshipSegments,
+  buildTimelineDiffSegments,
+  createTimelineSnapshotEntry,
+  deriveTimelineSnapshotEntry,
+  LOCAL_TIMELINE_AUTHOR,
+  timelineAuthorFromPeer,
+  type TimelineSnapshotEntry,
+  UNKNOWN_REMOTE_TIMELINE_AUTHOR,
+} from "../lib/timeline";
 import { useDocumentsStore } from "../store/documents";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
@@ -62,6 +77,28 @@ import {
   storeShareLinkRecord,
 } from "./share-links";
 
+export {
+  buildOpenDocumentTabs,
+  nextDocumentIdAfterClose,
+} from "../lib/document-utils";
+export {
+  appendReplyToThread,
+  commentAnchorTopPx,
+  commentRangesFromThreads,
+  normalizeInlineCommentThreads,
+  type InlineCommentThread,
+  updateInlineCommentMessageBody,
+  updateInlineCommentThreadStatus,
+} from "../lib/inline-comments";
+export {
+  buildAuthorshipSegments,
+  buildTimelineDiffSegments,
+  createTimelineSnapshotEntry,
+  deriveTimelineSnapshotEntry,
+  type TimelineAuthor,
+  timelineAuthorFromPeer,
+} from "../lib/timeline";
+
 const DEFAULT_DAEMON_WS_BASE_URL =
   (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ??
   "ws://127.0.0.1:39091/yjs";
@@ -70,10 +107,6 @@ const DEFAULT_WEBRTC_SIGNALING_URL =
   null;
 const REALTIME_E2E_MODE =
   (import.meta.env.VITE_SCRIPTUM_REALTIME_E2E as string | undefined) === "1";
-const LOCAL_COMMENT_AUTHOR_ID = "local-user";
-const LOCAL_COMMENT_AUTHOR_NAME = "You";
-const UNKNOWN_COMMENT_AUTHOR_NAME = "Unknown";
-const UNKNOWN_COMMENT_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const FIXTURE_REMOTE_CLIENT_ID_BASE = 10_000;
 const MAX_TIMELINE_SNAPSHOTS = 240;
 const DROP_UPLOAD_SUCCESS_HIDE_DELAY_MS = 2_000;
@@ -104,281 +137,11 @@ const DEFAULT_TEST_STATE: ScriptumTestState = {
   shareLinksEnabled: false,
 };
 
-interface UnknownRecord {
-  [key: string]: unknown;
-}
-
-interface InlineCommentMessage {
-  authorName: string;
-  authorUserId?: string;
-  bodyMd: string;
-  createdAt: string;
-  id: string;
-  isOwn: boolean;
-}
-
-export interface InlineCommentThread {
-  endOffsetUtf16: number;
-  id: string;
-  messages: InlineCommentMessage[];
-  startOffsetUtf16: number;
-  status: "open" | "resolved";
-}
-
 interface ActiveTextSelection {
   from: number;
   line: number;
   selectedText: string;
   to: number;
-}
-
-export interface TimelineAuthor {
-  color: string;
-  id: string;
-  name: string;
-  type: "agent" | "human";
-}
-
-export interface TimelineSnapshotEntry {
-  attribution: TimelineAuthor[];
-  content: string;
-}
-
-export interface AuthorshipSegment {
-  author: TimelineAuthor;
-  text: string;
-}
-
-export interface TimelineDiffSegment {
-  kind: "unchanged" | "removed" | "added";
-  text: string;
-}
-
-const LOCAL_TIMELINE_AUTHOR: TimelineAuthor = {
-  color: nameToColor(LOCAL_COMMENT_AUTHOR_NAME),
-  id: LOCAL_COMMENT_AUTHOR_ID,
-  name: LOCAL_COMMENT_AUTHOR_NAME,
-  type: "human",
-};
-
-const UNKNOWN_REMOTE_TIMELINE_AUTHOR: TimelineAuthor = {
-  color: nameToColor("Collaborator"),
-  id: "remote-collaborator",
-  name: "Collaborator",
-  type: "human",
-};
-
-export function timelineAuthorFromPeer(
-  peer: Pick<ScriptumTestState["remotePeers"][number], "name" | "type">,
-): TimelineAuthor {
-  return {
-    color: nameToColor(peer.name),
-    id: `peer:${peer.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "remote"}`,
-    name: peer.name,
-    type: peer.type,
-  };
-}
-
-export function createTimelineSnapshotEntry(
-  content: string,
-  author: TimelineAuthor,
-): TimelineSnapshotEntry {
-  return {
-    attribution: Array.from({ length: content.length }, () => author),
-    content,
-  };
-}
-
-function normalizedAttributionLength(
-  entry: TimelineSnapshotEntry,
-): TimelineAuthor[] {
-  if (entry.attribution.length === entry.content.length) {
-    return entry.attribution;
-  }
-
-  return Array.from(
-    { length: entry.content.length },
-    (_unused, index) => entry.attribution[index] ?? LOCAL_TIMELINE_AUTHOR,
-  );
-}
-
-export function deriveTimelineSnapshotEntry(
-  previousEntry: TimelineSnapshotEntry,
-  nextContent: string,
-  author: TimelineAuthor,
-): TimelineSnapshotEntry {
-  if (previousEntry.content === nextContent) {
-    return {
-      attribution: normalizedAttributionLength(previousEntry).slice(),
-      content: previousEntry.content,
-    };
-  }
-
-  const previousContent = previousEntry.content;
-  const previousAttribution = normalizedAttributionLength(previousEntry);
-  let prefixLength = 0;
-
-  while (
-    prefixLength < previousContent.length &&
-    prefixLength < nextContent.length &&
-    previousContent[prefixLength] === nextContent[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < previousContent.length - prefixLength &&
-    suffixLength < nextContent.length - prefixLength &&
-    previousContent[previousContent.length - 1 - suffixLength] ===
-      nextContent[nextContent.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const nextMiddleLength = Math.max(
-    0,
-    nextContent.length - prefixLength - suffixLength,
-  );
-  const prefixAttribution = previousAttribution.slice(0, prefixLength);
-  const suffixAttribution =
-    suffixLength > 0
-      ? previousAttribution.slice(previousAttribution.length - suffixLength)
-      : [];
-  const middleAttribution = Array.from(
-    { length: nextMiddleLength },
-    () => author,
-  );
-
-  return {
-    attribution: [
-      ...prefixAttribution,
-      ...middleAttribution,
-      ...suffixAttribution,
-    ],
-    content: nextContent,
-  };
-}
-
-export function buildAuthorshipSegments(
-  entry: TimelineSnapshotEntry,
-): AuthorshipSegment[] {
-  const attribution = normalizedAttributionLength(entry);
-  const { content } = entry;
-  if (content.length === 0) {
-    return [];
-  }
-
-  const segments: AuthorshipSegment[] = [];
-  let currentAuthor = attribution[0] ?? LOCAL_TIMELINE_AUTHOR;
-  let currentText = content[0] ?? "";
-
-  for (let index = 1; index < content.length; index += 1) {
-    const nextAuthor = attribution[index] ?? LOCAL_TIMELINE_AUTHOR;
-    const nextCharacter = content[index] ?? "";
-
-    if (nextAuthor.id === currentAuthor.id) {
-      currentText += nextCharacter;
-      continue;
-    }
-
-    segments.push({ author: currentAuthor, text: currentText });
-    currentAuthor = nextAuthor;
-    currentText = nextCharacter;
-  }
-
-  segments.push({ author: currentAuthor, text: currentText });
-  return segments;
-}
-
-export function buildTimelineDiffSegments(
-  currentContent: string,
-  snapshotContent: string,
-): TimelineDiffSegment[] {
-  if (currentContent.length === 0 && snapshotContent.length === 0) {
-    return [];
-  }
-  if (currentContent === snapshotContent) {
-    return [{ kind: "unchanged", text: snapshotContent }];
-  }
-
-  let prefixLength = 0;
-  while (
-    prefixLength < currentContent.length &&
-    prefixLength < snapshotContent.length &&
-    currentContent[prefixLength] === snapshotContent[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < currentContent.length - prefixLength &&
-    suffixLength < snapshotContent.length - prefixLength &&
-    currentContent[currentContent.length - 1 - suffixLength] ===
-      snapshotContent[snapshotContent.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const prefix = currentContent.slice(0, prefixLength);
-  const removed = currentContent.slice(
-    prefixLength,
-    currentContent.length - suffixLength,
-  );
-  const added = snapshotContent.slice(
-    prefixLength,
-    snapshotContent.length - suffixLength,
-  );
-  const suffix =
-    suffixLength > 0
-      ? snapshotContent.slice(snapshotContent.length - suffixLength)
-      : "";
-
-  const segments: TimelineDiffSegment[] = [];
-  if (prefix.length > 0) {
-    segments.push({ kind: "unchanged", text: prefix });
-  }
-  if (removed.length > 0) {
-    segments.push({ kind: "removed", text: removed });
-  }
-  if (added.length > 0) {
-    segments.push({ kind: "added", text: added });
-  }
-  if (suffix.length > 0) {
-    segments.push({ kind: "unchanged", text: suffix });
-  }
-
-  return segments;
-}
-
-export function authorshipMapFromTimelineEntry(
-  entry: TimelineSnapshotEntry,
-): Map<{ from: number; to: number }, string> {
-  const attribution = normalizedAttributionLength(entry);
-  const authorshipMap = new Map<{ from: number; to: number }, string>();
-  if (entry.content.length === 0 || attribution.length === 0) {
-    return authorshipMap;
-  }
-
-  let rangeStart = 0;
-  let currentAuthor = attribution[0] ?? LOCAL_TIMELINE_AUTHOR;
-
-  for (let index = 1; index <= entry.content.length; index += 1) {
-    const nextAuthor =
-      index < attribution.length ? attribution[index] : undefined;
-    if (nextAuthor?.id === currentAuthor.id) {
-      continue;
-    }
-
-    authorshipMap.set({ from: rangeStart, to: index }, currentAuthor.name);
-    if (nextAuthor) {
-      rangeStart = index;
-      currentAuthor = nextAuthor;
-    }
-  }
-
-  return authorshipMap;
 }
 
 function pluralizeFiles(count: number): string {
@@ -422,370 +185,6 @@ export function uploadDroppedFileAsDataUrl(
     };
     reader.readAsDataURL(file);
   });
-}
-
-function asRecord(value: unknown): UnknownRecord | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as UnknownRecord;
-}
-
-function readNumber(
-  record: UnknownRecord,
-  keys: readonly string[],
-): number | null {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function readString(
-  record: UnknownRecord,
-  keys: readonly string[],
-): string | null {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function normalizeInlineCommentMessages(
-  value: unknown,
-): InlineCommentMessage[] {
-  const rawMessages = Array.isArray(value) ? value : value ? [value] : [];
-  const messages: InlineCommentMessage[] = [];
-
-  for (const rawMessage of rawMessages) {
-    const messageRecord = asRecord(rawMessage);
-    if (!messageRecord) {
-      continue;
-    }
-    const id = readString(messageRecord, ["id"]);
-    const bodyMd = readString(messageRecord, ["bodyMd", "body_md", "message"]);
-    if (!id || !bodyMd) {
-      continue;
-    }
-
-    const authorRecord = asRecord(messageRecord.author);
-    const authorUserId =
-      readString(messageRecord, ["authorUserId", "author_user_id", "userId"]) ??
-      (authorRecord
-        ? readString(authorRecord, ["id", "userId", "user_id"])
-        : null);
-    const explicitIsOwn = messageRecord.isOwn;
-    const isOwn =
-      typeof explicitIsOwn === "boolean"
-        ? explicitIsOwn
-        : authorUserId === LOCAL_COMMENT_AUTHOR_ID;
-    const authorName =
-      readString(messageRecord, ["authorName", "author_name", "author"]) ??
-      (authorRecord
-        ? readString(authorRecord, ["name", "display_name", "displayName"])
-        : null) ??
-      (isOwn ? LOCAL_COMMENT_AUTHOR_NAME : UNKNOWN_COMMENT_AUTHOR_NAME);
-    const createdAt =
-      readString(messageRecord, ["createdAt", "created_at", "timestamp"]) ??
-      UNKNOWN_COMMENT_TIMESTAMP;
-
-    messages.push({
-      authorName,
-      ...(authorUserId ? { authorUserId } : {}),
-      bodyMd,
-      createdAt,
-      id,
-      isOwn,
-    });
-  }
-
-  return messages;
-}
-
-function normalizeInlineCommentThread(
-  value: unknown,
-): InlineCommentThread | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-
-  const threadRecord = asRecord(record.thread) ?? record;
-  const id = readString(threadRecord, ["id"]);
-  const startOffsetUtf16 = readNumber(threadRecord, [
-    "startOffsetUtf16",
-    "start_offset_utf16",
-  ]);
-  const endOffsetUtf16 = readNumber(threadRecord, [
-    "endOffsetUtf16",
-    "end_offset_utf16",
-  ]);
-  if (!id || startOffsetUtf16 === null || endOffsetUtf16 === null) {
-    return null;
-  }
-  if (endOffsetUtf16 <= startOffsetUtf16) {
-    return null;
-  }
-
-  const statusRaw = readString(threadRecord, ["status"]) ?? "open";
-  const status: InlineCommentThread["status"] =
-    statusRaw === "resolved" ? "resolved" : "open";
-
-  const messages = normalizeInlineCommentMessages(
-    record.messages ?? record.message ?? threadRecord.messages,
-  );
-
-  return {
-    endOffsetUtf16,
-    id,
-    messages,
-    startOffsetUtf16,
-    status,
-  };
-}
-
-export function normalizeInlineCommentThreads(
-  values: unknown[],
-): InlineCommentThread[] {
-  const threads: InlineCommentThread[] = [];
-  const seenThreadIds = new Set<string>();
-
-  for (const value of values) {
-    const thread = normalizeInlineCommentThread(value);
-    if (!thread || seenThreadIds.has(thread.id)) {
-      continue;
-    }
-
-    seenThreadIds.add(thread.id);
-    threads.push(thread);
-  }
-
-  return threads;
-}
-
-export function commentRangesFromThreads(
-  threads: readonly InlineCommentThread[],
-): CommentDecorationRange[] {
-  return threads.map((thread) => ({
-    from: thread.startOffsetUtf16,
-    status: thread.status,
-    threadId: thread.id,
-    to: thread.endOffsetUtf16,
-  }));
-}
-
-export function appendReplyToThread(
-  threads: readonly InlineCommentThread[],
-  threadId: string,
-  message: InlineCommentMessage,
-): InlineCommentThread[] {
-  let didAppend = false;
-  const nextThreads = threads.map((thread) => {
-    if (thread.id !== threadId) {
-      return thread;
-    }
-    didAppend = true;
-    return {
-      ...thread,
-      messages: [...thread.messages, message],
-    };
-  });
-
-  return didAppend ? nextThreads : [...threads];
-}
-
-export function updateInlineCommentMessageBody(
-  threads: readonly InlineCommentThread[],
-  threadId: string,
-  messageId: string,
-  nextBodyMd: string,
-): InlineCommentThread[] {
-  const nextBody = nextBodyMd.trim();
-  if (!nextBody) {
-    return [...threads];
-  }
-
-  let didUpdate = false;
-  const nextThreads = threads.map((thread) => {
-    if (thread.id !== threadId) {
-      return thread;
-    }
-
-    const nextMessages = thread.messages.map((message) => {
-      if (message.id !== messageId || !message.isOwn) {
-        return message;
-      }
-      didUpdate = true;
-      return {
-        ...message,
-        bodyMd: nextBody,
-      };
-    });
-
-    return didUpdate
-      ? {
-          ...thread,
-          messages: nextMessages,
-        }
-      : thread;
-  });
-
-  return didUpdate ? nextThreads : [...threads];
-}
-
-export function updateInlineCommentThreadStatus(
-  threads: readonly InlineCommentThread[],
-  threadId: string,
-  status: InlineCommentThread["status"],
-): InlineCommentThread[] {
-  let didUpdate = false;
-  const nextThreads = threads.map((thread) => {
-    if (thread.id !== threadId) {
-      return thread;
-    }
-    if (thread.status === status) {
-      return thread;
-    }
-    didUpdate = true;
-    return {
-      ...thread,
-      status,
-    };
-  });
-
-  return didUpdate ? nextThreads : [...threads];
-}
-
-export function commentAnchorTopPx(line: number): number {
-  if (!Number.isFinite(line)) {
-    return 12;
-  }
-  return Math.max(12, (Math.max(1, Math.floor(line)) - 1) * 22 + 12);
-}
-
-function toCommentMessage(
-  message: InlineCommentMessage,
-  threadId: string,
-): CommentMessage {
-  return {
-    author: message.authorName,
-    bodyMd: message.bodyMd,
-    createdAt: message.createdAt,
-    editedAt: null,
-    id: message.id,
-    threadId,
-  };
-}
-
-function toInlineCommentMessage(message: CommentMessage): InlineCommentMessage {
-  const isOwn = message.author === LOCAL_COMMENT_AUTHOR_NAME;
-  return {
-    authorName: message.author,
-    authorUserId: isOwn ? LOCAL_COMMENT_AUTHOR_ID : undefined,
-    bodyMd: message.bodyMd,
-    createdAt: message.createdAt,
-    id: message.id,
-    isOwn,
-  };
-}
-
-function toThreadWithMessages(
-  thread: InlineCommentThread,
-  documentId: string | undefined,
-): ThreadWithMessages {
-  return {
-    messages: thread.messages.map((message) =>
-      toCommentMessage(message, thread.id),
-    ),
-    thread: {
-      createdAt: thread.messages[0]?.createdAt ?? UNKNOWN_COMMENT_TIMESTAMP,
-      createdBy: thread.messages[0]?.authorUserId ?? LOCAL_COMMENT_AUTHOR_ID,
-      docId: documentId ?? "",
-      endOffsetUtf16: thread.endOffsetUtf16,
-      id: thread.id,
-      resolvedAt:
-        thread.status === "resolved"
-          ? (thread.messages[thread.messages.length - 1]?.createdAt ??
-            UNKNOWN_COMMENT_TIMESTAMP)
-          : null,
-      sectionId: null,
-      startOffsetUtf16: thread.startOffsetUtf16,
-      status: thread.status,
-      version: 1,
-    },
-  };
-}
-
-function toInlineCommentThread(
-  threadWithMessages: ThreadWithMessages,
-): InlineCommentThread {
-  return {
-    endOffsetUtf16: threadWithMessages.thread.endOffsetUtf16,
-    id: threadWithMessages.thread.id,
-    messages: threadWithMessages.messages.map((message) =>
-      toInlineCommentMessage(message),
-    ),
-    startOffsetUtf16: threadWithMessages.thread.startOffsetUtf16,
-    status: threadWithMessages.thread.status,
-  };
-}
-
-function documentTitleFromPath(path: string): string {
-  const segments = path
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
-  return segments[segments.length - 1] ?? path;
-}
-
-export function buildOpenDocumentTabs(
-  openDocuments: readonly ScriptumDocument[],
-  workspaceId: string | undefined,
-  activeDocumentId: string | undefined,
-  activeDocumentPath: string,
-): OpenDocumentTab[] {
-  const workspaceOpenDocuments = workspaceId
-    ? openDocuments.filter((document) => document.workspaceId === workspaceId)
-    : [];
-  const tabs = workspaceOpenDocuments.map((document) => ({
-    id: document.id,
-    path: document.path,
-    title: document.title,
-  }));
-
-  if (activeDocumentId && !tabs.some((tab) => tab.id === activeDocumentId)) {
-    tabs.unshift({
-      id: activeDocumentId,
-      path: activeDocumentPath,
-      title: documentTitleFromPath(activeDocumentPath),
-    });
-  }
-
-  return tabs;
-}
-
-export function nextDocumentIdAfterClose(
-  tabs: readonly OpenDocumentTab[],
-  closingDocumentId: string,
-): string | null {
-  const closingIndex = tabs.findIndex((tab) => tab.id === closingDocumentId);
-  if (closingIndex < 0) {
-    return null;
-  }
-
-  const remainingTabs = tabs.filter((tab) => tab.id !== closingDocumentId);
-  if (remainingTabs.length === 0) {
-    return null;
-  }
-
-  const nextIndex = Math.max(0, closingIndex - 1);
-  return remainingTabs[nextIndex]?.id ?? remainingTabs[0]?.id ?? null;
 }
 
 function readFixtureState(): ScriptumTestState {
@@ -902,16 +301,6 @@ function editorTypographyTheme(fontFamily: WorkspaceEditorFontFamily) {
   });
 }
 
-function toError(value: unknown, fallbackMessage: string): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-  if (typeof value === "string" && value.length > 0) {
-    return new Error(value);
-  }
-  return new Error(fallbackMessage);
-}
-
 function EditorRuntimeErrorThrower(props: { error: Error | null }) {
   if (props.error) {
     throw props.error;
@@ -968,15 +357,7 @@ export function DocumentRoute() {
   const [webrtcProviderFactory] = useState<WebRtcProviderFactory | undefined>(
     () => resolveGlobalWebRtcProviderFactory(),
   );
-  const editorHostRef = useRef<HTMLDivElement | null>(null);
-  const editorViewRef = useRef<EditorView | null>(null);
-  const editorFontCompartmentRef = useRef(new Compartment());
-  const editorTabSizeCompartmentRef = useRef(new Compartment());
-  const editorLineNumbersCompartmentRef = useRef(new Compartment());
   const isApplyingTimelineSnapshotRef = useRef(false);
-  const collaborationProviderRef = useRef<ReturnType<
-    typeof createCollaborationProvider
-  > | null>(null);
   const fixtureRemoteClientIdsRef = useRef<number[]>([]);
   const timelineRemotePeersRef = useRef(fixtureState.remotePeers);
   const [timelineEntries, setTimelineEntries] = useState<
@@ -1117,6 +498,68 @@ export function DocumentRoute() {
     fixtureModeEnabled && fixtureState.shareLinksEnabled;
   const showEditorLoadingSkeleton =
     !fixtureModeEnabled && syncState === "reconnecting";
+  const handleEditorDocContentChanged = (
+    nextContent: string,
+    isRemoteTransaction: boolean,
+  ) => {
+    const nextAuthor = isRemoteTransaction
+      ? timelineRemotePeersRef.current[0]
+        ? timelineAuthorFromPeer(timelineRemotePeersRef.current[0])
+        : UNKNOWN_REMOTE_TIMELINE_AUTHOR
+      : LOCAL_TIMELINE_AUTHOR;
+
+    setTimelineEntries((currentEntries) => {
+      const latestEntry =
+        currentEntries[currentEntries.length - 1] ??
+        createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+      if (latestEntry.content === nextContent) {
+        return currentEntries;
+      }
+
+      const nextEntry = deriveTimelineSnapshotEntry(
+        latestEntry,
+        nextContent,
+        nextAuthor,
+      );
+      const nextEntries = [...currentEntries, nextEntry];
+      if (nextEntries.length > MAX_TIMELINE_SNAPSHOTS) {
+        nextEntries.splice(0, nextEntries.length - MAX_TIMELINE_SNAPSHOTS);
+      }
+
+      setTimelineIndex(nextEntries.length - 1);
+      return nextEntries;
+    });
+  };
+  const { collaborationProviderRef, editorHostRef, editorViewRef } =
+    useScriptumEditor({
+      commentRanges,
+      daemonWsBaseUrl,
+      editorRuntimeConfig,
+      fixtureDocContent: fixtureState.docContent,
+      fixtureModeEnabled,
+      isApplyingTimelineSnapshotRef,
+      onActiveSelectionChanged: setActiveSelection,
+      onCursorChanged: setCursor,
+      onDocContentChanged: handleEditorDocContentChanged,
+      onDropUploadProgressChanged: setDropUploadProgress,
+      onEditorReady: () => {
+        setTimelineEntries([
+          createTimelineSnapshotEntry(
+            fixtureState.docContent,
+            LOCAL_TIMELINE_AUTHOR,
+          ),
+        ]);
+        setTimelineIndex(0);
+      },
+      onEditorRuntimeError: setEditorRuntimeError,
+      onSyncStateChanged: setSyncState,
+      realtimeE2eMode: REALTIME_E2E_MODE,
+      roomId,
+      typographyTheme: editorTypographyTheme,
+      uploadFile: uploadDroppedFileAsDataUrl,
+      webrtcProviderFactory,
+      webrtcSignalingUrl,
+    });
 
   useEffect(() => {
     if (documentId) {
@@ -1174,234 +617,6 @@ export function DocumentRoute() {
     }
     setActiveDocumentForWorkspace(workspaceId, documentId);
   }, [documentId, setActiveDocumentForWorkspace, workspaceId]);
-
-  useEffect(() => {
-    const host = editorHostRef.current;
-    if (!host) {
-      return;
-    }
-
-    let provider: ReturnType<typeof createCollaborationProvider> | null = null;
-    let view: EditorView | null = null;
-
-    host.innerHTML = "";
-    setDropUploadProgress(null);
-    setEditorRuntimeError(null);
-
-    try {
-      provider = createCollaborationProvider({
-        connectOnCreate: false,
-        room: roomId,
-        url: daemonWsBaseUrl,
-        webrtcSignalingUrl: webrtcSignalingUrl ?? undefined,
-        webrtcProviderFactory,
-      });
-      collaborationProviderRef.current = provider;
-
-      if (fixtureState.docContent.length > 0) {
-        provider.yText.insert(0, fixtureState.docContent);
-      }
-
-      provider.provider.on("status", ({ status }) => {
-        if (fixtureModeEnabled) {
-          return;
-        }
-        setSyncState(status === "connected" ? "synced" : "reconnecting");
-      });
-      if (!fixtureModeEnabled) {
-        provider.connect();
-        setSyncState("reconnecting");
-      }
-      if (REALTIME_E2E_MODE) {
-        const localAwarenessName = `User ${provider.provider.awareness.clientID}`;
-        provider.provider.awareness.setLocalStateField("user", {
-          color: nameToColor(localAwarenessName),
-          name: localAwarenessName,
-          type: "human",
-        });
-        provider.provider.awareness.setLocalStateField("cursor", {
-          anchor: 0,
-          head: 0,
-        });
-      }
-
-      view = new EditorView({
-        parent: host,
-        state: EditorState.create({
-          doc: fixtureState.docContent,
-          extensions: [
-            markdown(),
-            livePreviewExtension(),
-            slashCommandsExtension(),
-            reconciliationInlineExtension(),
-            commentHighlightExtension(),
-            commentGutterExtension(),
-            provider.extension(),
-            remoteCursorExtension({ awareness: provider.provider.awareness }),
-            dragDropUploadExtension({
-              onError: (_error, _file) => {
-                // Progress UI includes failure counts; no extra UI surface needed here.
-              },
-              onProgress: (progress) => {
-                setDropUploadProgress(progress);
-              },
-              uploadFile: uploadDroppedFileAsDataUrl,
-            }),
-            editorFontCompartmentRef.current.of(
-              editorTypographyTheme(editorRuntimeConfig.fontFamily),
-            ),
-            editorTabSizeCompartmentRef.current.of(
-              EditorState.tabSize.of(editorRuntimeConfig.tabSize),
-            ),
-            editorLineNumbersCompartmentRef.current.of(
-              editorRuntimeConfig.lineNumbers ? lineNumbers() : [],
-            ),
-            EditorView.lineWrapping,
-            EditorView.updateListener.of((update) => {
-              if (update.docChanged && !isApplyingTimelineSnapshotRef.current) {
-                const nextContent = update.state.doc.toString();
-                const isRemoteTransaction = update.transactions.some(
-                  (transaction) =>
-                    Boolean(transaction.annotation(Transaction.remote)),
-                );
-                const nextAuthor = isRemoteTransaction
-                  ? timelineRemotePeersRef.current[0]
-                    ? timelineAuthorFromPeer(timelineRemotePeersRef.current[0])
-                    : UNKNOWN_REMOTE_TIMELINE_AUTHOR
-                  : LOCAL_TIMELINE_AUTHOR;
-
-                setTimelineEntries((currentEntries) => {
-                  const latestEntry =
-                    currentEntries[currentEntries.length - 1] ??
-                    createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
-                  if (latestEntry.content === nextContent) {
-                    return currentEntries;
-                  }
-
-                  const nextEntry = deriveTimelineSnapshotEntry(
-                    latestEntry,
-                    nextContent,
-                    nextAuthor,
-                  );
-                  const nextEntries = [...currentEntries, nextEntry];
-                  if (nextEntries.length > MAX_TIMELINE_SNAPSHOTS) {
-                    nextEntries.splice(
-                      0,
-                      nextEntries.length - MAX_TIMELINE_SNAPSHOTS,
-                    );
-                  }
-
-                  setTimelineIndex(nextEntries.length - 1);
-                  return nextEntries;
-                });
-              }
-
-              if (!update.selectionSet) {
-                return;
-              }
-
-              const mainSelection = update.state.selection.main;
-              const line = update.state.doc.lineAt(mainSelection.head);
-              setCursor({
-                ch: mainSelection.head - line.from,
-                line: line.number - 1,
-              });
-              if (REALTIME_E2E_MODE) {
-                provider?.provider.awareness.setLocalStateField("cursor", {
-                  anchor: mainSelection.anchor,
-                  head: mainSelection.head,
-                });
-              }
-
-              if (mainSelection.empty) {
-                setActiveSelection(null);
-                return;
-              }
-
-              const selectedText = update.state.sliceDoc(
-                mainSelection.from,
-                mainSelection.to,
-              );
-              if (selectedText.trim().length === 0) {
-                setActiveSelection(null);
-                return;
-              }
-
-              setActiveSelection({
-                from: mainSelection.from,
-                line: update.state.doc.lineAt(mainSelection.from).number,
-                selectedText,
-                to: mainSelection.to,
-              });
-            }),
-          ],
-        }),
-      });
-      editorViewRef.current = view;
-      setTimelineEntries([
-        createTimelineSnapshotEntry(
-          fixtureState.docContent,
-          LOCAL_TIMELINE_AUTHOR,
-        ),
-      ]);
-      setTimelineIndex(0);
-
-      return () => {
-        editorViewRef.current = null;
-        collaborationProviderRef.current = null;
-        view?.destroy();
-        provider?.destroy();
-      };
-    } catch (error) {
-      editorViewRef.current = null;
-      collaborationProviderRef.current = null;
-      view?.destroy();
-      provider?.destroy();
-      setSyncState("error");
-      setEditorRuntimeError(
-        toError(error, "Editor initialization failed unexpectedly."),
-      );
-    }
-  }, [daemonWsBaseUrl, fixtureModeEnabled, roomId]);
-
-  useEffect(() => {
-    const view = editorViewRef.current;
-    if (!view) {
-      return;
-    }
-
-    view.dispatch({
-      effects: [
-        setCommentHighlightRanges.of(commentRanges),
-        setCommentGutterRanges.of(commentRanges),
-      ],
-    });
-  }, [commentRanges]);
-
-  useEffect(() => {
-    const view = editorViewRef.current;
-    if (!view) {
-      return;
-    }
-
-    view.dispatch({
-      effects: [
-        editorFontCompartmentRef.current.reconfigure(
-          editorTypographyTheme(editorRuntimeConfig.fontFamily),
-        ),
-        editorTabSizeCompartmentRef.current.reconfigure(
-          EditorState.tabSize.of(editorRuntimeConfig.tabSize),
-        ),
-        editorLineNumbersCompartmentRef.current.reconfigure(
-          editorRuntimeConfig.lineNumbers ? lineNumbers() : [],
-        ),
-      ],
-    });
-  }, [
-    editorRuntimeConfig.fontFamily,
-    editorRuntimeConfig.lineNumbers,
-    editorRuntimeConfig.tabSize,
-  ]);
 
   useEffect(() => {
     if (!fixtureModeEnabled) {
