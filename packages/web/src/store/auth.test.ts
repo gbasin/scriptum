@@ -42,6 +42,7 @@ describe("auth store", () => {
 
   beforeEach(() => {
     cleanupStorage = installMockLocalStorage();
+    sessionStorage.clear();
     vi.spyOn(crypto, "randomUUID").mockReturnValue(
       "state-uuid-1234" as ReturnType<typeof crypto.randomUUID>,
     );
@@ -49,6 +50,7 @@ describe("auth store", () => {
 
   afterEach(() => {
     cleanupStorage();
+    sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -127,12 +129,13 @@ describe("auth store", () => {
       code_challenge_method: "S256",
     });
 
-    const flow = storage.loadOAuthFlow();
-    expect(flow).toEqual({
-      state: "state-uuid-1234",
-      codeVerifier: "test-verifier-abc123",
-      flowId: "flow-42",
-    });
+    expect(sessionStorage.getItem("scriptum:oauth_state")).toBe(
+      "state-uuid-1234",
+    );
+    expect(sessionStorage.getItem("scriptum:code_verifier")).toBe(
+      "test-verifier-abc123",
+    );
+    expect(sessionStorage.getItem("scriptum:flow_id")).toBe("flow-42");
   });
 
   it("startLogin: sets error on failure", async () => {
@@ -152,11 +155,9 @@ describe("auth store", () => {
   // ── handleCallback ─────────────────────────────────────────────────
 
   it("handleCallback: exchanges code and stores session", async () => {
-    storage.saveOAuthFlow({
-      state: "callback-state",
-      codeVerifier: "verifier-1",
-      flowId: "flow-99",
-    });
+    sessionStorage.setItem("scriptum:oauth_state", "callback-state");
+    sessionStorage.setItem("scriptum:code_verifier", "verifier-1");
+    sessionStorage.setItem("scriptum:flow_id", "flow-99");
 
     const callbackResult: OAuthCallbackResult = {
       access_token: "at-new",
@@ -179,15 +180,15 @@ describe("auth store", () => {
     expect(store.getState().error).toBeNull();
 
     // Flow data should be cleared.
-    expect(storage.loadOAuthFlow()).toBeNull();
+    expect(sessionStorage.getItem("scriptum:oauth_state")).toBeNull();
+    expect(sessionStorage.getItem("scriptum:code_verifier")).toBeNull();
+    expect(sessionStorage.getItem("scriptum:flow_id")).toBeNull();
   });
 
   it("handleCallback: rejects state mismatch", async () => {
-    storage.saveOAuthFlow({
-      state: "expected-state",
-      codeVerifier: "v",
-      flowId: "f",
-    });
+    sessionStorage.setItem("scriptum:oauth_state", "expected-state");
+    sessionStorage.setItem("scriptum:code_verifier", "v");
+    sessionStorage.setItem("scriptum:flow_id", "f");
 
     const client = new AuthClient({ baseUrl: "http://relay" });
     const store = createAuthStore();
@@ -207,11 +208,9 @@ describe("auth store", () => {
   });
 
   it("handleCallback: handles API error", async () => {
-    storage.saveOAuthFlow({
-      state: "s",
-      codeVerifier: "v",
-      flowId: "f",
-    });
+    sessionStorage.setItem("scriptum:oauth_state", "s");
+    sessionStorage.setItem("scriptum:code_verifier", "v");
+    sessionStorage.setItem("scriptum:flow_id", "f");
 
     const client = new AuthClient({ baseUrl: "http://relay" });
     vi.spyOn(client, "exchangeCode").mockRejectedValue(
@@ -236,6 +235,13 @@ describe("auth store", () => {
     };
     const client = new AuthClient({ baseUrl: "http://relay" });
     vi.spyOn(client, "refreshToken").mockResolvedValue(refreshResult);
+    storage.saveSession({
+      accessToken: "at-old",
+      accessExpiresAt: "2020-01-01T00:00:00Z",
+      refreshToken: "rt-old",
+      refreshExpiresAt: MOCK_REFRESH_EXPIRES,
+      user: MOCK_USER,
+    });
 
     const store = createAuthStore({
       status: "authenticated",
@@ -269,6 +275,13 @@ describe("auth store", () => {
     vi.spyOn(client, "refreshToken").mockRejectedValue(
       new AuthClientError(401, "revoked"),
     );
+    storage.saveSession({
+      accessToken: "at-old",
+      accessExpiresAt: "2020-01-01T00:00:00Z",
+      refreshToken: "rt-bad",
+      refreshExpiresAt: MOCK_REFRESH_EXPIRES,
+      user: MOCK_USER,
+    });
 
     const store = createAuthStore({
       status: "authenticated",
@@ -287,6 +300,13 @@ describe("auth store", () => {
   it("logout: revokes session and clears state", async () => {
     const client = new AuthClient({ baseUrl: "http://relay" });
     vi.spyOn(client, "logout").mockResolvedValue(undefined);
+    storage.saveSession({
+      accessToken: "at",
+      accessExpiresAt: MOCK_ACCESS_EXPIRES,
+      refreshToken: "rt",
+      refreshExpiresAt: MOCK_REFRESH_EXPIRES,
+      user: MOCK_USER,
+    });
 
     const store = createAuthStore({
       status: "authenticated",
@@ -306,6 +326,13 @@ describe("auth store", () => {
   it("logout: clears state even if server revocation fails", async () => {
     const client = new AuthClient({ baseUrl: "http://relay" });
     vi.spyOn(client, "logout").mockRejectedValue(new Error("network"));
+    storage.saveSession({
+      accessToken: "at",
+      accessExpiresAt: MOCK_ACCESS_EXPIRES,
+      refreshToken: "rt",
+      refreshExpiresAt: MOCK_REFRESH_EXPIRES,
+      user: MOCK_USER,
+    });
 
     const store = createAuthStore({
       status: "authenticated",

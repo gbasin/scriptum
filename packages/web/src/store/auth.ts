@@ -6,15 +6,11 @@ import {
   AuthClientError,
   type AuthUser,
 } from "../auth/client";
-import { generateCodeChallenge, generateCodeVerifier } from "../auth/pkce";
 import {
-  clearOAuthFlow,
-  clearSession,
-  loadOAuthFlow,
-  loadSession,
-  saveOAuthFlow,
-  saveSession,
-} from "../auth/storage";
+  AuthFlowError,
+  createAuthService,
+  type AuthLocation,
+} from "../lib/auth";
 
 export type AuthStatus = "unknown" | "authenticated" | "unauthenticated";
 
@@ -64,6 +60,34 @@ const INITIAL_SNAPSHOT: AuthSnapshot = {
 /** Default expiry buffer: refresh 60s before token expires. */
 const DEFAULT_EXPIRY_BUFFER_MS = 60_000;
 
+function getAuthLocation(): AuthLocation {
+  const locationRef = globalThis.location as
+    | (Partial<Location> & { href?: string })
+    | undefined;
+
+  return {
+    origin: locationRef?.origin ?? "http://localhost",
+    search: locationRef?.search,
+    assign: (url: string) => {
+      if (locationRef && typeof locationRef.assign === "function") {
+        locationRef.assign(url);
+        return;
+      }
+
+      if (locationRef && "href" in locationRef) {
+        locationRef.href = url;
+      }
+    },
+  };
+}
+
+function createStoreAuthService(client?: AuthClient) {
+  return createAuthService({
+    client,
+    location: getAuthLocation(),
+  });
+}
+
 export function createAuthStore(
   initial: Partial<AuthSnapshot> = {},
 ): AuthStore {
@@ -73,15 +97,8 @@ export function createAuthStore(
     ...initialState,
 
     restoreSession: () => {
-      const session = loadSession();
+      const session = createStoreAuthService().getStoredSession();
       if (!session) {
-        set({ ...INITIAL_SNAPSHOT, status: "unauthenticated" });
-        return;
-      }
-
-      // Check if refresh token has expired.
-      if (new Date(session.refreshExpiresAt).getTime() < Date.now()) {
-        clearSession();
         set({ ...INITIAL_SNAPSHOT, status: "unauthenticated" });
         return;
       }
@@ -99,25 +116,10 @@ export function createAuthStore(
 
     startLogin: async (client, redirectUri) => {
       try {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const state = crypto.randomUUID();
-
-        const result = await client.startOAuth({
-          redirect_uri: redirectUri,
-          state,
-          code_challenge: codeChallenge,
-          code_challenge_method: "S256",
+        await createStoreAuthService(client).startGitHubOAuth({
+          redirectUri,
         });
-
-        saveOAuthFlow({
-          state,
-          codeVerifier,
-          flowId: result.flow_id,
-        });
-
-        // Redirect to GitHub.
-        window.location.href = result.authorization_url;
+        set({ error: null });
       } catch (err) {
         const message =
           err instanceof AuthClientError
@@ -129,41 +131,9 @@ export function createAuthStore(
 
     handleCallback: async (client, code, state) => {
       try {
-        const flow = loadOAuthFlow();
-        if (!flow) {
-          set({
-            status: "unauthenticated",
-            error: "OAuth flow data not found — please try logging in again.",
-          });
-          return;
-        }
-
-        if (flow.state !== state) {
-          clearOAuthFlow();
-          set({
-            status: "unauthenticated",
-            error: "OAuth state mismatch — possible CSRF. Please try again.",
-          });
-          return;
-        }
-
-        const result = await client.exchangeCode({
-          flow_id: flow.flowId,
-          code,
-          state,
-          code_verifier: flow.codeVerifier,
+        const session = await createStoreAuthService(client).handleOAuthCallback({
+          searchParams: new URLSearchParams({ code, state }),
         });
-
-        clearOAuthFlow();
-
-        const session = {
-          accessToken: result.access_token,
-          accessExpiresAt: result.access_expires_at,
-          refreshToken: result.refresh_token,
-          refreshExpiresAt: result.refresh_expires_at,
-          user: result.user,
-        };
-        saveSession(session);
 
         set({
           status: "authenticated",
@@ -171,46 +141,29 @@ export function createAuthStore(
           error: null,
         });
       } catch (err) {
-        clearOAuthFlow();
-        const message =
-          err instanceof AuthClientError
-            ? `Authentication failed (${err.status})`
-            : "Authentication failed";
-        set({ status: "unauthenticated", error: message });
+        let message = "Authentication failed";
+
+        if (err instanceof AuthFlowError) {
+          if (err.code === "OAUTH_FLOW_MISSING") {
+            message = "OAuth flow data not found — please try logging in again.";
+          } else if (err.code === "OAUTH_STATE_MISMATCH") {
+            message = "OAuth state mismatch — possible CSRF. Please try again.";
+          }
+        } else if (err instanceof AuthClientError) {
+          message = `Authentication failed (${err.status})`;
+        }
+
+        set({
+          ...INITIAL_SNAPSHOT,
+          status: "unauthenticated",
+          error: message,
+        });
       }
     },
 
     refreshAccessToken: async (client) => {
-      const { refreshToken } = get();
-      if (!refreshToken) {
-        set({ status: "unauthenticated", error: null });
-        clearSession();
-        return false;
-      }
-
-      try {
-        const result = await client.refreshToken(refreshToken);
-
-        const prevState = get();
-        const session = {
-          accessToken: result.access_token,
-          accessExpiresAt: result.access_expires_at,
-          refreshToken: result.refresh_token,
-          refreshExpiresAt: result.refresh_expires_at,
-          user: prevState.user ?? { id: "", email: "", display_name: "" },
-        };
-        saveSession(session);
-
-        set({
-          accessToken: result.access_token,
-          accessExpiresAt: result.access_expires_at,
-          refreshToken: result.refresh_token,
-          refreshExpiresAt: result.refresh_expires_at,
-          error: null,
-        });
-        return true;
-      } catch {
-        clearSession();
+      const session = await createStoreAuthService(client).refreshAccessToken();
+      if (!session) {
         set({
           ...INITIAL_SNAPSHOT,
           status: "unauthenticated",
@@ -218,18 +171,21 @@ export function createAuthStore(
         });
         return false;
       }
+
+      set({
+        status: "authenticated",
+        user: session.user,
+        accessToken: session.accessToken,
+        accessExpiresAt: session.accessExpiresAt,
+        refreshToken: session.refreshToken,
+        refreshExpiresAt: session.refreshExpiresAt,
+        error: null,
+      });
+      return true;
     },
 
     logout: async (client) => {
-      const { refreshToken } = get();
-      if (refreshToken) {
-        try {
-          await client.logout(refreshToken);
-        } catch {
-          // Best-effort server revocation; clear local state regardless.
-        }
-      }
-      clearSession();
+      await createStoreAuthService(client).logout();
       set({ ...INITIAL_SNAPSHOT, status: "unauthenticated" });
     },
 
