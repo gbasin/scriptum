@@ -5,8 +5,8 @@ import type {
   CommentThread,
   Document,
   Section,
-  Workspace,
   RelayErrorEnvelope as SharedRelayErrorEnvelope,
+  Workspace,
 } from "@scriptum/shared";
 import { ScriptumApiClient, ScriptumApiError } from "@scriptum/shared";
 import { getAccessToken as getAccessTokenFromAuth } from "./auth";

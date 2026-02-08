@@ -1,16 +1,16 @@
 import { markdown } from "@codemirror/lang-markdown";
 import {
   Compartment,
-  type Extension,
   EditorState,
+  type Extension,
   Transaction,
 } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import {
+  type CommentDecorationRange,
   commentGutterExtension,
   commentHighlightExtension,
   createCollaborationProvider,
-  type CommentDecorationRange,
   type DropUploadProgress,
   dragDropUploadExtension,
   livePreviewExtension,
@@ -23,7 +23,7 @@ import {
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
 import type { WorkspaceEditorFontFamily } from "@scriptum/shared";
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { type MutableRefObject, useEffect, useRef } from "react";
 
 export interface ScriptumEditorRuntimeConfig {
   fontFamily: WorkspaceEditorFontFamily;

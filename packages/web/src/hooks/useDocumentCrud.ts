@@ -1,7 +1,7 @@
 import type { Document } from "@scriptum/shared";
 import type { NavigateFunction } from "react-router-dom";
-import { rewriteWikiReferencesForRename } from "../lib/wiki-links";
 import type { ContextMenuAction } from "../components/sidebar/DocumentTree";
+import { rewriteWikiReferencesForRename } from "../lib/wiki-links";
 
 interface ToastApi {
   error(message: string): void;

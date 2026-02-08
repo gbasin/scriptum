@@ -5,17 +5,14 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useDocumentsStore } from "../store/documents";
-import { useUiStore } from "../store/ui";
-import { useWorkspaceStore } from "../store/workspace";
 import {
   buildIncomingBacklinks,
   rewriteWikiReferencesForRename,
 } from "../lib/wiki-links";
-import {
-  formatRenameBacklinkToast,
-  Layout,
-} from "./Layout";
+import { useDocumentsStore } from "../store/documents";
+import { useUiStore } from "../store/ui";
+import { useWorkspaceStore } from "../store/workspace";
+import { formatRenameBacklinkToast, Layout } from "./Layout";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -438,7 +435,6 @@ describe("Layout responsive panels", () => {
 describe("Layout route error boundary", () => {
   function ThrowingRoute() {
     throw new Error("route-crash");
-    return <div />;
   }
 
   it("shows route fallback while keeping layout chrome visible", () => {
@@ -455,7 +451,10 @@ describe("Layout route error boundary", () => {
         <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
           <Routes>
             <Route element={<Layout />}>
-              <Route path="/workspace/:workspaceId" element={<ThrowingRoute />} />
+              <Route
+                path="/workspace/:workspaceId"
+                element={<ThrowingRoute />}
+              />
             </Route>
           </Routes>
         </MemoryRouter>,
@@ -603,7 +602,9 @@ describe("Layout backlinks panel", () => {
       "right-panel-tabpanel-comments",
     );
 
-    const outlinePanel = container.querySelector("#right-panel-tabpanel-outline");
+    const outlinePanel = container.querySelector(
+      "#right-panel-tabpanel-outline",
+    );
     expect(outlinePanel?.getAttribute("role")).toBe("tabpanel");
     expect(outlinePanel?.getAttribute("aria-labelledby")).toBe(
       "right-panel-tab-outline",

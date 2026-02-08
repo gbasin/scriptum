@@ -31,8 +31,6 @@ describe("appRoutes", () => {
 
   it("routes unknown paths to the not-found route", () => {
     expect(matchedRouteIds("/missing")).toEqual(["not-found"]);
-    expect(matchedRouteIds("/workspace/ws-123/unknown")).toEqual([
-      "not-found",
-    ]);
+    expect(matchedRouteIds("/workspace/ws-123/unknown")).toEqual(["not-found"]);
   });
 });

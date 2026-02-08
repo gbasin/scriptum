@@ -8,8 +8,8 @@ import {
 } from "../auth/client";
 import {
   AuthFlowError,
-  createAuthService,
   type AuthLocation,
+  createAuthService,
 } from "../lib/auth";
 
 export type AuthStatus = "unknown" | "authenticated" | "unauthenticated";
@@ -131,7 +131,9 @@ export function createAuthStore(
 
     handleCallback: async (client, code, state) => {
       try {
-        const session = await createStoreAuthService(client).handleOAuthCallback({
+        const session = await createStoreAuthService(
+          client,
+        ).handleOAuthCallback({
           searchParams: new URLSearchParams({ code, state }),
         });
 
@@ -145,7 +147,8 @@ export function createAuthStore(
 
         if (err instanceof AuthFlowError) {
           if (err.code === "OAUTH_FLOW_MISSING") {
-            message = "OAuth flow data not found — please try logging in again.";
+            message =
+              "OAuth flow data not found — please try logging in again.";
           } else if (err.code === "OAUTH_STATE_MISMATCH") {
             message = "OAuth state mismatch — possible CSRF. Please try again.";
           }

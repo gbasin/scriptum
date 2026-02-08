@@ -14,7 +14,11 @@ import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
-import { CommentPopover, type ThreadWithMessages } from "../components/comments/CommentPopover";
+import {
+  CommentPopover,
+  type ThreadWithMessages,
+} from "../components/comments/CommentPopover";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { Breadcrumb } from "../components/editor/Breadcrumb";
 import { TabBar } from "../components/editor/TabBar";
 import {
@@ -25,7 +29,6 @@ import { DiffView } from "../components/history/DiffView";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { SkeletonBlock } from "../components/Skeleton";
 import { StatusBar } from "../components/StatusBar";
-import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ShareDialog } from "../components/share/ShareDialog";
 import { useScriptumEditor } from "../hooks/useScriptumEditor";
 import { useToast } from "../hooks/useToast";
@@ -38,27 +41,23 @@ import {
   appendReplyToThread,
   commentAnchorTopPx,
   commentRangesFromThreads,
+  type InlineCommentMessage,
+  type InlineCommentThread,
   LOCAL_COMMENT_AUTHOR_ID,
   LOCAL_COMMENT_AUTHOR_NAME,
   normalizeInlineCommentThreads,
   toCommentMessage,
   toInlineCommentThread,
   toThreadWithMessages,
-  type InlineCommentMessage,
-  type InlineCommentThread,
-  UNKNOWN_COMMENT_TIMESTAMP,
-  updateInlineCommentMessageBody,
   updateInlineCommentThreadStatus,
 } from "../lib/inline-comments";
 import {
   authorshipMapFromTimelineEntry,
-  buildAuthorshipSegments,
-  buildTimelineDiffSegments,
   createTimelineSnapshotEntry,
   deriveTimelineSnapshotEntry,
   LOCAL_TIMELINE_AUTHOR,
-  timelineAuthorFromPeer,
   type TimelineSnapshotEntry,
+  timelineAuthorFromPeer,
   UNKNOWN_REMOTE_TIMELINE_AUTHOR,
 } from "../lib/timeline";
 import { useDocumentsStore } from "../store/documents";
@@ -66,6 +65,7 @@ import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
 import type { ScriptumTestState } from "../test/harness";
+import styles from "./document.module.css";
 import {
   buildShareLinkUrl,
   createShareLinkRecord,
@@ -77,29 +77,6 @@ import {
   sharePermissionLabel,
   storeShareLinkRecord,
 } from "./share-links";
-import styles from "./document.module.css";
-
-export {
-  buildOpenDocumentTabs,
-  nextDocumentIdAfterClose,
-} from "../lib/document-utils";
-export {
-  appendReplyToThread,
-  commentAnchorTopPx,
-  commentRangesFromThreads,
-  normalizeInlineCommentThreads,
-  type InlineCommentThread,
-  updateInlineCommentMessageBody,
-  updateInlineCommentThreadStatus,
-} from "../lib/inline-comments";
-export {
-  buildAuthorshipSegments,
-  buildTimelineDiffSegments,
-  createTimelineSnapshotEntry,
-  deriveTimelineSnapshotEntry,
-  type TimelineAuthor,
-  timelineAuthorFromPeer,
-} from "../lib/timeline";
 
 const DEFAULT_DAEMON_WS_BASE_URL =
   (import.meta.env.VITE_SCRIPTUM_DAEMON_WS_URL as string | undefined) ??
@@ -927,9 +904,7 @@ export function DocumentRoute() {
       setShareGenerationError(null);
 
       const resolvedTargetType: ShareLinkTargetType =
-        shareTargetType === "document" && documentId
-          ? "document"
-          : "workspace";
+        shareTargetType === "document" && documentId ? "document" : "workspace";
       const resolvedTargetId =
         resolvedTargetType === "document"
           ? (documentId ?? workspaceId)

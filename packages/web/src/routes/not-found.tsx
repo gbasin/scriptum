@@ -8,7 +8,11 @@ export function NotFoundRoute() {
       <p className={styles.description}>
         The page you requested does not exist.
       </p>
-      <Link className={styles.homeLink} data-testid="not-found-home-link" to="/">
+      <Link
+        className={styles.homeLink}
+        data-testid="not-found-home-link"
+        to="/"
+      >
         Back to home
       </Link>
     </main>

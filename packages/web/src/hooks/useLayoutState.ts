@@ -4,7 +4,9 @@ import { useUiStore } from "../store/ui";
 import { useWorkspaceStore } from "../store/workspace";
 
 export function useLayoutState() {
-  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
+  const activeWorkspaceId = useWorkspaceStore(
+    (state) => state.activeWorkspaceId,
+  );
   const setActiveWorkspaceId = useWorkspaceStore(
     (state) => state.setActiveWorkspaceId,
   );

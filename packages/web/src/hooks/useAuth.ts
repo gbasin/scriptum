@@ -14,6 +14,7 @@ import { type AuthStatus, type AuthStore, useAuthStore } from "../store/auth";
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
 const DEFAULT_LOGIN_PATH = "/";
+const DEFAULT_LOCATION_ORIGIN = "http://localhost";
 
 type UseAuthLocation = Pick<Location, "assign" | "origin">;
 
@@ -72,6 +73,28 @@ function resolveLoginUrl(location: UseAuthLocation, loginPath: string): string {
   return new URL(loginPath, location.origin).toString();
 }
 
+function resolveLocationRef(
+  location: UseAuthOptions["location"],
+): UseAuthLocation {
+  if (location) {
+    return location;
+  }
+
+  const globalLocation = globalThis.location;
+  if (
+    globalLocation &&
+    typeof globalLocation.origin === "string" &&
+    typeof globalLocation.assign === "function"
+  ) {
+    return globalLocation;
+  }
+
+  return {
+    assign: () => {},
+    origin: DEFAULT_LOCATION_ORIGIN,
+  };
+}
+
 export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   const auth = options.auth ?? {
     getStoredSession: getStoredSessionFromAuth,
@@ -82,7 +105,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   const store = options.store ?? useAuthStore;
   const refreshBufferMs = options.refreshBufferMs ?? DEFAULT_REFRESH_BUFFER_MS;
   const loginPath = options.loginPath ?? DEFAULT_LOGIN_PATH;
-  const locationRef = options.location ?? globalThis.location;
+  const locationRef = resolveLocationRef(options.location);
 
   const status = store((state) => state.status);
   const user = store((state) => state.user);

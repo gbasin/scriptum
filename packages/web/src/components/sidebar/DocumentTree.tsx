@@ -532,8 +532,8 @@ export function DocumentTree({
   const activeDocumentPath = useMemo(
     () =>
       activeDocumentId
-        ? (documents.find((document) => document.id === activeDocumentId)?.path ??
-          null)
+        ? (documents.find((document) => document.id === activeDocumentId)
+            ?.path ?? null)
         : null,
     [activeDocumentId, documents],
   );
@@ -581,12 +581,7 @@ export function DocumentTree({
     }
 
     setFocusedPath(visibleTreeNodes[0]?.fullPath ?? null);
-  }, [
-    activeDocumentPath,
-    editingDocumentId,
-    focusedPath,
-    visibleTreeNodes,
-  ]);
+  }, [activeDocumentPath, editingDocumentId, focusedPath, visibleTreeNodes]);
 
   useEffect(() => {
     if (editingDocumentId || !focusedPath || !treeRef.current) {
@@ -764,14 +759,15 @@ export function DocumentTree({
         case "ArrowDown": {
           event.preventDefault();
           const nextNode =
-            visibleTreeNodes[Math.min(currentIndex + 1, visibleTreeNodes.length - 1)];
+            visibleTreeNodes[
+              Math.min(currentIndex + 1, visibleTreeNodes.length - 1)
+            ];
           setFocusedPath(nextNode?.fullPath ?? currentPath);
           return;
         }
         case "ArrowUp": {
           event.preventDefault();
-          const previousNode =
-            visibleTreeNodes[Math.max(currentIndex - 1, 0)];
+          const previousNode = visibleTreeNodes[Math.max(currentIndex - 1, 0)];
           setFocusedPath(previousNode?.fullPath ?? currentPath);
           return;
         }

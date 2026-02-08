@@ -148,7 +148,6 @@ export function Layout() {
   const searchPanelOpen = sidebarPanel === "search";
   const showOutlineSkeleton = showPanelSkeletons || outlineContainer === null;
   const {
-    createDocumentInActiveWorkspace,
     createUntitledDocument,
     handleCancelDeleteDocument,
     handleConfirmDeleteDocument,
