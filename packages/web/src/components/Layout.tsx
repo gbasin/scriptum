@@ -52,6 +52,16 @@ export function formatRenameBacklinkToast(
 }
 
 const COMPACT_LAYOUT_BREAKPOINT_PX = 1024;
+const RIGHT_PANEL_TAB_IDS = {
+  backlinks: "right-panel-tab-backlinks",
+  comments: "right-panel-tab-comments",
+  outline: "right-panel-tab-outline",
+} as const;
+const RIGHT_PANEL_TAB_PANEL_IDS = {
+  backlinks: "right-panel-tabpanel-backlinks",
+  comments: "right-panel-tabpanel-comments",
+  outline: "right-panel-tabpanel-outline",
+} as const;
 
 export function Layout() {
   const navigate = useNavigate();
@@ -404,40 +414,52 @@ export function Layout() {
             role="tablist"
           >
             <button
-              aria-pressed={rightPanelTab === "outline"}
+              aria-controls={RIGHT_PANEL_TAB_PANEL_IDS.outline}
+              aria-selected={rightPanelTab === "outline"}
               className={
                 rightPanelTab === "outline"
                   ? styles.panelTabButtonActive
                   : styles.panelTabButton
               }
-              data-testid="right-panel-tab-outline"
+              data-testid={RIGHT_PANEL_TAB_IDS.outline}
+              id={RIGHT_PANEL_TAB_IDS.outline}
               onClick={() => setRightPanelTab("outline")}
+              role="tab"
+              tabIndex={rightPanelTab === "outline" ? 0 : -1}
               type="button"
             >
               Outline
             </button>
             <button
-              aria-pressed={rightPanelTab === "backlinks"}
+              aria-controls={RIGHT_PANEL_TAB_PANEL_IDS.backlinks}
+              aria-selected={rightPanelTab === "backlinks"}
               className={
                 rightPanelTab === "backlinks"
                   ? styles.panelTabButtonActive
                   : styles.panelTabButton
               }
-              data-testid="right-panel-tab-backlinks"
+              data-testid={RIGHT_PANEL_TAB_IDS.backlinks}
+              id={RIGHT_PANEL_TAB_IDS.backlinks}
               onClick={() => setRightPanelTab("backlinks")}
+              role="tab"
+              tabIndex={rightPanelTab === "backlinks" ? 0 : -1}
               type="button"
             >
               Backlinks
             </button>
             <button
-              aria-pressed={rightPanelTab === "comments"}
+              aria-controls={RIGHT_PANEL_TAB_PANEL_IDS.comments}
+              aria-selected={rightPanelTab === "comments"}
               className={
                 rightPanelTab === "comments"
                   ? styles.panelTabButtonActive
                   : styles.panelTabButton
               }
-              data-testid="right-panel-tab-comments"
+              data-testid={RIGHT_PANEL_TAB_IDS.comments}
+              id={RIGHT_PANEL_TAB_IDS.comments}
               onClick={() => setRightPanelTab("comments")}
+              role="tab"
+              tabIndex={rightPanelTab === "comments" ? 0 : -1}
               type="button"
             >
               Comments
@@ -445,17 +467,27 @@ export function Layout() {
           </div>
 
           {rightPanelTab === "outline" ? (
-            <Outline
-              editorContainer={outlineContainer}
-              loading={showOutlineSkeleton}
-            />
+            <section
+              aria-labelledby={RIGHT_PANEL_TAB_IDS.outline}
+              data-testid="right-panel-tabpanel-outline"
+              id={RIGHT_PANEL_TAB_PANEL_IDS.outline}
+              role="tabpanel"
+            >
+              <Outline
+                editorContainer={outlineContainer}
+                loading={showOutlineSkeleton}
+              />
+            </section>
           ) : null}
 
           {rightPanelTab === "backlinks" ? (
             <section
               aria-label="Incoming backlinks"
+              aria-labelledby={RIGHT_PANEL_TAB_IDS.backlinks}
               className={styles.backlinksSection}
               data-testid="backlinks-panel"
+              id={RIGHT_PANEL_TAB_PANEL_IDS.backlinks}
+              role="tabpanel"
             >
               <Backlinks
                 backlinks={incomingBacklinkEntries}
@@ -468,12 +500,19 @@ export function Layout() {
           ) : null}
 
           {rightPanelTab === "comments" ? (
-            <p
-              className={styles.commentsPlaceholder}
-              data-testid="comments-panel-empty"
+            <section
+              aria-labelledby={RIGHT_PANEL_TAB_IDS.comments}
+              data-testid="right-panel-tabpanel-comments"
+              id={RIGHT_PANEL_TAB_PANEL_IDS.comments}
+              role="tabpanel"
             >
-              Comments panel is coming soon.
-            </p>
+              <p
+                className={styles.commentsPlaceholder}
+                data-testid="comments-panel-empty"
+              >
+                Comments panel is coming soon.
+              </p>
+            </section>
           ) : null}
         </aside>
       ) : (

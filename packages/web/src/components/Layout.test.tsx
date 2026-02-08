@@ -578,10 +578,51 @@ describe("Layout backlinks panel", () => {
     const backlinksTab = container.querySelector(
       '[data-testid="right-panel-tab-backlinks"]',
     ) as HTMLButtonElement | null;
+    const outlineTab = container.querySelector(
+      '[data-testid="right-panel-tab-outline"]',
+    ) as HTMLButtonElement | null;
+    const commentsTab = container.querySelector(
+      '[data-testid="right-panel-tab-comments"]',
+    ) as HTMLButtonElement | null;
+    const tablist = container.querySelector('[role="tablist"]');
+
+    expect(tablist).not.toBeNull();
+    expect(outlineTab?.getAttribute("role")).toBe("tab");
+    expect(outlineTab?.getAttribute("aria-selected")).toBe("true");
+    expect(outlineTab?.getAttribute("aria-controls")).toBe(
+      "right-panel-tabpanel-outline",
+    );
+    expect(outlineTab?.getAttribute("tabindex")).toBe("0");
+    expect(backlinksTab?.getAttribute("role")).toBe("tab");
+    expect(backlinksTab?.getAttribute("aria-selected")).toBe("false");
+    expect(backlinksTab?.getAttribute("aria-controls")).toBe(
+      "right-panel-tabpanel-backlinks",
+    );
+    expect(backlinksTab?.getAttribute("tabindex")).toBe("-1");
+    expect(commentsTab?.getAttribute("aria-controls")).toBe(
+      "right-panel-tabpanel-comments",
+    );
+
+    const outlinePanel = container.querySelector("#right-panel-tabpanel-outline");
+    expect(outlinePanel?.getAttribute("role")).toBe("tabpanel");
+    expect(outlinePanel?.getAttribute("aria-labelledby")).toBe(
+      "right-panel-tab-outline",
+    );
+
     expect(backlinksTab).not.toBeNull();
     act(() => {
       backlinksTab?.click();
     });
+    expect(backlinksTab?.getAttribute("aria-selected")).toBe("true");
+    expect(backlinksTab?.getAttribute("tabindex")).toBe("0");
+
+    const backlinksPanel = container.querySelector(
+      "#right-panel-tabpanel-backlinks",
+    );
+    expect(backlinksPanel?.getAttribute("role")).toBe("tabpanel");
+    expect(backlinksPanel?.getAttribute("aria-labelledby")).toBe(
+      "right-panel-tab-backlinks",
+    );
 
     const backlinkButton = container.querySelector(
       '[data-testid="backlink-item-doc-notes"]',
