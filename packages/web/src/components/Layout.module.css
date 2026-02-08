@@ -78,7 +78,7 @@
   border-radius: var(--radius-2);
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   min-height: 2.5rem;
   min-width: 2.5rem;
@@ -133,7 +133,7 @@
 
 .commentsPlaceholder {
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   margin: 0;
 }
 

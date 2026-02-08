@@ -9,7 +9,7 @@
 }
 
 .heading {
-  font-size: 1.3rem;
+  font-size: var(--text-xl);
 }
 
 .workspaceName {
@@ -49,7 +49,7 @@
 
 .legend {
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.03em;
   padding: 0 var(--space-1);

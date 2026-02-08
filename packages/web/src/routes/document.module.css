@@ -22,7 +22,7 @@
 
 .dropUploadProgress {
   border-radius: 0.375rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   margin-bottom: var(--space-2);
   padding: 0.375rem var(--space-2);
 }
@@ -62,7 +62,7 @@
   align-items: center;
   color: var(--color-text-muted);
   display: inline-flex;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   gap: 0.375rem;
 }
 
@@ -85,7 +85,7 @@
 .attributionBadge {
   border-radius: 9999px;
   display: inline-flex;
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-weight: 700;
   margin-right: 0.375rem;
   padding: 0.1rem 0.45rem;

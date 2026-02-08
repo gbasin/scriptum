@@ -57,7 +57,7 @@
   border: 0;
   color: var(--color-accent-hex);
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 600;
   padding: 0;
   text-align: left;
@@ -75,19 +75,19 @@
 
 .backlinkPath {
   color: var(--color-text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   margin: 0.15rem 0 0;
 }
 
 .backlinkLinkText {
   color: var(--color-text-primary);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   margin: 0.15rem 0 0;
 }
 
 .backlinkSnippet {
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   margin: 0.15rem 0 0;
   text-wrap: pretty;
 }

@@ -12,7 +12,7 @@
 .overflowIndicator {
   --avatar-size: 2rem;
   --avatar-offset: 0px;
-  --avatar-font-size: 12px;
+  --avatar-font-size: var(--text-sm);
 
   align-items: center;
   border: 2px solid #fff;

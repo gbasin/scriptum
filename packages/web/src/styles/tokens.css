@@ -31,6 +31,18 @@
   --color-info-soft: oklch(0.47 0.12 258);
 
   --font-size-base: 15px;
+  --text-xs: calc(0.72rem * var(--density-scale));
+  --text-sm: calc(0.78rem * var(--density-scale));
+  --text-base: calc(0.875rem * var(--density-scale));
+  --text-md: calc(0.95rem * var(--density-scale));
+  --text-lg: calc(1.05rem * var(--density-scale));
+  --text-xl: calc(1.25rem * var(--density-scale));
+  --text-2xl: calc(1.5rem * var(--density-scale));
+  --text-3xl: clamp(
+    calc(1.75rem * var(--density-scale)),
+    calc((2vw + 1rem) * var(--density-scale)),
+    calc(2.5rem * var(--density-scale))
+  );
   --density-scale: 1;
 
   --space-0: 0;

@@ -9,7 +9,7 @@
 
 .emptyState {
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   padding: 0.35rem 0.5rem;
   text-wrap: pretty;
 }
@@ -51,7 +51,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   flex: 1;
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   overflow: hidden;
   padding: 0;
   text-align: left;
@@ -74,7 +74,7 @@
   border: 0;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   line-height: 1;
   padding: 0;
 }

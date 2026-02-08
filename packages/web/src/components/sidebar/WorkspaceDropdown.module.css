@@ -1,6 +1,6 @@
 .label {
   display: block;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.04em;
   margin-bottom: 0.25rem;

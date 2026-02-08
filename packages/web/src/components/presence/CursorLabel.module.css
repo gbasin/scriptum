@@ -10,7 +10,7 @@
   box-shadow: 0 2px 8px oklch(0 0 0 / 0.22);
   color: #fff;
   display: inline-flex;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   gap: 6px;
   left: var(--cursor-x);

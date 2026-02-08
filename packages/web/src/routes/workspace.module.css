@@ -13,7 +13,7 @@
 
 .eyebrow {
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.06em;
   margin: 0;
@@ -40,7 +40,7 @@
 }
 
 .sectionTitle {
-  font-size: 1rem;
+  font-size: var(--text-lg);
   margin: 0;
 }
 
@@ -89,13 +89,13 @@
 
 .listTitle {
   color: var(--color-text-primary);
-  font-size: 0.9rem;
+  font-size: var(--text-md);
   font-weight: 600;
 }
 
 .listMeta {
   color: var(--color-text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .linkButton {

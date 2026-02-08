@@ -4,7 +4,7 @@
   color: var(--color-text-secondary);
   display: flex;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   gap: var(--space-4);
   margin-top: var(--space-4);
   padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));

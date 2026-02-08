@@ -45,7 +45,7 @@
   border-radius: 9999px;
   color: inherit;
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   height: 1.25rem;
   line-height: 1rem;
   min-width: 1.25rem;

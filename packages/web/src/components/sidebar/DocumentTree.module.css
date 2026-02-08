@@ -21,7 +21,7 @@
   color: var(--color-text-primary);
   cursor: pointer;
   display: block;
-  font-size: 0.9rem;
+  font-size: var(--text-md);
   inline-size: 100%;
   min-height: 1.6rem;
   padding: 0.125rem var(--space-1);
@@ -125,7 +125,7 @@
 
 .emptyMessage {
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 @media (prefers-reduced-motion: reduce) {
