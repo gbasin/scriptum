@@ -8,10 +8,16 @@ import type {
 } from "@scriptum/shared";
 import type * as Y from "yjs";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
+import {
+  createJSONStorage,
+  persist,
+  type StateStorage,
+} from "zustand/middleware";
 
 const DEFAULT_WORKSPACES_ARRAY_NAME = "workspaces";
 const DEFAULT_WORKSPACE_META_MAP_NAME = "workspaceMeta";
 const DEFAULT_ACTIVE_WORKSPACE_ID_KEY = "activeWorkspaceId";
+const DEFAULT_WORKSPACE_PERSIST_KEY = "scriptum:workspace";
 
 interface WorkspaceSnapshot {
   workspaces: Workspace[];
@@ -37,6 +43,36 @@ export interface WorkspaceYjsBindingOptions {
   store?: WorkspaceStore;
   workspaceMetaMapName?: string;
   workspacesArrayName?: string;
+}
+
+export interface WorkspaceStorePersistenceOptions {
+  persistKey?: string;
+  persistStorage?: StateStorage;
+}
+
+const NOOP_STORAGE: StateStorage = {
+  getItem: () => null,
+  removeItem: () => undefined,
+  setItem: () => undefined,
+};
+
+function resolveWorkspacePersistStorage(): StateStorage {
+  try {
+    if (typeof globalThis.localStorage === "undefined") {
+      return NOOP_STORAGE;
+    }
+    const candidate = globalThis.localStorage as Partial<StateStorage>;
+    if (
+      typeof candidate.getItem !== "function" ||
+      typeof candidate.setItem !== "function" ||
+      typeof candidate.removeItem !== "function"
+    ) {
+      return NOOP_STORAGE;
+    }
+    return candidate as StateStorage;
+  } catch {
+    return NOOP_STORAGE;
+  }
 }
 
 function asString(value: unknown): string | null {
@@ -282,69 +318,99 @@ function resolveWorkspaceSnapshot(
 
 export function createWorkspaceStore(
   initial: Partial<WorkspaceSnapshot> = {},
+  options: WorkspaceStorePersistenceOptions = {},
 ): WorkspaceStore {
-  return create<WorkspaceStoreState>()((set, get) => ({
-    ...resolveWorkspaceSnapshot({
-      workspaces: initial.workspaces ?? [],
-      activeWorkspaceId: initial.activeWorkspaceId ?? null,
-    }),
-    setWorkspaces: (workspaces) => {
-      const previous = get();
-      set(
-        resolveWorkspaceSnapshot({
-          workspaces,
-          activeWorkspaceId: previous.activeWorkspaceId,
-        }),
-      );
-    },
-    upsertWorkspace: (workspace) => {
-      const previous = get();
-      const index = previous.workspaces.findIndex(
-        (candidate) => candidate.id === workspace.id,
-      );
-      const workspaces =
-        index >= 0
-          ? previous.workspaces.map((candidate) =>
-              candidate.id === workspace.id ? workspace : candidate,
-            )
-          : [...previous.workspaces, workspace];
+  const persistKey = options.persistKey ?? DEFAULT_WORKSPACE_PERSIST_KEY;
+  const persistStorage =
+    options.persistStorage ?? resolveWorkspacePersistStorage();
 
-      set(
-        resolveWorkspaceSnapshot({
-          workspaces,
-          activeWorkspaceId: previous.activeWorkspaceId ?? workspace.id,
+  return create<WorkspaceStoreState>()(
+    persist(
+      (set, get) => ({
+        ...resolveWorkspaceSnapshot({
+          workspaces: initial.workspaces ?? [],
+          activeWorkspaceId: initial.activeWorkspaceId ?? null,
         }),
-      );
-    },
-    removeWorkspace: (workspaceId) => {
-      const previous = get();
-      const workspaces = previous.workspaces.filter(
-        (workspace) => workspace.id !== workspaceId,
-      );
-      set(
-        resolveWorkspaceSnapshot({
-          workspaces,
-          activeWorkspaceId: previous.activeWorkspaceId,
+        setWorkspaces: (workspaces) => {
+          const previous = get();
+          set(
+            resolveWorkspaceSnapshot({
+              workspaces,
+              activeWorkspaceId: previous.activeWorkspaceId,
+            }),
+          );
+        },
+        upsertWorkspace: (workspace) => {
+          const previous = get();
+          const index = previous.workspaces.findIndex(
+            (candidate) => candidate.id === workspace.id,
+          );
+          const workspaces =
+            index >= 0
+              ? previous.workspaces.map((candidate) =>
+                  candidate.id === workspace.id ? workspace : candidate,
+                )
+              : [...previous.workspaces, workspace];
+
+          set(
+            resolveWorkspaceSnapshot({
+              workspaces,
+              activeWorkspaceId: previous.activeWorkspaceId ?? workspace.id,
+            }),
+          );
+        },
+        removeWorkspace: (workspaceId) => {
+          const previous = get();
+          const workspaces = previous.workspaces.filter(
+            (workspace) => workspace.id !== workspaceId,
+          );
+          set(
+            resolveWorkspaceSnapshot({
+              workspaces,
+              activeWorkspaceId: previous.activeWorkspaceId,
+            }),
+          );
+        },
+        setActiveWorkspaceId: (workspaceId) => {
+          const previous = get();
+          set(
+            resolveWorkspaceSnapshot({
+              workspaces: previous.workspaces,
+              activeWorkspaceId: workspaceId,
+            }),
+          );
+        },
+        reset: () =>
+          set(
+            resolveWorkspaceSnapshot({
+              workspaces: [],
+              activeWorkspaceId: null,
+            }),
+          ),
+      }),
+      {
+        name: persistKey,
+        merge: (persistedState, currentState) => {
+          const persistedSnapshot = persistedState as
+            | Partial<WorkspaceSnapshot>
+            | undefined;
+
+          return {
+            ...currentState,
+            ...resolveWorkspaceSnapshot({
+              workspaces: currentState.workspaces,
+              activeWorkspaceId:
+                asString(persistedSnapshot?.activeWorkspaceId) ?? null,
+            }),
+          };
+        },
+        partialize: (state) => ({
+          activeWorkspaceId: state.activeWorkspaceId,
         }),
-      );
-    },
-    setActiveWorkspaceId: (workspaceId) => {
-      const previous = get();
-      set(
-        resolveWorkspaceSnapshot({
-          workspaces: previous.workspaces,
-          activeWorkspaceId: workspaceId,
-        }),
-      );
-    },
-    reset: () =>
-      set(
-        resolveWorkspaceSnapshot({
-          workspaces: [],
-          activeWorkspaceId: null,
-        }),
-      ),
-  }));
+        storage: createJSONStorage(() => persistStorage),
+      },
+    ),
+  );
 }
 
 export const useWorkspaceStore = createWorkspaceStore();

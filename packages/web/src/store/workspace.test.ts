@@ -1,6 +1,7 @@
 import type { Workspace } from "@scriptum/shared";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import type { StateStorage } from "zustand/middleware";
 import { bindWorkspaceStoreToYjs, createWorkspaceStore } from "./workspace";
 
 const WORKSPACE_ALPHA: Workspace = {
@@ -22,6 +23,20 @@ const WORKSPACE_BETA: Workspace = {
   updatedAt: "2026-01-02T00:00:00.000Z",
   etag: "workspace-beta-v1",
 };
+
+function createMemoryStorage(): StateStorage {
+  const state = new Map<string, string>();
+
+  return {
+    getItem: (name) => state.get(name) ?? null,
+    removeItem: (name) => {
+      state.delete(name);
+    },
+    setItem: (name, value) => {
+      state.set(name, value);
+    },
+  };
+}
 
 describe("workspace store", () => {
   it("tracks workspace list and active workspace with local actions", () => {
@@ -77,5 +92,27 @@ describe("workspace store", () => {
       store.getState().workspaces.map((workspace) => workspace.id),
     ).toEqual([WORKSPACE_ALPHA.id]);
     expect(store.getState().activeWorkspaceId).toBe(WORKSPACE_ALPHA.id);
+  });
+
+  it("persists activeWorkspaceId across store instances", async () => {
+    const persistStorage = createMemoryStorage();
+    const persistKey = "workspace-persist-test";
+    const source = createWorkspaceStore(
+      { workspaces: [WORKSPACE_ALPHA, WORKSPACE_BETA] },
+      { persistKey, persistStorage },
+    );
+
+    source.getState().setActiveWorkspaceId(WORKSPACE_BETA.id);
+
+    const restored = createWorkspaceStore(
+      { workspaces: [WORKSPACE_ALPHA, WORKSPACE_BETA] },
+      { persistKey, persistStorage },
+    ) as typeof source & {
+      persist: { rehydrate: () => Promise<void> };
+    };
+    await restored.persist.rehydrate();
+
+    expect(restored.getState().activeWorkspaceId).toBe(WORKSPACE_BETA.id);
+    expect(restored.getState().activeWorkspace?.id).toBe(WORKSPACE_BETA.id);
   });
 });
