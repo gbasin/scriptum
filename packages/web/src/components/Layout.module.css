@@ -104,27 +104,11 @@
 }
 
 .secondaryButton {
-  background: var(--color-bg-surface-2);
-  border: 1px solid var(--color-border-muted);
-  border-radius: var(--radius-2);
-  color: var(--color-text-primary);
-  cursor: pointer;
+  composes: buttonBase from "../styles/Controls.module.css";
+  composes: buttonSecondary from "../styles/Controls.module.css";
   min-height: 2.5rem;
   min-width: 2.5rem;
   padding: var(--space-1) var(--space-2);
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    background-color var(--duration-fast) var(--ease-standard);
-}
-
-.secondaryButton:hover {
-  background: var(--color-bg-elevated);
-  border-color: var(--color-border-strong);
-}
-
-.secondaryButton:focus-visible {
-  outline: 2px solid var(--color-accent-hex);
-  outline-offset: 2px;
 }
 
 .backlinksSection {
@@ -228,26 +212,11 @@
 }
 
 .dangerButton {
-  background: var(--color-danger);
-  border: 1px solid var(--color-danger-soft);
-  border-radius: var(--radius-2);
-  color: oklch(0.99 0.002 280);
-  cursor: pointer;
+  composes: buttonBase from "../styles/Controls.module.css";
+  composes: buttonDanger from "../styles/Controls.module.css";
   min-height: 2.5rem;
   min-width: 2.5rem;
   padding: var(--space-1) var(--space-2);
-  transition:
-    filter var(--duration-fast) var(--ease-standard),
-    background-color var(--duration-fast) var(--ease-standard);
-}
-
-.dangerButton:hover {
-  background: color-mix(in oklab, var(--color-danger) 92%, white);
-}
-
-.dangerButton:focus-visible {
-  outline: 2px solid var(--color-accent-hex);
-  outline-offset: 2px;
 }
 
 @media (max-width: 80rem) {

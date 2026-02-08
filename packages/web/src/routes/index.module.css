@@ -84,17 +84,13 @@
 }
 
 .button {
-  border: 1px solid transparent;
-  border-radius: var(--radius-2);
-  cursor: pointer;
+  composes: buttonBase from "../styles/Controls.module.css";
   display: inline-flex;
-  font-weight: 600;
   justify-content: center;
   padding: var(--space-2) var(--space-4);
   transition:
     transform var(--duration-fast) var(--ease-standard),
-    background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
+    background-color var(--duration-fast) var(--ease-standard);
 }
 
 .button:hover {
@@ -102,41 +98,15 @@
 }
 
 .primaryButton {
-  background: var(--color-accent-hex);
-  color: oklch(0.98 0.002 260);
-}
-
-.primaryButton:hover {
-  background: var(--color-accent);
+  composes: buttonPrimary from "../styles/Controls.module.css";
 }
 
 .list {
-  display: grid;
-  gap: var(--space-2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
+  composes: list from "../styles/ListCards.module.css";
 }
 
 .listButton {
-  background: var(--color-bg-surface-2);
-  border: 1px solid var(--color-border-muted);
-  border-radius: var(--radius-2);
-  color: inherit;
-  cursor: pointer;
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  text-align: left;
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    background-color var(--duration-fast) var(--ease-standard);
-  width: 100%;
-}
-
-.listButton:hover {
-  background: var(--color-bg-elevated);
-  border-color: var(--color-border-strong);
+  composes: listButton from "../styles/ListCards.module.css";
 }
 
 .listButtonActive {
@@ -145,19 +115,15 @@
 }
 
 .listTitle {
-  color: var(--color-text-primary);
-  font-size: var(--text-md);
-  font-weight: 600;
+  composes: listTitle from "../styles/ListCards.module.css";
 }
 
 .listMeta {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  composes: listMeta from "../styles/ListCards.module.css";
 }
 
 .mutedText {
-  color: var(--color-text-muted);
-  margin: 0;
+  composes: mutedText from "../styles/ListCards.module.css";
 }
 
 .errorText {

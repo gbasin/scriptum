@@ -30,12 +30,8 @@
 }
 
 .reloadButton {
-  background: var(--color-accent-hex);
-  border: 1px solid transparent;
-  border-radius: var(--radius-2);
-  color: oklch(0.98 0.002 260);
-  cursor: pointer;
-  font-weight: 600;
+  composes: buttonBase from "../styles/Controls.module.css";
+  composes: buttonPrimary from "../styles/Controls.module.css";
   padding: var(--space-2) var(--space-4);
   transition:
     transform var(--duration-fast) var(--ease-standard),
@@ -43,6 +39,5 @@
 }
 
 .reloadButton:hover {
-  background: var(--color-accent);
   transform: translateY(-1px);
 }
