@@ -1,25 +1,21 @@
-import { AlertDialog } from "@base-ui-components/react/alert-dialog";
 import type { Document, Workspace } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
+import { useDocumentCrud } from "../hooks/useDocumentCrud";
+import { useLayoutState } from "../hooks/useLayoutState";
 import { useToast } from "../hooks/useToast";
 import {
   buildIncomingBacklinks,
   type IncomingBacklink,
-  type RenameBacklinkRewriteResult,
-  rewriteWikiReferencesForRename,
 } from "../lib/wiki-links";
-import { useDocumentsStore } from "../store/documents";
-import { usePresenceStore } from "../store/presence";
-import { useUiStore } from "../store/ui";
-import { useWorkspaceStore } from "../store/workspace";
 import { CommandPalette } from "./CommandPalette";
+import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
 import { ErrorBoundary } from "./ErrorBoundary";
 import styles from "./Layout.module.css";
 import { Backlinks } from "./right-panel/Backlinks";
 import { Outline } from "./right-panel/Outline";
 import { AgentsSection } from "./sidebar/AgentsSection";
-import { type ContextMenuAction, DocumentTree } from "./sidebar/DocumentTree";
+import { DocumentTree } from "./sidebar/DocumentTree";
 import {
   buildSearchPanelResults,
   isSearchPanelShortcut,
@@ -32,8 +28,7 @@ import {
 } from "./sidebar/TagsList";
 import { WorkspaceDropdown } from "./sidebar/WorkspaceDropdown";
 import { ToastViewport } from "./ToastViewport";
-export { buildIncomingBacklinks, rewriteWikiReferencesForRename };
-export type { IncomingBacklink, RenameBacklinkRewriteResult };
+export type { IncomingBacklink };
 
 export function isNewDocumentShortcut(event: KeyboardEvent): boolean {
   return (
@@ -60,37 +55,31 @@ const COMPACT_LAYOUT_BREAKPOINT_PX = 1024;
 
 export function Layout() {
   const navigate = useNavigate();
-  const activeWorkspaceId = useWorkspaceStore(
-    (state) => state.activeWorkspaceId,
-  );
-  const setActiveWorkspaceId = useWorkspaceStore(
-    (state) => state.setActiveWorkspaceId,
-  );
-  const upsertWorkspace = useWorkspaceStore((state) => state.upsertWorkspace);
-  const workspaces = useWorkspaceStore((state) => state.workspaces);
-  const documents = useDocumentsStore((state) => state.documents);
-  const activeDocumentIdByWorkspace = useDocumentsStore(
-    (state) => state.activeDocumentIdByWorkspace,
-  );
-  const setActiveDocumentForWorkspace = useDocumentsStore(
-    (state) => state.setActiveDocumentForWorkspace,
-  );
-  const openDocument = useDocumentsStore((state) => state.openDocument);
-  const removeDocument = useDocumentsStore((state) => state.removeDocument);
-  const upsertDocument = useDocumentsStore((state) => state.upsertDocument);
-  const openDocumentIds = useDocumentsStore((state) => state.openDocumentIds);
-  const remotePeers = usePresenceStore((state) => state.remotePeers);
-  const sidebarPanel = useUiStore((state) => state.sidebarPanel);
-  const sidebarOpen = useUiStore((state) => state.sidebarOpen);
-  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
-  const setSidebarPanel = useUiStore((state) => state.setSidebarPanel);
-  const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
-  const rightPanelTab = useUiStore((state) => state.rightPanelTab);
-  const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
-  const setRightPanelTab = useUiStore((state) => state.setRightPanelTab);
-  const commandPaletteOpen = useUiStore((state) => state.commandPaletteOpen);
-  const openCommandPalette = useUiStore((state) => state.openCommandPalette);
-  const closeCommandPalette = useUiStore((state) => state.closeCommandPalette);
+  const {
+    activeDocumentIdByWorkspace,
+    activeWorkspaceId,
+    closeCommandPalette,
+    commandPaletteOpen,
+    documents,
+    openCommandPalette,
+    openDocument,
+    openDocumentIds,
+    removeDocument,
+    remotePeers,
+    rightPanelOpen,
+    rightPanelTab,
+    setActiveDocumentForWorkspace,
+    setActiveWorkspaceId,
+    setRightPanelTab,
+    setSidebarPanel,
+    sidebarOpen,
+    sidebarPanel,
+    toggleRightPanel,
+    toggleSidebar,
+    upsertDocument,
+    upsertWorkspace,
+    workspaces,
+  } = useLayoutState();
   const toast = useToast();
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [pendingRenameDocumentId, setPendingRenameDocumentId] = useState<
@@ -148,62 +137,30 @@ export function Layout() {
     activeWorkspaceId !== null && workspaceDocuments.length === 0;
   const searchPanelOpen = sidebarPanel === "search";
   const showOutlineSkeleton = showPanelSkeletons || outlineContainer === null;
-
-  const createDocumentInActiveWorkspace = (
-    path: string,
-    options: { inlineRename?: boolean } = {},
-  ): Document | null => {
-    if (!activeWorkspaceId) {
-      return null;
-    }
-
-    const token = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)
-      .toString(36)
-      .padStart(4, "0")}`;
-    const now = new Date().toISOString();
-    const document: Document = {
-      archivedAt: null,
-      createdAt: now,
-      deletedAt: null,
-      etag: `document-${token}`,
-      headSeq: 0,
-      id: `doc-${token}`,
-      bodyMd: "",
-      path,
-      tags: [],
-      title: titleFromPath(path),
-      updatedAt: now,
-      workspaceId: activeWorkspaceId,
-    };
-
-    upsertDocument(document);
-    openDocument(document.id);
-    setActiveDocumentForWorkspace(activeWorkspaceId, document.id);
-    navigate(
-      `/workspace/${encodeURIComponent(activeWorkspaceId)}/document/${encodeURIComponent(document.id)}`,
-    );
-
-    if (options.inlineRename) {
-      setPendingRenameDocumentId(document.id);
-    }
-
-    return document;
-  };
-
-  const createUntitledDocument = () => {
-    const existingPaths = new Set(
-      workspaceDocuments.map((document) => document.path),
-    );
-    let suffix = 1;
-    let candidatePath = "untitled-1.md";
-
-    while (existingPaths.has(candidatePath)) {
-      suffix += 1;
-      candidatePath = `untitled-${suffix}.md`;
-    }
-
-    createDocumentInActiveWorkspace(candidatePath, { inlineRename: true });
-  };
+  const {
+    createDocumentInActiveWorkspace,
+    createUntitledDocument,
+    handleCancelDeleteDocument,
+    handleConfirmDeleteDocument,
+    handleDocumentContextAction,
+    handleRenameDocument,
+  } = useDocumentCrud({
+    activeDocumentId,
+    activeWorkspaceId,
+    documents,
+    formatRenameBacklinkToast,
+    navigate,
+    openDocument,
+    pendingDeleteDocument,
+    removeDocument,
+    setActiveDocumentForWorkspace,
+    setPendingDeleteDocument,
+    setPendingRenameDocumentId,
+    titleFromPath,
+    toast,
+    upsertDocument,
+    workspaceDocuments,
+  });
 
   useEffect(() => {
     setActiveTag(null);
@@ -311,194 +268,8 @@ export function Layout() {
     setSidebarPanel("files");
   };
 
-  const updateExistingDocument = (
-    documentId: string,
-    updater: (document: Document) => Document,
-  ) => {
-    const currentDocument = documents.find(
-      (document) => document.id === documentId,
-    );
-    if (!currentDocument) {
-      return;
-    }
-    upsertDocument(updater(currentDocument));
-  };
-
-  const handleRenameDocument = (documentId: string, nextPath: string) => {
-    const normalizedPath = nextPath.trim();
-    if (!normalizedPath) {
-      return;
-    }
-
-    const currentDocument = documents.find(
-      (document) => document.id === documentId,
-    );
-    if (!currentDocument) {
-      return;
-    }
-
-    const { rewrittenDocuments, updatedDocuments, updatedLinks } =
-      rewriteWikiReferencesForRename(
-        workspaceDocuments,
-        currentDocument,
-        normalizedPath,
-      );
-
-    const now = new Date().toISOString();
-    const mutationToken = Date.now().toString(36);
-
-    upsertDocument({
-      ...currentDocument,
-      etag: `${currentDocument.etag}:rename:${mutationToken}`,
-      path: normalizedPath,
-      title: titleFromPath(normalizedPath),
-      updatedAt: now,
-    });
-
-    for (const rewrittenDocument of rewrittenDocuments) {
-      upsertDocument({
-        ...rewrittenDocument,
-        etag: `${rewrittenDocument.etag}:backlink-rename:${mutationToken}`,
-        updatedAt: now,
-      });
-    }
-
-    toast.success(formatRenameBacklinkToast(updatedLinks, updatedDocuments));
-    setPendingRenameDocumentId(null);
-  };
-
-  const createDocumentInNewFolder = (sourceDocument: Document) => {
-    const segments = sourceDocument.path.split("/").filter(Boolean);
-    const parentPath = segments.slice(0, -1).join("/");
-    const existingPaths = new Set(
-      workspaceDocuments.map((document) => document.path),
-    );
-    let suffix = 1;
-    let folderName = "new-folder";
-    let candidatePath = `${folderName}/untitled.md`;
-
-    while (
-      existingPaths.has(
-        parentPath.length > 0
-          ? `${parentPath}/${candidatePath}`
-          : candidatePath,
-      )
-    ) {
-      suffix += 1;
-      folderName = `new-folder-${suffix}`;
-      candidatePath = `${folderName}/untitled.md`;
-    }
-
-    createDocumentInActiveWorkspace(
-      parentPath.length > 0 ? `${parentPath}/${candidatePath}` : candidatePath,
-      { inlineRename: true },
-    );
-  };
-
-  const handleDocumentContextAction = (
-    action: ContextMenuAction,
-    document: Document,
-  ) => {
-    if (action === "rename") {
-      return;
-    }
-
-    if (action === "delete") {
-      setPendingDeleteDocument(document);
-      return;
-    }
-
-    if (action === "move") {
-      const fileName = titleFromPath(document.path);
-      handleRenameDocument(document.id, `moved/${fileName}`);
-      return;
-    }
-
-    if (action === "copy-link") {
-      const link = `/workspace/${encodeURIComponent(document.workspaceId)}/document/${encodeURIComponent(document.id)}`;
-      if (typeof navigator !== "undefined" && navigator.clipboard) {
-        void navigator.clipboard
-          .writeText(link)
-          .then(() => {
-            toast.success("Copied document link.");
-          })
-          .catch(() => {
-            toast.error("Failed to copy document link.");
-          });
-      } else {
-        toast.error("Clipboard is unavailable in this environment.");
-      }
-      return;
-    }
-
-    if (action === "add-tag") {
-      const now = new Date().toISOString();
-      updateExistingDocument(document.id, (currentDocument) => ({
-        ...currentDocument,
-        etag: `${currentDocument.etag}:tag:${Date.now().toString(36)}`,
-        tags: Array.from(new Set([...currentDocument.tags, "tagged"])),
-        updatedAt: now,
-      }));
-      return;
-    }
-
-    if (action === "archive") {
-      const now = new Date().toISOString();
-      updateExistingDocument(document.id, (currentDocument) => ({
-        ...currentDocument,
-        archivedAt: now,
-        etag: `${currentDocument.etag}:archive:${Date.now().toString(36)}`,
-        updatedAt: now,
-      }));
-      return;
-    }
-
-    if (action === "new-folder") {
-      createDocumentInNewFolder(document);
-      return;
-    }
-  };
-
   const handleBacklinkSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
-  };
-
-  const handleCancelDeleteDocument = () => {
-    setPendingDeleteDocument(null);
-  };
-
-  const handleConfirmDeleteDocument = () => {
-    const documentToDelete = pendingDeleteDocument;
-    if (!documentToDelete) {
-      return;
-    }
-
-    const deletingActiveDocument = activeDocumentId === documentToDelete.id;
-    removeDocument(documentToDelete.id);
-    setPendingDeleteDocument(null);
-    toast.success(`Deleted "${documentToDelete.path}".`);
-
-    if (
-      !deletingActiveDocument ||
-      !activeWorkspaceId ||
-      documentToDelete.workspaceId !== activeWorkspaceId
-    ) {
-      return;
-    }
-
-    const nextDocumentId =
-      workspaceDocuments.find((document) => document.id !== documentToDelete.id)
-        ?.id ?? null;
-
-    setActiveDocumentForWorkspace(activeWorkspaceId, nextDocumentId);
-    if (nextDocumentId) {
-      navigate(
-        `/workspace/${encodeURIComponent(activeWorkspaceId)}/document/${encodeURIComponent(nextDocumentId)}`,
-      );
-      return;
-    }
-
-    navigate(`/workspace/${encodeURIComponent(activeWorkspaceId)}`);
   };
 
   return (
@@ -716,50 +487,12 @@ export function Layout() {
           Show Outline
         </button>
       )}
-      <AlertDialog.Root
-        onOpenChange={(open) => {
-          if (!open) {
-            handleCancelDeleteDocument();
-          }
-        }}
+      <DeleteDocumentDialog
+        documentPath={pendingDeleteDocument?.path ?? null}
+        onCancel={handleCancelDeleteDocument}
+        onConfirm={handleConfirmDeleteDocument}
         open={Boolean(pendingDeleteDocument)}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Backdrop
-            className={styles.deleteOverlay}
-            data-testid="delete-document-overlay"
-          />
-          <AlertDialog.Popup
-            aria-label="Delete document confirmation"
-            className={styles.deleteDialog}
-            data-testid="delete-document-dialog"
-          >
-            <AlertDialog.Title className={styles.deleteDialogTitle}>
-              Delete document?
-            </AlertDialog.Title>
-            <AlertDialog.Description className={styles.deleteDialogDescription}>
-              Permanently delete <strong>{pendingDeleteDocument?.path}</strong>?
-              This cannot be undone.
-            </AlertDialog.Description>
-            <div className={styles.deleteDialogActions}>
-              <AlertDialog.Close
-                className={styles.secondaryButton}
-                data-testid="delete-document-cancel"
-              >
-                Cancel
-              </AlertDialog.Close>
-              <button
-                className={styles.dangerButton}
-                data-testid="delete-document-confirm"
-                onClick={handleConfirmDeleteDocument}
-                type="button"
-              >
-                Delete
-              </button>
-            </div>
-          </AlertDialog.Popup>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
+      />
       <ToastViewport />
     </div>
   );

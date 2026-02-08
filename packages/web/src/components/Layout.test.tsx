@@ -10,9 +10,11 @@ import { useUiStore } from "../store/ui";
 import { useWorkspaceStore } from "../store/workspace";
 import {
   buildIncomingBacklinks,
+  rewriteWikiReferencesForRename,
+} from "../lib/wiki-links";
+import {
   formatRenameBacklinkToast,
   Layout,
-  rewriteWikiReferencesForRename,
 } from "./Layout";
 
 declare global {
