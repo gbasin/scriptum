@@ -1,8 +1,8 @@
 .banner {
-  background: oklch(0.84 0.12 86);
+  background: var(--color-warning);
   border: 1px solid transparent;
   border-radius: var(--radius-2);
-  color: oklch(0.42 0.09 66);
+  color: var(--color-warning-text);
   margin-bottom: 0;
   max-height: 0;
   opacity: 0;
@@ -15,7 +15,11 @@
 }
 
 .visible {
-  border-color: oklch(0.72 0.16 79);
+  border-color: color-mix(
+    in oklab,
+    var(--color-warning) 72%,
+    var(--color-warning-text)
+  );
   margin-bottom: var(--space-3);
   max-height: 4rem;
   opacity: 1;
@@ -36,7 +40,8 @@
 
 .dismissButton {
   background: transparent;
-  border: 1px solid oklch(0.54 0.13 62);
+  border: 1px solid
+    color-mix(in oklab, var(--color-warning-text) 72%, var(--color-warning));
   border-radius: 9999px;
   color: inherit;
   cursor: pointer;
@@ -52,8 +57,12 @@
 }
 
 .dismissButton:hover {
-  background-color: oklch(0.73 0.15 78);
-  border-color: oklch(0.56 0.13 63);
+  background-color: var(--color-warning-soft);
+  border-color: color-mix(
+    in oklab,
+    var(--color-warning-text) 76%,
+    var(--color-warning)
+  );
 }
 
 .dismissButton:focus-visible {

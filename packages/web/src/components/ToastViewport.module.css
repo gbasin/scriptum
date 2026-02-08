@@ -29,15 +29,15 @@
 }
 
 .markerInfo {
-  background: var(--color-accent-hex);
+  background: var(--color-info);
 }
 
 .markerSuccess {
-  background: oklch(0.72 0.15 154);
+  background: var(--color-success);
 }
 
 .markerError {
-  background: oklch(0.64 0.2 27);
+  background: var(--color-danger);
 }
 
 .message {

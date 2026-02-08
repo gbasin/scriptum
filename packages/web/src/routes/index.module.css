@@ -161,7 +161,7 @@
 }
 
 .errorText {
-  color: oklch(0.73 0.21 24);
+  color: var(--color-danger-text);
   margin: 0;
 }
 

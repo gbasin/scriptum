@@ -13,7 +13,7 @@
 }
 
 .invalid {
-  color: oklch(0.56 0.23 30);
+  color: var(--color-danger-text);
   margin: 0;
 }
 
@@ -22,11 +22,11 @@
 }
 
 .unavailable {
-  color: oklch(0.7 0.1 80);
+  color: var(--color-warning-text);
   margin-top: var(--space-2);
 }
 
 .success {
-  color: oklch(0.73 0.13 163);
+  color: var(--color-success);
   margin: var(--space-1) 0 0;
 }

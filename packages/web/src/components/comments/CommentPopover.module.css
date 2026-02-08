@@ -16,9 +16,9 @@
 }
 
 .marginButtonOpen {
-  background: oklch(0.89 0.13 88);
-  border: 1px solid oklch(0.74 0.16 80);
-  color: oklch(0.39 0.09 64);
+  background: var(--color-warning);
+  border: 1px solid var(--color-warning-soft);
+  color: var(--color-warning-text);
 }
 
 .marginButtonResolved {
@@ -59,7 +59,7 @@
 }
 
 .selectionPreview {
-  background: oklch(0.89 0.13 88 / 0.4);
+  background: color-mix(in oklab, var(--color-warning) 40%, transparent);
   border-radius: var(--radius-1);
   color: var(--color-text-primary);
   font-size: 0.75rem;
@@ -75,7 +75,7 @@
 }
 
 .errorMessage {
-  color: oklch(0.56 0.23 30);
+  color: var(--color-danger-text);
   font-size: 0.75rem;
   margin: var(--space-2) 0 0;
 }

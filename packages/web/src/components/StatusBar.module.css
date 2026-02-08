@@ -27,15 +27,15 @@
 }
 
 .dotGreen {
-  background-color: oklch(0.72 0.18 149);
+  background-color: var(--color-success);
 }
 
 .dotYellow {
-  background-color: oklch(0.84 0.18 96);
+  background-color: var(--color-warning);
 }
 
 .dotRed {
-  background-color: oklch(0.63 0.23 29);
+  background-color: var(--color-danger);
 }
 
 .metric {
