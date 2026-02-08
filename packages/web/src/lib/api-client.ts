@@ -6,26 +6,17 @@ import type {
   Document,
   Section,
   Workspace,
+  RelayErrorEnvelope as SharedRelayErrorEnvelope,
 } from "@scriptum/shared";
+import { ScriptumApiClient, ScriptumApiError } from "@scriptum/shared";
 import { getAccessToken as getAccessTokenFromAuth } from "./auth";
 
 const DEFAULT_RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
-type QueryValue = string | number | boolean | null | undefined;
-type QueryParams = Record<string, QueryValue>;
 
-export interface RelayErrorEnvelope {
-  error?: {
-    code?: string;
-    message?: string;
-    retryable?: boolean;
-    request_id?: string;
-    requestId?: string;
-    details?: unknown;
-  };
-}
+export type RelayErrorEnvelope = SharedRelayErrorEnvelope;
 
 export class ApiClientError extends Error {
   constructor(
@@ -93,16 +84,6 @@ export interface ApiClientOptions {
   fetch?: typeof fetch;
   getAccessToken?: () => Promise<string | null>;
   createIdempotencyKey?: () => string;
-}
-
-interface RequestOptions {
-  method?: HttpMethod;
-  query?: QueryParams;
-  body?: unknown;
-  headers?: HeadersInit;
-  ifMatch?: string;
-  includeAuth?: boolean;
-  idempotencyKey?: string;
 }
 
 interface ApiClient {
@@ -203,22 +184,6 @@ function readNumber(
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function readBoolean(
-  record: UnknownRecord | null,
-  keys: readonly string[],
-): boolean | null {
-  if (!record) {
-    return null;
-  }
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "boolean") {
       return value;
     }
   }
@@ -405,179 +370,82 @@ function mapPaged<T>(
   return { items, nextCursor: nextCursor ?? null };
 }
 
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "");
-}
-
-function createUrl(baseUrl: string, path: string, query?: QueryParams): URL {
-  const url = new URL(path.startsWith("/") ? path : `/${path}`, `${baseUrl}/`);
-  if (query) {
-    for (const [key, value] of Object.entries(query)) {
-      if (value === undefined || value === null) {
-        continue;
-      }
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url;
-}
-
-async function readJsonResponse<T>(response: Response): Promise<T | undefined> {
-  if (response.status === 204) {
-    return undefined;
-  }
-  const text = await response.text();
-  if (text.length === 0) {
-    return undefined;
-  }
-  return JSON.parse(text) as T;
-}
-
-async function parseApiError(
-  response: Response,
-  method: HttpMethod,
-  url: string,
-): Promise<ApiClientError> {
-  const fallbackMessage = `Request failed (${response.status})`;
-  let parsed: unknown;
-  let message = fallbackMessage;
-  let code: string | null = null;
-  let retryable = response.status === 429 || response.status >= 500;
-  let requestId: string | null = null;
-
-  try {
-    parsed = await readJsonResponse<RelayErrorEnvelope>(response);
-  } catch {
-    parsed = undefined;
-  }
-
-  const envelope = asRecord(parsed);
-  const errorRecord = asRecord(envelope?.error);
-
-  message = readString(errorRecord, ["message"]) ?? fallbackMessage;
-  code = readString(errorRecord, ["code"]);
-  retryable = readBoolean(errorRecord, ["retryable"]) ?? retryable;
-  requestId = readString(errorRecord, ["request_id", "requestId"]);
-  const details = errorRecord?.details;
-
+function toApiClientError(error: ScriptumApiError): ApiClientError {
   return new ApiClientError(
-    response.status,
-    method,
-    url,
-    code,
-    message,
-    retryable,
-    requestId,
-    details,
+    error.status,
+    error.method,
+    error.url,
+    error.code,
+    error.message,
+    error.retryable,
+    error.requestId,
+    error.details,
   );
 }
 
+async function runWithApiError<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    if (error instanceof ScriptumApiError) {
+      throw toApiClientError(error);
+    }
+    throw error;
+  }
+}
+
 export function createApiClient(options: ApiClientOptions = {}): ApiClient {
-  const baseUrl = normalizeBaseUrl(options.baseUrl ?? DEFAULT_RELAY_URL);
-  const fetchImpl = options.fetch ?? globalThis.fetch;
-  const getAccessToken = options.getAccessToken ?? getAccessTokenFromAuth;
-  const createIdempotencyKey =
-    options.createIdempotencyKey ?? (() => crypto.randomUUID());
-
-  const request = async <T>(
-    path: string,
-    requestOptions: RequestOptions = {},
-  ): Promise<T> => {
-    const method = requestOptions.method ?? "GET";
-    const url = createUrl(baseUrl, path, requestOptions.query);
-    const headers = new Headers(requestOptions.headers);
-
-    if (requestOptions.body !== undefined && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
-    }
-    if (requestOptions.ifMatch) {
-      headers.set("If-Match", requestOptions.ifMatch);
-    }
-
-    if (requestOptions.includeAuth !== false && !headers.has("Authorization")) {
-      const token = await getAccessToken();
-      if (token) {
-        headers.set("Authorization", `Bearer ${token}`);
-      }
-    }
-
-    if (
-      method === "POST" &&
-      !url.pathname.startsWith("/v1/auth/") &&
-      !headers.has("Idempotency-Key")
-    ) {
-      headers.set(
-        "Idempotency-Key",
-        requestOptions.idempotencyKey ?? createIdempotencyKey(),
-      );
-    }
-
-    const response = await fetchImpl(url.toString(), {
-      method,
-      headers,
-      body:
-        requestOptions.body === undefined
-          ? undefined
-          : JSON.stringify(requestOptions.body),
-    });
-
-    if (!response.ok) {
-      throw await parseApiError(response, method, url.toString());
-    }
-
-    return (await readJsonResponse<T>(response)) as T;
-  };
+  const sharedClient = new ScriptumApiClient({
+    baseUrl: options.baseUrl ?? DEFAULT_RELAY_URL,
+    ...(options.fetch ? { fetchImpl: options.fetch } : {}),
+    tokenProvider: options.getAccessToken ?? getAccessTokenFromAuth,
+    ...(options.createIdempotencyKey
+      ? { idempotencyKeyFactory: options.createIdempotencyKey }
+      : {}),
+  });
 
   return {
     listWorkspaces: async (listOptions = {}) => {
-      const payload = await request<unknown>("/v1/workspaces", {
-        query: {
+      const payload = await runWithApiError(() =>
+        sharedClient.listWorkspaces({
           ...(listOptions.limit !== undefined
             ? { limit: listOptions.limit }
             : {}),
           ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
-        },
-      });
+        }),
+      );
       return mapPaged(payload, mapWorkspace);
     },
 
     listDocuments: async (workspaceId, listOptions = {}) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(workspaceId)}/documents`,
-        {
-          query: {
-            ...(listOptions.limit !== undefined
-              ? { limit: listOptions.limit }
-              : {}),
-            ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
-            ...(listOptions.pathPrefix
-              ? { path_prefix: listOptions.pathPrefix }
-              : {}),
-            ...(listOptions.tag ? { tag: listOptions.tag } : {}),
-            ...(listOptions.includeArchived !== undefined
-              ? { include_archived: listOptions.includeArchived }
-              : {}),
-          },
-        },
+      const payload = await runWithApiError(() =>
+        sharedClient.listDocuments(workspaceId, {
+          ...(listOptions.limit !== undefined
+            ? { limit: listOptions.limit }
+            : {}),
+          ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
+          ...(listOptions.pathPrefix
+            ? { path_prefix: listOptions.pathPrefix }
+            : {}),
+          ...(listOptions.tag ? { tag: listOptions.tag } : {}),
+          ...(listOptions.includeArchived !== undefined
+            ? { include_archived: listOptions.includeArchived }
+            : {}),
+        }),
       );
       return mapPaged(payload, mapDocument);
     },
 
     getDocument: async (workspaceId, documentId, getOptions = {}) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(
-          workspaceId,
-        )}/documents/${encodeURIComponent(documentId)}`,
-        {
-          query: {
-            ...(getOptions.includeContent !== undefined
-              ? { include_content: getOptions.includeContent }
-              : {}),
-            ...(getOptions.includeSections !== undefined
-              ? { include_sections: getOptions.includeSections }
-              : {}),
-          },
-        },
+      const payload = await runWithApiError(() =>
+        sharedClient.getDocument(workspaceId, documentId, {
+          ...(getOptions.includeContent !== undefined
+            ? { include_content: getOptions.includeContent }
+            : {}),
+          ...(getOptions.includeSections !== undefined
+            ? { include_sections: getOptions.includeSections }
+            : {}),
+        }),
       );
 
       const record = asRecord(payload);
@@ -595,37 +463,26 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
 
     updateDocument: async (workspaceId, documentId, input, updateOptions) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(
-          workspaceId,
-        )}/documents/${encodeURIComponent(documentId)}`,
-        {
-          method: "PATCH",
+      const payload = await runWithApiError(() =>
+        sharedClient.updateDocument(workspaceId, documentId, input, {
           ifMatch: updateOptions.etag,
-          body: input,
-        },
+        }),
       );
       const record = asRecord(payload);
       return mapDocument(record?.document);
     },
 
     createComment: async (workspaceId, documentId, input) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(
-          workspaceId,
-        )}/documents/${encodeURIComponent(documentId)}/comments`,
-        {
-          method: "POST",
-          body: {
-            anchor: {
-              section_id: input.anchor.sectionId,
-              start_offset_utf16: input.anchor.startOffsetUtf16,
-              end_offset_utf16: input.anchor.endOffsetUtf16,
-              head_seq: input.anchor.headSeq,
-            },
-            message: input.message,
+      const payload = await runWithApiError(() =>
+        sharedClient.createComment(workspaceId, documentId, {
+          anchor: {
+            section_id: input.anchor.sectionId,
+            start_offset_utf16: input.anchor.startOffsetUtf16,
+            end_offset_utf16: input.anchor.endOffsetUtf16,
+            head_seq: input.anchor.headSeq,
           },
-        },
+          message: input.message,
+        }),
       );
 
       const record = asRecord(payload);
@@ -636,16 +493,10 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
 
     addCommentMessage: async (workspaceId, threadId, bodyMd) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(
-          workspaceId,
-        )}/comments/${encodeURIComponent(threadId)}/messages`,
-        {
-          method: "POST",
-          body: {
-            body_md: bodyMd,
-          },
-        },
+      const payload = await runWithApiError(() =>
+        sharedClient.addCommentMessage(workspaceId, threadId, {
+          body_md: bodyMd,
+        }),
       );
 
       const record = asRecord(payload);
@@ -653,16 +504,10 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
 
     resolveCommentThread: async (workspaceId, threadId, ifVersion) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(
-          workspaceId,
-        )}/comments/${encodeURIComponent(threadId)}/resolve`,
-        {
-          method: "POST",
-          body: {
-            if_version: ifVersion,
-          },
-        },
+      const payload = await runWithApiError(() =>
+        sharedClient.resolveComment(workspaceId, threadId, {
+          if_version: ifVersion,
+        }),
       );
 
       const record = asRecord(payload);
@@ -670,16 +515,10 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
 
     reopenCommentThread: async (workspaceId, threadId, ifVersion) => {
-      const payload = await request<unknown>(
-        `/v1/workspaces/${encodeURIComponent(
-          workspaceId,
-        )}/comments/${encodeURIComponent(threadId)}/reopen`,
-        {
-          method: "POST",
-          body: {
-            if_version: ifVersion,
-          },
-        },
+      const payload = await runWithApiError(() =>
+        sharedClient.reopenComment(workspaceId, threadId, {
+          if_version: ifVersion,
+        }),
       );
 
       const record = asRecord(payload);
