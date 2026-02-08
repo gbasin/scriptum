@@ -9,6 +9,7 @@ export interface SearchPanelResult {
   author: string;
   documentId: string;
   documentPath: string;
+  documentTitle: string;
   id: string;
   lineNumber: number;
   snippet: string;
@@ -43,6 +44,15 @@ export interface SearchPanelProps {
 }
 
 const UNKNOWN_AUTHOR = "Unknown";
+const MAX_SNIPPET_LENGTH = 160;
+
+function normalizeSnippetText(value: string): string {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= MAX_SNIPPET_LENGTH) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, MAX_SNIPPET_LENGTH - 1)}…`;
+}
 
 function normalizeDate(value: string): string | null {
   const parsed = new Date(value);
@@ -62,16 +72,53 @@ export function isSearchPanelShortcut(event: SearchShortcutEventLike): boolean {
 export function buildSearchPanelResults(
   documents: readonly Document[],
 ): SearchPanelResult[] {
-  return documents.map((document) => ({
-    author: UNKNOWN_AUTHOR,
-    documentId: document.id,
-    documentPath: document.path,
-    id: `${document.id}:1`,
-    lineNumber: 1,
-    snippet: `${document.title} (${document.path})`,
-    tags: document.tags.slice(),
-    updatedAt: document.updatedAt,
-  }));
+  const results: SearchPanelResult[] = [];
+
+  for (const document of documents) {
+    const bodyMarkdown =
+      typeof document.bodyMd === "string" ? document.bodyMd : "";
+    const lines = bodyMarkdown.split(/\r?\n/);
+    let appendedLineMatch = false;
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const lineNumber = index + 1;
+      const snippet = normalizeSnippetText(lines[index] ?? "");
+      if (!snippet) {
+        continue;
+      }
+
+      appendedLineMatch = true;
+      results.push({
+        author: UNKNOWN_AUTHOR,
+        documentId: document.id,
+        documentPath: document.path,
+        documentTitle: document.title,
+        id: `${document.id}:${lineNumber}`,
+        lineNumber,
+        snippet,
+        tags: document.tags.slice(),
+        updatedAt: document.updatedAt,
+      });
+    }
+
+    if (appendedLineMatch) {
+      continue;
+    }
+
+    results.push({
+      author: UNKNOWN_AUTHOR,
+      documentId: document.id,
+      documentPath: document.path,
+      documentTitle: document.title,
+      id: `${document.id}:1`,
+      lineNumber: 1,
+      snippet: `${document.title} (${document.path})`,
+      tags: document.tags.slice(),
+      updatedAt: document.updatedAt,
+    });
+  }
+
+  return results;
 }
 
 export function filterSearchResults(
@@ -102,7 +149,12 @@ export function filterSearchResults(
       return true;
     }
 
-    const haystacks = [result.documentPath, result.snippet, ...result.tags];
+    const haystacks = [
+      result.documentPath,
+      result.documentTitle,
+      result.snippet,
+      ...result.tags,
+    ];
     return haystacks.some((value) =>
       value.toLowerCase().includes(normalizedQuery),
     );

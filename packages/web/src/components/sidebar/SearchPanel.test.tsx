@@ -41,6 +41,7 @@ const SEARCH_RESULTS: SearchPanelResult[] = [
     author: "Alice",
     documentId: "doc-a",
     documentPath: "docs/auth.md",
+    documentTitle: "Auth",
     id: "doc-a:12",
     lineNumber: 12,
     snippet: "Authentication state machine and reconnect flow",
@@ -51,6 +52,7 @@ const SEARCH_RESULTS: SearchPanelResult[] = [
     author: "Bob",
     documentId: "doc-b",
     documentPath: "docs/search.md",
+    documentTitle: "Search",
     id: "doc-b:4",
     lineNumber: 4,
     snippet: "Search panel fixture with highlighted snippet context",
@@ -65,9 +67,10 @@ afterEach(() => {
 });
 
 describe("buildSearchPanelResults", () => {
-  it("creates default search rows from workspace documents", () => {
+  it("indexes non-empty markdown body lines with line numbers", () => {
     const documents = [
       makeDocument({
+        bodyMd: "# Heading\n\nSearchable paragraph\nFinal line",
         id: "doc-a",
         path: "docs/a.md",
         tags: ["alpha"],
@@ -81,11 +84,59 @@ describe("buildSearchPanelResults", () => {
         author: "Unknown",
         documentId: "doc-a",
         documentPath: "docs/a.md",
+        documentTitle: "A",
         id: "doc-a:1",
         lineNumber: 1,
-        snippet: "A (docs/a.md)",
+        snippet: "# Heading",
         tags: ["alpha"],
         updatedAt: "2026-01-03T00:00:00.000Z",
+      },
+      {
+        author: "Unknown",
+        documentId: "doc-a",
+        documentPath: "docs/a.md",
+        documentTitle: "A",
+        id: "doc-a:3",
+        lineNumber: 3,
+        snippet: "Searchable paragraph",
+        tags: ["alpha"],
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      },
+      {
+        author: "Unknown",
+        documentId: "doc-a",
+        documentPath: "docs/a.md",
+        documentTitle: "A",
+        id: "doc-a:4",
+        lineNumber: 4,
+        snippet: "Final line",
+        tags: ["alpha"],
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("falls back to title/path snippet when body markdown is empty", () => {
+    const documents = [
+      makeDocument({
+        bodyMd: "",
+        id: "doc-empty",
+        path: "docs/empty.md",
+        title: "Empty",
+      }),
+    ];
+
+    expect(buildSearchPanelResults(documents)).toEqual([
+      {
+        author: "Unknown",
+        documentId: "doc-empty",
+        documentPath: "docs/empty.md",
+        documentTitle: "Empty",
+        id: "doc-empty:1",
+        lineNumber: 1,
+        snippet: "Empty (docs/empty.md)",
+        tags: [],
+        updatedAt: "2026-01-01T00:00:00.000Z",
       },
     ]);
   });
