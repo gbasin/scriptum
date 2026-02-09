@@ -33,7 +33,12 @@ import { ShareDialog } from "../components/share/ShareDialog";
 import { useScriptumEditor } from "../hooks/useScriptumEditor";
 import { useToast } from "../hooks/useToast";
 import {
+  addCommentMessage as addCommentMessageApi,
+  createComment as createCommentApi,
   type CreateCommentInput,
+  listComments as listCommentsApi,
+  reopenCommentThread as reopenCommentThreadApi,
+  resolveCommentThread as resolveCommentThreadApi,
   createShareLink as createShareLinkApi,
 } from "../lib/api-client";
 import {
@@ -41,7 +46,6 @@ import {
   nextDocumentIdAfterClose,
 } from "../lib/document-utils";
 import {
-  appendReplyToThread,
   commentAnchorTopPx,
   commentRangesFromThreads,
   type InlineCommentMessage,
@@ -602,6 +606,33 @@ export function DocumentRoute() {
   ]);
 
   useEffect(() => {
+    if (fixtureModeEnabled || !workspaceId || !documentId) {
+      return;
+    }
+
+    let isCancelled = false;
+    void (async () => {
+      try {
+        const payload = await listCommentsApi(workspaceId, documentId, {
+          limit: 200,
+        });
+        if (isCancelled) {
+          return;
+        }
+        setInlineCommentThreads(normalizeInlineCommentThreads(payload.items));
+      } catch {
+        if (!isCancelled) {
+          toast.error("Failed to load comment threads.");
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [documentId, fixtureModeEnabled, toast, workspaceId]);
+
+  useEffect(() => {
     if (!dropUploadProgress || dropUploadProgress.phase !== "completed") {
       return;
     }
@@ -814,8 +845,8 @@ export function DocumentRoute() {
   };
 
   const createInlineCommentThread = async (
-    _workspaceId: string,
-    _documentId: string,
+    currentWorkspaceId: string,
+    currentDocumentId: string,
     input: CreateCommentInput,
   ): Promise<{ thread: CommentThread; message: CommentMessage }> => {
     const nextMessage: InlineCommentMessage = {
@@ -830,16 +861,50 @@ export function DocumentRoute() {
       endOffsetUtf16: input.anchor.endOffsetUtf16,
       id: makeClientId("thread"),
       messages: [nextMessage],
+      sectionId: input.anchor.sectionId,
       startOffsetUtf16: input.anchor.startOffsetUtf16,
       status: "open",
+      version: 0,
     };
 
-    persistCommentThreads((currentThreads) => [...currentThreads, nextThread]);
-    const created = toThreadWithMessages(nextThread, documentId);
+    const optimistic = toThreadWithMessages(nextThread, currentDocumentId);
+
+    if (!fixtureModeEnabled) {
+      void (async () => {
+        try {
+          const created = await createCommentApi(
+            currentWorkspaceId,
+            currentDocumentId,
+            input,
+          );
+          const reconciled = toInlineCommentThread({
+            thread: created.thread,
+            messages: [created.message],
+          });
+
+          persistCommentThreads((currentThreads) => {
+            const byOptimisticId = currentThreads.findIndex(
+              (thread) => thread.id === nextThread.id,
+            );
+            if (byOptimisticId === -1) {
+              return [...currentThreads, reconciled];
+            }
+            const updated = [...currentThreads];
+            updated[byOptimisticId] = reconciled;
+            return updated;
+          });
+        } catch {
+          persistCommentThreads((currentThreads) =>
+            currentThreads.filter((thread) => thread.id !== nextThread.id),
+          );
+          toast.error("Failed to create comment thread.");
+        }
+      })();
+    }
+
     return {
-      message:
-        created.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
-      thread: created.thread,
+      message: optimistic.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
+      thread: optimistic.thread,
     };
   };
 
@@ -863,7 +928,7 @@ export function DocumentRoute() {
   };
 
   const replyToInlineCommentThread = async (
-    _workspaceId: string,
+    currentWorkspaceId: string,
     threadId: string,
     bodyMd: string,
   ): Promise<CommentMessage> => {
@@ -876,36 +941,95 @@ export function DocumentRoute() {
       isOwn: true,
     };
 
-    persistCommentThreads((currentThreads) =>
-      appendReplyToThread(currentThreads, threadId, nextMessage),
-    );
+    if (!fixtureModeEnabled) {
+      void (async () => {
+        try {
+          const created = await addCommentMessageApi(
+            currentWorkspaceId,
+            threadId,
+            bodyMd.trim(),
+          );
+          persistCommentThreads((currentThreads) =>
+            currentThreads.map((thread) => {
+              if (thread.id !== threadId) {
+                return thread;
+              }
+              return {
+                ...thread,
+                messages: thread.messages.map((message) =>
+                  message.id === nextMessage.id
+                    ? {
+                        authorName: created.author,
+                        bodyMd: created.bodyMd,
+                        createdAt: created.createdAt,
+                        id: created.id,
+                        isOwn: created.author === LOCAL_COMMENT_AUTHOR_NAME,
+                      }
+                    : message,
+                ),
+              };
+            }),
+          );
+        } catch {
+          persistCommentThreads((currentThreads) =>
+            currentThreads.map((thread) => {
+              if (thread.id !== threadId) {
+                return thread;
+              }
+              return {
+                ...thread,
+                messages: thread.messages.filter(
+                  (message) => message.id !== nextMessage.id,
+                ),
+              };
+            }),
+          );
+          toast.error("Failed to add comment reply.");
+        }
+      })();
+    }
+
     return toCommentMessage(nextMessage, threadId);
   };
 
-  const setThreadStatus = (
-    threadId: string,
-    status: InlineCommentThread["status"],
-  ) => {
-    persistCommentThreads((currentThreads) =>
-      updateInlineCommentThreadStatus(currentThreads, threadId, status),
+  const resolveThread = (threadId: string) => {
+    const currentThread = inlineCommentThreads.find(
+      (thread) => thread.id === threadId,
+    );
+    if (!currentThread) {
+      return;
+    }
+    void resolveInlineCommentThread(
+      workspaceId ?? "unknown-workspace",
+      threadId,
+      currentThread.version ?? 1,
     );
   };
 
-  const resolveThread = (threadId: string) => {
-    setThreadStatus(threadId, "resolved");
-  };
-
   const reopenThread = (threadId: string) => {
-    setThreadStatus(threadId, "open");
+    const currentThread = inlineCommentThreads.find(
+      (thread) => thread.id === threadId,
+    );
+    if (!currentThread) {
+      return;
+    }
+    void reopenInlineCommentThread(
+      workspaceId ?? "unknown-workspace",
+      threadId,
+      currentThread.version ?? 1,
+    );
   };
 
   const resolveInlineCommentThread = async (
-    _workspaceId: string,
+    currentWorkspaceId: string,
     threadId: string,
-    _ifVersion: number,
+    ifVersion: number,
   ): Promise<CommentThread> => {
+    let previousThread: InlineCommentThread | null = null;
     let updatedThread: InlineCommentThread | null = null;
     persistCommentThreads((currentThreads) => {
+      previousThread =
+        currentThreads.find((thread) => thread.id === threadId) ?? null;
       const nextThreads = updateInlineCommentThreadStatus(
         currentThreads,
         threadId,
@@ -920,16 +1044,48 @@ export function DocumentRoute() {
       throw new Error("Thread not found");
     }
 
+    if (!fixtureModeEnabled) {
+      void (async () => {
+        try {
+          const nextThread = await resolveCommentThreadApi(
+            currentWorkspaceId,
+            threadId,
+            ifVersion,
+          );
+          persistCommentThreads((currentThreads) =>
+            currentThreads.map((thread) =>
+              thread.id === threadId
+                ? {
+                    ...thread,
+                    sectionId: nextThread.sectionId,
+                    status: nextThread.status,
+                    version: nextThread.version,
+                  }
+                : thread,
+            ),
+          );
+        } catch {
+          if (previousThread) {
+            replaceInlineCommentThread(previousThread);
+          }
+          toast.error("Failed to resolve comment thread.");
+        }
+      })();
+    }
+
     return toThreadWithMessages(updatedThread, documentId).thread;
   };
 
   const reopenInlineCommentThread = async (
-    _workspaceId: string,
+    currentWorkspaceId: string,
     threadId: string,
-    _ifVersion: number,
+    ifVersion: number,
   ): Promise<CommentThread> => {
+    let previousThread: InlineCommentThread | null = null;
     let updatedThread: InlineCommentThread | null = null;
     persistCommentThreads((currentThreads) => {
+      previousThread =
+        currentThreads.find((thread) => thread.id === threadId) ?? null;
       const nextThreads = updateInlineCommentThreadStatus(
         currentThreads,
         threadId,
@@ -942,6 +1098,35 @@ export function DocumentRoute() {
 
     if (!updatedThread) {
       throw new Error("Thread not found");
+    }
+
+    if (!fixtureModeEnabled) {
+      void (async () => {
+        try {
+          const nextThread = await reopenCommentThreadApi(
+            currentWorkspaceId,
+            threadId,
+            ifVersion,
+          );
+          persistCommentThreads((currentThreads) =>
+            currentThreads.map((thread) =>
+              thread.id === threadId
+                ? {
+                    ...thread,
+                    sectionId: nextThread.sectionId,
+                    status: nextThread.status,
+                    version: nextThread.version,
+                  }
+                : thread,
+            ),
+          );
+        } catch {
+          if (previousThread) {
+            replaceInlineCommentThread(previousThread);
+          }
+          toast.error("Failed to reopen comment thread.");
+        }
+      })();
     }
 
     return toThreadWithMessages(updatedThread, documentId).thread;

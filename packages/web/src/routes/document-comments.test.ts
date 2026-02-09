@@ -52,6 +52,34 @@ describe("document comment helpers", () => {
     ]);
   });
 
+  it("preserves thread section and version metadata from relay responses", () => {
+    const normalized = normalizeInlineCommentThreads([
+      {
+        messages: [],
+        thread: {
+          end_offset_utf16: 32,
+          id: "thread-2",
+          section_id: "root/intro",
+          start_offset_utf16: 8,
+          status: "resolved",
+          version: 4,
+        },
+      },
+    ]);
+
+    expect(normalized).toEqual<InlineCommentThread[]>([
+      {
+        endOffsetUtf16: 32,
+        id: "thread-2",
+        messages: [],
+        sectionId: "root/intro",
+        startOffsetUtf16: 8,
+        status: "resolved",
+        version: 4,
+      },
+    ]);
+  });
+
   it("builds codemirror decoration ranges from threads", () => {
     const ranges = commentRangesFromThreads([
       {

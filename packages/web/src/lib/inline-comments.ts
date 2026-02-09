@@ -24,8 +24,10 @@ export interface InlineCommentThread {
   endOffsetUtf16: number;
   id: string;
   messages: InlineCommentMessage[];
+  sectionId?: string | null;
   startOffsetUtf16: number;
   status: "open" | "resolved";
+  version?: number;
 }
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -140,6 +142,8 @@ function normalizeInlineCommentThread(
   const statusRaw = readString(threadRecord, ["status"]) ?? "open";
   const status: InlineCommentThread["status"] =
     statusRaw === "resolved" ? "resolved" : "open";
+  const sectionId = readString(threadRecord, ["sectionId", "section_id"]);
+  const version = readNumber(threadRecord, ["version"]);
 
   const messages = normalizeInlineCommentMessages(
     record.messages ?? record.message ?? threadRecord.messages,
@@ -149,8 +153,10 @@ function normalizeInlineCommentThread(
     endOffsetUtf16,
     id,
     messages,
+    ...(sectionId !== null ? { sectionId } : {}),
     startOffsetUtf16,
     status,
+    ...(version !== null ? { version } : {}),
   };
 }
 
@@ -318,10 +324,10 @@ export function toThreadWithMessages(
           ? (thread.messages[thread.messages.length - 1]?.createdAt ??
             UNKNOWN_COMMENT_TIMESTAMP)
           : null,
-      sectionId: null,
+      sectionId: thread.sectionId ?? null,
       startOffsetUtf16: thread.startOffsetUtf16,
       status: thread.status,
-      version: 1,
+      version: thread.version ?? 1,
     },
   };
 }
@@ -335,7 +341,9 @@ export function toInlineCommentThread(
     messages: threadWithMessages.messages.map((message) =>
       toInlineCommentMessage(message),
     ),
+    sectionId: threadWithMessages.thread.sectionId ?? null,
     startOffsetUtf16: threadWithMessages.thread.startOffsetUtf16,
     status: threadWithMessages.thread.status,
+    version: threadWithMessages.thread.version,
   };
 }
