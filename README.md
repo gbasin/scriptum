@@ -233,28 +233,66 @@ For full GitHub OAuth app setup (including callback URL, required env vars, Dock
 
 `@scriptum/mcp-server` ships a `scriptum-mcp` CLI for stdio MCP clients.
 
+Prerequisite:
+- Scriptum daemon must be running locally (`scriptumd`).
+- Quick check: `scriptum status`.
+
+Install globally:
+
+```bash
+npm install -g @scriptum/mcp-server
+```
+
+Or run without global install:
+
 ```bash
 npx -y @scriptum/mcp-server
 ```
 
-Claude Code MCP config:
+Local repo path (without npm publish):
+
+```bash
+pnpm --filter @scriptum/mcp-server run build
+node packages/mcp-server/dist/index.js
+```
+
+Verify the MCP server entrypoint:
+
+```bash
+scriptum-mcp
+```
+
+`scriptum-mcp` should start and wait on stdio for MCP handshake input.
+
+### Claude Code
+
+Add to `.claude/settings.json`:
 
 ```json
 {
-  "mcpServers": {
+  "mcp_servers": {
     "scriptum": {
-      "command": "npx",
-      "args": ["-y", "@scriptum/mcp-server"]
+      "command": "scriptum-mcp",
+      "args": []
     }
   }
 }
 ```
 
-Local repo config (without npm publish):
+If your MCP client expects camelCase keys instead of snake_case, use `mcpServers`.
+
+### Cursor
+
+In Cursor, open MCP settings and add a stdio server:
+- Name: `scriptum`
+- Command: `scriptum-mcp`
+- Args: none (or `["-y", "@scriptum/mcp-server"]` when using `npx`)
+
+### Local Path Config
 
 ```json
 {
-  "mcpServers": {
+  "mcp_servers": {
     "scriptum": {
       "command": "node",
       "args": ["/absolute/path/to/scriptum/packages/mcp-server/dist/index.js"]
@@ -262,6 +300,29 @@ Local repo config (without npm publish):
   }
 }
 ```
+
+### Available Tools
+
+- `scriptum_read`
+- `scriptum_edit`
+- `scriptum_list`
+- `scriptum_tree`
+- `scriptum_status`
+- `scriptum_conflicts`
+- `scriptum_agents`
+- `scriptum_claim`
+- `scriptum_bundle`
+- `scriptum_subscribe`
+- `scriptum_history`
+
+### Available Resources
+
+- `scriptum://workspace`
+- `scriptum://agents`
+- `scriptum://docs/{id}`
+- `scriptum://docs/{id}/sections`
+
+Note: `scriptum://docs/{id}` and `scriptum://docs/{id}/sections` are resource templates resolved by document ID.
 
 ## License
 
