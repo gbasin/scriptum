@@ -28,15 +28,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      SCRIPTUM_RELAY_HOST: 0.0.0.0
-      SCRIPTUM_RELAY_PORT: "8080"
+      SCRIPTUM_RELAY_HOST: ${RELAY_HOST:-0.0.0.0}
+      SCRIPTUM_RELAY_PORT: "${RELAY_PORT:-8080}"
       SCRIPTUM_RELAY_DATABASE_URL: ${DATABASE_URL:-postgres://scriptum:scriptum@postgres:5432/scriptum}
       SCRIPTUM_RELAY_JWT_SECRET: ${JWT_SECRET:-scriptum_local_development_jwt_secret_must_be_32_chars}
       SCRIPTUM_RELAY_GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-scriptum-dev-github-client-id}
       SCRIPTUM_RELAY_GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-scriptum-dev-github-client-secret}
-      SCRIPTUM_RELAY_WS_BASE_URL: ${SCRIPTUM_RELAY_WS_BASE_URL:-ws://localhost:8080}
-      SCRIPTUM_RELAY_SHARE_LINK_BASE_URL: ${SCRIPTUM_RELAY_SHARE_LINK_BASE_URL:-http://localhost:3000/share}
-      SCRIPTUM_RELAY_LOG_FILTER: info
+      SCRIPTUM_RELAY_WS_BASE_URL: ${WS_BASE_URL:-ws://localhost:8080}
+      SCRIPTUM_RELAY_SHARE_LINK_BASE_URL: ${SHARE_LINK_BASE_URL:-http://localhost:3000/share}
+      SCRIPTUM_RELAY_LOG_FILTER: ${LOG_FILTER:-info}
       RUST_LOG: info
     ports:
       - "8080:8080"
