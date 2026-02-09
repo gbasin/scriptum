@@ -64,7 +64,9 @@ function isGitSyncPolicy(value: string): value is GitSyncPolicy {
   return value === "disabled" || value === "manual" || value === "auto_rebase";
 }
 
-function gitSyncFormFromWorkspaceConfig(config: WorkspaceConfig): GitSyncFormState {
+function gitSyncFormFromWorkspaceConfig(
+  config: WorkspaceConfig,
+): GitSyncFormState {
   return {
     remoteUrl: "origin",
     branch: "main",
@@ -417,7 +419,9 @@ export function SettingsRoute() {
     setInviteError(null);
     setInviteNotice(null);
     try {
-      await updateMember(activeWorkspace.id, member.user_id, { role: nextRole });
+      await updateMember(activeWorkspace.id, member.user_id, {
+        role: nextRole,
+      });
       setInviteNotice("Member role updated.");
       await loadMembersForActiveWorkspace();
     } catch (error: unknown) {
@@ -435,7 +439,9 @@ export function SettingsRoute() {
       await removeMember(activeWorkspace.id, member.user_id);
       setPendingRemoveMemberId(null);
       setInviteNotice(
-        memberStatus(member) === "invited" ? "Pending invite revoked." : "Member removed.",
+        memberStatus(member) === "invited"
+          ? "Pending invite revoked."
+          : "Member removed.",
       );
       await loadMembersForActiveWorkspace();
     } catch (error: unknown) {
@@ -630,7 +636,10 @@ export function SettingsRoute() {
             data-testid="settings-form-git-sync"
           >
             <legend className={styles.legend}>Git Sync</legend>
-            <div className={styles.statusGrid} data-testid="settings-git-sync-state">
+            <div
+              className={styles.statusGrid}
+              data-testid="settings-git-sync-state"
+            >
               <p className={styles.statusRow}>
                 <span className={styles.statusLabel}>Remote</span>
                 <span data-testid="settings-git-sync-state-remote">
@@ -675,17 +684,26 @@ export function SettingsRoute() {
               </p>
             </div>
             {gitSyncLoading ? (
-              <p className={styles.helperText} data-testid="settings-git-sync-loading">
+              <p
+                className={styles.helperText}
+                data-testid="settings-git-sync-loading"
+              >
                 Loading Git Sync settings from daemon…
               </p>
             ) : null}
             {gitSyncError ? (
-              <p className={styles.errorText} data-testid="settings-git-sync-error">
+              <p
+                className={styles.errorText}
+                data-testid="settings-git-sync-error"
+              >
                 {gitSyncError}
               </p>
             ) : null}
             {gitSyncNotice ? (
-              <p className={styles.successText} data-testid="settings-git-sync-notice">
+              <p
+                className={styles.successText}
+                data-testid="settings-git-sync-notice"
+              >
                 {gitSyncNotice}
               </p>
             ) : null}
@@ -933,7 +951,9 @@ export function SettingsRoute() {
                   className={controls.selectInput}
                   data-testid="settings-permissions-invite-role"
                   onChange={(event) =>
-                    setInviteRole(event.target.value === "viewer" ? "viewer" : "editor")
+                    setInviteRole(
+                      event.target.value === "viewer" ? "viewer" : "editor",
+                    )
                   }
                   value={inviteRole}
                 >
@@ -1015,9 +1035,7 @@ export function SettingsRoute() {
                       >
                         <div className={styles.memberIdentity}>
                           <strong>{member.email}</strong>
-                          <span className={styles.memberMeta}>
-                            {status}
-                          </span>
+                          <span className={styles.memberMeta}>{status}</span>
                         </div>
                         <div className={styles.memberControls}>
                           <label className={controls.field}>
@@ -1033,7 +1051,9 @@ export function SettingsRoute() {
                                     : "editor";
                                 void handleUpdateMemberRole(member, nextRole);
                               }}
-                              value={member.role === "viewer" ? "viewer" : "editor"}
+                              value={
+                                member.role === "viewer" ? "viewer" : "editor"
+                              }
                             >
                               <option value="editor">editor</option>
                               <option value="viewer">viewer</option>
@@ -1091,7 +1111,9 @@ export function SettingsRoute() {
                               onClick={() => setPendingRemoveMemberId(memberId)}
                               type="button"
                             >
-                              {status === "invited" ? "Revoke invite" : "Remove member"}
+                              {status === "invited"
+                                ? "Revoke invite"
+                                : "Remove member"}
                             </button>
                           )}
                         </div>

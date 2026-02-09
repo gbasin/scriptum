@@ -11,7 +11,7 @@ import {
   refreshAccessToken as refreshAccessTokenFromAuth,
   startGitHubOAuth as startGitHubOAuthFromAuth,
 } from "../lib/auth";
-import { isTauri } from "../lib/tauri-auth";
+import { isTauri, performTauriLogin } from "../lib/tauri-auth";
 import { type AuthStatus, type AuthStore, useAuthStore } from "../store/auth";
 import { type LocalIdentity, useRuntimeStore } from "../store/runtime";
 
@@ -218,7 +218,6 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
 
       try {
         if (isTauri()) {
-          const { performTauriLogin } = await import("../lib/tauri-auth");
           const session = await performTauriLogin(auth);
           setAuthenticated(store, session);
           return;

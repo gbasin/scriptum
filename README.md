@@ -207,7 +207,6 @@ pnpm coverage             # Run TS + Rust coverage
 pnpm lint                 # Lint (Biome)
 pnpm test:ui:smoke        # Playwright smoke tests
 pnpm ci:precommit         # Parallel pre-commit checks (lint + typecheck + all tests)
-pnpm ci:fast              # Fast CI pipeline (lint + TS tests, no Rust)
 ```
 
 Rust coverage requires `cargo-llvm-cov`:

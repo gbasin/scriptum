@@ -5,14 +5,50 @@
   "import_dialog_event": "scriptum://dialog/import-selected",
   "export_dialog_event": "scriptum://dialog/export-selected",
   "items": [
-    { "id": "menu.new-document",      "frontend_action": "new-document",      "shortcut": "CmdOrCtrl+N" },
-    { "id": "menu.save-document",     "frontend_action": "save-document",     "shortcut": "CmdOrCtrl+S" },
-    { "id": "menu.import-markdown",   "frontend_action": "import-markdown",   "shortcut": null },
-    { "id": "menu.export-markdown",   "frontend_action": "export-markdown",   "shortcut": null },
-    { "id": "menu.close-window",      "frontend_action": "close-window",      "shortcut": "CmdOrCtrl+W" },
-    { "id": "menu.quit-app",          "frontend_action": "quit-app",          "shortcut": "CmdOrCtrl+Q" },
-    { "id": "menu.toggle-fullscreen", "frontend_action": "toggle-fullscreen", "shortcut": "F11" },
-    { "id": "menu.open-help",         "frontend_action": "open-help",         "shortcut": null },
-    { "id": "menu.open-about",        "frontend_action": "open-about",        "shortcut": null }
+    {
+      "id": "menu.new-document",
+      "frontend_action": "new-document",
+      "shortcut": "CmdOrCtrl+N"
+    },
+    {
+      "id": "menu.save-document",
+      "frontend_action": "save-document",
+      "shortcut": "CmdOrCtrl+S"
+    },
+    {
+      "id": "menu.import-markdown",
+      "frontend_action": "import-markdown",
+      "shortcut": null
+    },
+    {
+      "id": "menu.export-markdown",
+      "frontend_action": "export-markdown",
+      "shortcut": null
+    },
+    {
+      "id": "menu.close-window",
+      "frontend_action": "close-window",
+      "shortcut": "CmdOrCtrl+W"
+    },
+    {
+      "id": "menu.quit-app",
+      "frontend_action": "quit-app",
+      "shortcut": "CmdOrCtrl+Q"
+    },
+    {
+      "id": "menu.toggle-fullscreen",
+      "frontend_action": "toggle-fullscreen",
+      "shortcut": "F11"
+    },
+    {
+      "id": "menu.open-help",
+      "frontend_action": "open-help",
+      "shortcut": null
+    },
+    {
+      "id": "menu.open-about",
+      "frontend_action": "open-about",
+      "shortcut": null
+    }
   ]
 }

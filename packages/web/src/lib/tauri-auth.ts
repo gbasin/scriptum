@@ -116,11 +116,10 @@ export function listenForDeepLinkCallback(options?: {
               const urls = event.payload;
               if (!urls || urls.length === 0) return;
 
-              const payload =
-                await coreApi.invoke<TauriOAuthCallbackPayload>(
-                  TAURI_AUTH_COMMANDS.AUTH_PARSE_CALLBACK,
-                  { url: urls[0] },
-                );
+              const payload = await coreApi.invoke<TauriOAuthCallbackPayload>(
+                TAURI_AUTH_COMMANDS.AUTH_PARSE_CALLBACK,
+                { url: urls[0] },
+              );
 
               if (payload.error) {
                 cleanup();

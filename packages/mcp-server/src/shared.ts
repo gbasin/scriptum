@@ -1,5 +1,5 @@
-import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { AnySchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import { CallToolRequestParamsSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import type { DaemonClient } from "./daemon-client.js";

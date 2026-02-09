@@ -564,7 +564,7 @@ export function DocumentTree({
   );
   const [editingPath, setEditingPath] = useState("");
   const consumedPendingRenameIdRef = useRef<string | null>(null);
-  const treeRef = useRef<HTMLUListElement | null>(null);
+  const treeRef = useRef<HTMLDivElement | null>(null);
   const orderedTree = useMemo(
     () => applyPreferredOrder(tree, preferredOrderByParent),
     [preferredOrderByParent, tree],
@@ -777,7 +777,7 @@ export function DocumentTree({
   );
 
   const handleTreeKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLUListElement>) => {
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (editingDocumentId || visibleTreeNodes.length === 0) {
         return;
       }
@@ -915,15 +915,9 @@ export function DocumentTree({
     );
   }
 
-  return (
-    <nav aria-label="Document tree" data-testid="document-tree">
-      {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: role="tree" is correct for ARIA tree widget */}
-      <ul
-        className={styles.tree}
-        onKeyDown={handleTreeKeyDown}
-        ref={treeRef}
-        role="tree"
-      >
+  const treeView = (
+    <div onKeyDown={handleTreeKeyDown} ref={treeRef} role="tree">
+      <ul className={styles.tree}>
         {orderedTree.map((node) => (
           <TreeNodeItem
             activeDocumentId={activeDocumentId}
@@ -954,6 +948,12 @@ export function DocumentTree({
           />
         ))}
       </ul>
+    </div>
+  );
+
+  return (
+    <nav aria-label="Document tree" data-testid="document-tree">
+      {treeView}
     </nav>
   );
 }

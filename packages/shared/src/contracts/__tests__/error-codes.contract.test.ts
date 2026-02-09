@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ERROR_CODES } from "../error-codes";
@@ -14,9 +14,7 @@ const contract = JSON.parse(
 
 describe("error-codes contract", () => {
   it("ERROR_CODES keys match contract codes", () => {
-    const contractCodes = (
-      contract.codes as Array<{ code: string }>
-    )
+    const contractCodes = (contract.codes as Array<{ code: string }>)
       .map((c) => c.code)
       .sort();
     expect(Object.values(ERROR_CODES).sort()).toEqual(contractCodes);

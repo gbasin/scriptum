@@ -282,7 +282,10 @@ describe("SettingsRoute", () => {
         "value",
       )?.set;
       if (remoteInput) {
-        setInputValue?.call(remoteInput, "https://github.com/scriptum/project.git");
+        setInputValue?.call(
+          remoteInput,
+          "https://github.com/scriptum/project.git",
+        );
         remoteInput.dispatchEvent(new Event("change", { bubbles: true }));
       }
       if (branchInput) {
@@ -296,7 +299,9 @@ describe("SettingsRoute", () => {
       aiCommitToggle?.click();
       if (commitIntervalInput) {
         setInputValue?.call(commitIntervalInput, "45");
-        commitIntervalInput.dispatchEvent(new Event("change", { bubbles: true }));
+        commitIntervalInput.dispatchEvent(
+          new Event("change", { bubbles: true }),
+        );
       }
     });
 
@@ -313,7 +318,9 @@ describe("SettingsRoute", () => {
       aiCommitEnabled: false,
       commitIntervalSeconds: 45,
     });
-    expect(useWorkspaceStore.getState().activeWorkspace?.config?.gitSync.enabled).toBe(true);
+    expect(
+      useWorkspaceStore.getState().activeWorkspace?.config?.gitSync.enabled,
+    ).toBe(true);
     expect(
       useWorkspaceStore.getState().activeWorkspace?.config?.gitSync
         .autoCommitIntervalSeconds,
@@ -392,7 +399,9 @@ describe("SettingsRoute", () => {
     const errorMessage = container.querySelector(
       '[data-testid="settings-git-sync-error"]',
     );
-    expect(errorMessage?.textContent).toContain("Unable to connect to daemon RPC");
+    expect(errorMessage?.textContent).toContain(
+      "Unable to connect to daemon RPC",
+    );
 
     act(() => {
       root.unmount();

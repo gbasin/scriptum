@@ -14,7 +14,6 @@
     "coverage:rust": "scripts/ci/rust-coverage.sh",
     "ci:job": "scripts/ci/pipeline.sh",
     "ci:precommit": "scripts/ci/pipeline.sh precommit",
-    "ci:fast": "scripts/ci/pipeline.sh fast",
     "ci:full": "scripts/ci/pipeline.sh full",
     "test:ui:smoke": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --grep @smoke",
     "test:ui": "pnpm exec playwright test -c tests/e2e/playwright.config.mts",

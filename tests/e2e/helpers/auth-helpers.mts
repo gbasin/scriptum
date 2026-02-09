@@ -1,7 +1,7 @@
 // Shared auth test helpers — mock data, relay interceptor, session injection.
 
 import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page, Route } from "@playwright/test";
 
@@ -158,10 +158,7 @@ export async function injectSession(
       localStorage.setItem(keys.access_token, tokens.access_token);
       localStorage.setItem(keys.access_expires_at, tokens.access_expires_at);
       localStorage.setItem(keys.refresh_token, tokens.refresh_token);
-      localStorage.setItem(
-        keys.refresh_expires_at,
-        tokens.refresh_expires_at,
-      );
+      localStorage.setItem(keys.refresh_expires_at, tokens.refresh_expires_at);
       localStorage.setItem(keys.user, JSON.stringify(user));
     },
     { tokens, user, keys: SK },

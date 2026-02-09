@@ -34,12 +34,12 @@ import { useScriptumEditor } from "../hooks/useScriptumEditor";
 import { useToast } from "../hooks/useToast";
 import {
   addCommentMessage as addCommentMessageApi,
-  createComment as createCommentApi,
   type CreateCommentInput,
+  createComment as createCommentApi,
+  createShareLink as createShareLinkApi,
   listComments as listCommentsApi,
   reopenCommentThread as reopenCommentThreadApi,
   resolveCommentThread as resolveCommentThreadApi,
-  createShareLink as createShareLinkApi,
 } from "../lib/api-client";
 import {
   buildOpenDocumentTabs,
@@ -903,7 +903,8 @@ export function DocumentRoute() {
     }
 
     return {
-      message: optimistic.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
+      message:
+        optimistic.messages[0] ?? toCommentMessage(nextMessage, nextThread.id),
       thread: optimistic.thread,
     };
   };

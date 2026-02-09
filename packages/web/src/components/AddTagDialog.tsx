@@ -56,7 +56,6 @@ export function AddTagDialog({
               Tag
             </label>
             <input
-              autoFocus
               className={`${controls.textInput} ${styles.tagInput}`}
               data-testid="add-tag-input"
               id="add-tag-input"

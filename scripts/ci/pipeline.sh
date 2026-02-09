@@ -24,7 +24,6 @@ Targets:
   compatibility-json-rpc
   load-relay-websocket
   precommit
-  fast
   full
 USAGE
 }
@@ -173,11 +172,6 @@ case "$target" in
       exit 1
     fi
     log "Pre-commit checks passed"
-    ;;
-
-  fast)
-    run "$0" lint
-    run "$0" test-ts
     ;;
 
   full)

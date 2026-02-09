@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -15,8 +15,7 @@ const contract = JSON.parse(
     "utf-8",
   ),
 );
-const MCP_TO_DAEMON_CONTRACT: Record<string, string> =
-  contract.mcp_to_daemon;
+const MCP_TO_DAEMON_CONTRACT: Record<string, string> = contract.mcp_to_daemon;
 
 describe("mcp tool contract", () => {
   it("exposes the exact tool set expected by the daemon RPC contract", async () => {

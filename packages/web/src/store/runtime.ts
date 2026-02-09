@@ -73,7 +73,8 @@ function slugifyLocalIdentity(value: string): string {
 }
 
 function toLocalIdentity(name: string): LocalIdentity {
-  const displayName = name.trim().length > 0 ? name.trim() : LOCAL_IDENTITY_FALLBACK_NAME;
+  const displayName =
+    name.trim().length > 0 ? name.trim() : LOCAL_IDENTITY_FALLBACK_NAME;
   const slug = slugifyLocalIdentity(displayName);
   return {
     id: `local-${slug}`,
@@ -184,7 +185,9 @@ async function resolveLocalIdentity(): Promise<LocalIdentity> {
 
 async function resolveRuntimeMode(): Promise<RuntimeMode> {
   if (
-    parseBooleanEnv(import.meta.env.VITE_SCRIPTUM_LOCAL_MODE as string | undefined)
+    parseBooleanEnv(
+      import.meta.env.VITE_SCRIPTUM_LOCAL_MODE as string | undefined,
+    )
   ) {
     return "local";
   }

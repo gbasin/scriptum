@@ -274,7 +274,9 @@ export async function callDaemonRpc<M extends RpcMethod>(
   });
 }
 
-function normalizeGitStatusResult(status: GitStatusResult): GitSyncSettingsSnapshot {
+function normalizeGitStatusResult(
+  status: GitStatusResult,
+): GitSyncSettingsSnapshot {
   const commitInterval =
     status.commit_interval_seconds ?? status.commit_interval_sec ?? 30;
 
@@ -286,10 +288,10 @@ function normalizeGitStatusResult(status: GitStatusResult): GitSyncSettingsSnaps
       typeof status.ai_configured === "boolean"
         ? status.ai_configured
         : typeof status.ai_commit_enabled === "boolean"
-        ? status.ai_commit_enabled
-        : typeof status.ai_enabled === "boolean"
-          ? status.ai_enabled
-          : true,
+          ? status.ai_commit_enabled
+          : typeof status.ai_enabled === "boolean"
+            ? status.ai_enabled
+            : true,
     commitIntervalSeconds: asPositiveInteger(commitInterval, 30),
     dirty: Boolean(status.dirty),
     ahead: asFiniteNumber(status.ahead, 0),
@@ -347,7 +349,10 @@ export async function configureGitSyncSettings(
     branch: settings.branch.trim() || "main",
     pushPolicy: settings.pushPolicy,
     aiCommitEnabled: settings.aiCommitEnabled,
-    commitIntervalSeconds: asPositiveInteger(settings.commitIntervalSeconds, 30),
+    commitIntervalSeconds: asPositiveInteger(
+      settings.commitIntervalSeconds,
+      30,
+    ),
   };
 
   const result = await callDaemonRpc(
