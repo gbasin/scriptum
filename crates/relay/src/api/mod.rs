@@ -783,8 +783,10 @@ async fn update_share_link(
 async fn revoke_share_link(
     State(state): State<ApiState>,
     Path((workspace_id, share_link_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    state.store.revoke_share_link(workspace_id, share_link_id).await?;
+    let if_match = extract_if_match(&headers)?;
+    state.store.revoke_share_link(workspace_id, share_link_id, if_match).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1044,11 +1046,14 @@ impl WorkspaceStore {
         &self,
         workspace_id: Uuid,
         share_link_id: Uuid,
+        if_match: &str,
     ) -> Result<(), ApiError> {
         match self {
-            Self::Postgres(pool) => revoke_share_link_pg(pool, workspace_id, share_link_id).await,
+            Self::Postgres(pool) => {
+                revoke_share_link_pg(pool, workspace_id, share_link_id, if_match).await
+            }
             Self::Memory(store) => {
-                revoke_share_link_memory(store, workspace_id, share_link_id).await
+                revoke_share_link_memory(store, workspace_id, share_link_id, if_match).await
             }
         }
     }
@@ -1480,7 +1485,16 @@ async fn revoke_share_link_pg(
     pool: &PgPool,
     workspace_id: Uuid,
     share_link_id: Uuid,
+    if_match: &str,
 ) -> Result<(), ApiError> {
+    let Some(current) = share_link_record_by_id_pg(pool, workspace_id, share_link_id).await? else {
+        return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    };
+
+    if !etag_matches(if_match, &current.etag()) {
+        return Err(ApiError::PreconditionFailed);
+    }
+
     let result = sqlx::query(
         r#"
         UPDATE share_links
@@ -1969,6 +1983,7 @@ async fn revoke_share_link_memory(
     store: &Arc<RwLock<MemoryWorkspaceStore>>,
     workspace_id: Uuid,
     share_link_id: Uuid,
+    if_match: &str,
 ) -> Result<(), ApiError> {
     let mut state = store.write().await;
     let Some(workspace) = state.workspaces.get(&workspace_id) else {
@@ -1983,6 +1998,22 @@ async fn revoke_share_link_memory(
     };
     if share_link.workspace_id != workspace_id {
         return Err(ApiError::not_found("SHARE_LINK_NOT_FOUND", "share link does not exist"));
+    }
+
+    let current = ShareLinkRecord {
+        id: share_link.id,
+        target_type: share_link.target_type.clone(),
+        target_id: share_link.target_id,
+        permission: share_link.permission.clone(),
+        expires_at: share_link.expires_at,
+        max_uses: share_link.max_uses,
+        use_count: share_link.use_count,
+        disabled: share_link.disabled,
+        created_at: share_link.created_at,
+        revoked_at: share_link.revoked_at,
+    };
+    if !etag_matches(if_match, &current.etag()) {
+        return Err(ApiError::PreconditionFailed);
     }
 
     share_link.disabled = true;
@@ -3200,6 +3231,41 @@ mod tests {
         assert!(!updated.share_link.disabled);
         assert_ne!(updated.share_link.etag, created.share_link.etag);
 
+        let revoke_missing_if_match = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("revoke share link should return response");
+        assert_eq!(revoke_missing_if_match.status(), StatusCode::PRECONDITION_REQUIRED);
+
+        let revoke_stale_if_match = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "\"stale\"")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("revoke share link should return response");
+        assert_eq!(revoke_stale_if_match.status(), StatusCode::PRECONDITION_FAILED);
+
         let revoke_response = router
             .clone()
             .oneshot(
@@ -3210,6 +3276,7 @@ mod tests {
                         created.share_link.id
                     ))
                     .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", &updated.share_link.etag)
                     .body(Body::empty())
                     .expect("request should build"),
             )
