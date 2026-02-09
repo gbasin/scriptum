@@ -11,20 +11,20 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
+use std::{fs, path::PathBuf};
 
 use super::triggers::{ChangeType, ChangedFile};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 /// System prompt instructing the LLM to generate conventional commit messages.
-pub const SYSTEM_PROMPT: &str = "\
-You are a commit message generator. Write a single conventional commit message.\n\
-Rules:\n\
-- First line: imperative mood, max 72 characters, format: type(scope): description\n\
-- Types: feat, fix, docs, refactor, test, chore, style, perf, ci\n\
-- Scope is optional; if used, derive from the primary file or module changed\n\
-- If a body is needed, add a blank line then a concise explanation (max 3 lines)\n\
-- Do not include file lists, diff details, or attribution in the message\n\
-- Output ONLY the commit message, nothing else";
+pub const SYSTEM_PROMPT: &str =
+    "Generate concise git commit (max 72 chars first line). Focus on WHAT and WHY.";
+
+pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-4-5-20250929";
+const DEFAULT_MAX_TOKENS: usize = 200;
+const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
 /// Redaction policy for AI commit message generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,6 +71,175 @@ pub trait AiCommitClient: Send + Sync {
         system: &str,
         user_prompt: &str,
     ) -> Pin<Box<dyn Future<Output = Result<String, AiCommitError>> + Send>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct AnthropicCommitClient {
+    http: reqwest::Client,
+    api_url: String,
+    api_key: Option<String>,
+    model: String,
+    max_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicMessageRequest {
+    model: String,
+    max_tokens: usize,
+    system: String,
+    messages: Vec<AnthropicMessage>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicMessage {
+    role: &'static str,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicMessageResponse {
+    #[serde(default)]
+    content: Vec<AnthropicContentBlock>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicContentBlock {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+impl Default for AnthropicCommitClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnthropicCommitClient {
+    pub fn new() -> Self {
+        let model = crate::config::GlobalConfig::load()
+            .ai
+            .model
+            .as_deref()
+            .and_then(trimmed_non_empty)
+            .unwrap_or_else(|| DEFAULT_ANTHROPIC_MODEL.to_string());
+
+        Self {
+            http: reqwest::Client::new(),
+            api_url: ANTHROPIC_API_URL.to_string(),
+            api_key: resolve_api_key(),
+            model,
+            max_tokens: DEFAULT_MAX_TOKENS,
+        }
+    }
+}
+
+impl AiCommitClient for AnthropicCommitClient {
+    fn generate(
+        &self,
+        system: &str,
+        user_prompt: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, AiCommitError>> + Send>> {
+        let http = self.http.clone();
+        let api_url = self.api_url.clone();
+        let api_key = self.api_key.clone();
+        let model = self.model.clone();
+        let system = system.to_string();
+        let user_prompt = user_prompt.to_string();
+        let max_tokens = self.max_tokens;
+
+        Box::pin(async move {
+            let api_key = api_key.ok_or_else(|| {
+                AiCommitError::ClientError(
+                    "Anthropic API key not configured (set ANTHROPIC_API_KEY or [ai].api_key)"
+                        .to_string(),
+                )
+            })?;
+
+            let request = AnthropicMessageRequest {
+                model,
+                max_tokens,
+                system,
+                messages: vec![AnthropicMessage { role: "user", content: user_prompt }],
+            };
+
+            let response = http
+                .post(api_url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", ANTHROPIC_API_VERSION)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .json(&request)
+                .send()
+                .await
+                .map_err(|error| {
+                    AiCommitError::ClientError(format!("failed to call Anthropic API: {error}"))
+                })?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                let detail = if body.trim().is_empty() {
+                    format!("status {status}")
+                } else {
+                    let trimmed = body.trim();
+                    let truncated = if trimmed.len() > 240 {
+                        format!("{}...", &trimmed[..240])
+                    } else {
+                        trimmed.to_string()
+                    };
+                    format!("status {status}: {truncated}")
+                };
+                return Err(AiCommitError::ClientError(format!(
+                    "Anthropic API returned error ({detail})"
+                )));
+            }
+
+            let payload: AnthropicMessageResponse = response.json().await.map_err(|error| {
+                AiCommitError::ClientError(format!(
+                    "failed to decode Anthropic response payload: {error}"
+                ))
+            })?;
+
+            for block in payload.content {
+                if block.kind == "text" {
+                    if let Some(text) = block.text.as_deref().and_then(trimmed_non_empty) {
+                        return Ok(text);
+                    }
+                }
+            }
+
+            Err(AiCommitError::EmptyResponse)
+        })
+    }
+}
+
+fn resolve_api_key() -> Option<String> {
+    std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .as_deref()
+        .and_then(trimmed_non_empty)
+        .or_else(|| api_key_from_config_file())
+}
+
+fn api_key_from_config_file() -> Option<String> {
+    let path: PathBuf = crate::config::global_config_path()?;
+    let contents = fs::read_to_string(path).ok()?;
+    let parsed: toml::Value = toml::from_str(&contents).ok()?;
+    parsed
+        .get("ai")
+        .and_then(|ai| ai.get("api_key"))
+        .and_then(toml::Value::as_str)
+        .and_then(trimmed_non_empty)
+}
+
+fn trimmed_non_empty(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 /// Build the user prompt from the diff summary and changed files.
@@ -272,7 +441,15 @@ fn enforce_first_line_limit(message: &str, max_len: usize) -> String {
 mod tests {
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
+
+    use axum::{
+        http::{HeaderMap, StatusCode},
+        routing::post,
+        Json, Router,
+    };
+    use serde_json::json;
+    use tokio::sync::oneshot;
 
     use super::*;
 
@@ -335,6 +512,130 @@ mod tests {
                 change_type: ChangeType::Added,
             },
         ]
+    }
+
+    #[derive(Debug)]
+    struct CapturedAnthropicCall {
+        x_api_key: Option<String>,
+        anthropic_version: Option<String>,
+        content_type: Option<String>,
+        body: serde_json::Value,
+    }
+
+    // ── AnthropicCommitClient ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn anthropic_client_posts_expected_request_format() {
+        let (tx, rx) = oneshot::channel::<CapturedAnthropicCall>();
+        let sender = Arc::new(Mutex::new(Some(tx)));
+
+        let app = Router::new().route(
+            "/v1/messages",
+            post({
+                let sender = Arc::clone(&sender);
+                move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                    let sender = Arc::clone(&sender);
+                    async move {
+                        if let Some(tx) =
+                            sender.lock().expect("sender lock should not be poisoned").take()
+                        {
+                            let _ = tx.send(CapturedAnthropicCall {
+                                x_api_key: headers
+                                    .get("x-api-key")
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_string),
+                                anthropic_version: headers
+                                    .get("anthropic-version")
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_string),
+                                content_type: headers
+                                    .get("content-type")
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_string),
+                                body,
+                            });
+                        }
+
+                        (
+                            StatusCode::OK,
+                            Json(json!({
+                                "content": [
+                                    { "type": "text", "text": "docs: refresh auth guide" }
+                                ]
+                            })),
+                        )
+                    }
+                }
+            }),
+        );
+
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener should bind");
+        let address = listener.local_addr().expect("listener should expose address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("mock anthropic server should run");
+        });
+
+        let client = AnthropicCommitClient {
+            http: reqwest::Client::new(),
+            api_url: format!("http://{address}/v1/messages"),
+            api_key: Some("sk-ant-local-test".to_string()),
+            model: DEFAULT_ANTHROPIC_MODEL.to_string(),
+            max_tokens: DEFAULT_MAX_TOKENS,
+        };
+        let prompt =
+            build_prompt("@@ -1 +1 @@\n+docs update", &test_files(), RedactionPolicy::Full);
+        let message =
+            client.generate(SYSTEM_PROMPT, &prompt).await.expect("anthropic call should succeed");
+
+        assert_eq!(message, "docs: refresh auth guide");
+
+        let captured = rx.await.expect("request should be captured");
+        assert_eq!(captured.x_api_key.as_deref(), Some("sk-ant-local-test"));
+        assert_eq!(captured.anthropic_version.as_deref(), Some(ANTHROPIC_API_VERSION));
+        assert!(captured
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("application/json")));
+        assert_eq!(captured.body["model"], DEFAULT_ANTHROPIC_MODEL);
+        assert_eq!(captured.body["max_tokens"], DEFAULT_MAX_TOKENS);
+        assert_eq!(captured.body["system"], SYSTEM_PROMPT);
+        assert_eq!(captured.body["messages"][0]["role"], "user");
+        assert!(captured.body["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|value| value.contains("Changed files:")));
+
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn anthropic_client_failure_uses_structured_fallback() {
+        let client = AnthropicCommitClient {
+            http: reqwest::Client::new(),
+            api_url: "http://127.0.0.1:1/v1/messages".to_string(),
+            api_key: Some("sk-ant-local-test".to_string()),
+            model: DEFAULT_ANTHROPIC_MODEL.to_string(),
+            max_tokens: DEFAULT_MAX_TOKENS,
+        };
+        let files = vec![
+            ChangedFile {
+                path: "docs/b.md".into(),
+                doc_id: None,
+                change_type: ChangeType::Modified,
+            },
+            ChangedFile { path: "docs/a.md".into(), doc_id: None, change_type: ChangeType::Added },
+        ];
+
+        let message = generate_commit_message_with_fallback(
+            &client,
+            "@@ -1 +1 @@\n+new content",
+            &files,
+            RedactionPolicy::Full,
+        )
+        .await;
+
+        assert_eq!(message, "Update 2 file(s): docs/a.md, docs/b.md");
     }
 
     // ── generate_ai_commit_message ────────────────────────────────────
