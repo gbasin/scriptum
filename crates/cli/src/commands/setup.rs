@@ -243,7 +243,10 @@ set -euo pipefail
 # Parse the tool input to check if target is a .md file.
 # Claude Code passes tool input as JSON via stdin.
 INPUT=$(cat)
-FILE=$(echo "$INPUT" | grep -oP '"file_path"\s*:\s*"[^"]*\.md"' || true)
+NORMALIZED=$(printf '%s' "$INPUT" | tr '\n' ' ')
+FILE=$(printf '%s\n' "$NORMALIZED" \
+    | sed -nE 's/.*"file_path"[[:space:]]*:[[:space:]]*"([^"]*\.md)".*/\1/p' \
+    | head -n 1)
 
 if [ -n "$FILE" ]; then
     echo "⚠ Scriptum: Direct .md edit detected."
@@ -264,7 +267,10 @@ set -euo pipefail
 
 # Parse tool input for .md file path.
 INPUT=$(cat)
-FILE=$(echo "$INPUT" | grep -oP '"file_path"\s*:\s*"[^"]*\.md"' || true)
+NORMALIZED=$(printf '%s' "$INPUT" | tr '\n' ' ')
+FILE=$(printf '%s\n' "$NORMALIZED" \
+    | sed -nE 's/.*"file_path"[[:space:]]*:[[:space:]]*"([^"]*\.md)".*/\1/p' \
+    | head -n 1)
 
 if [ -n "$FILE" ]; then
     echo "Scriptum: File watcher will sync this change to CRDT."
@@ -304,6 +310,8 @@ fi
 echo ""
 echo "Overlap check:"
 scriptum conflicts 2>/dev/null || echo "  (no conflicts or daemon not running)"
+echo ""
+echo "Reminder: your Scriptum agent state is preserved for the next session."
 "#,
         ),
     ]
@@ -558,6 +566,8 @@ mod tests {
     fn pre_tool_use_script_warns_about_overlaps_and_suggests_scriptum_edit() {
         let script = hook_script_text("pre-tool-use.sh");
         assert!(script.contains("file_path"), "should parse file_path from JSON");
+        assert!(script.contains("sed -nE"), "should use portable file path parsing");
+        assert!(!script.contains("grep -oP"), "should avoid non-portable grep -P");
         assert!(script.contains(".md"), "should detect .md files");
         assert!(script.contains("scriptum edit"), "should suggest scriptum edit for attribution");
         assert!(script.contains("scriptum conflicts"), "should check for section overlaps");
@@ -568,6 +578,8 @@ mod tests {
     fn post_tool_use_script_confirms_sync_and_reports_conflicts() {
         let script = hook_script_text("post-tool-use.sh");
         assert!(script.contains("file_path"), "should parse file_path from JSON");
+        assert!(script.contains("sed -nE"), "should use portable file path parsing");
+        assert!(!script.contains("grep -oP"), "should avoid non-portable grep -P");
         assert!(script.contains(".md"), "should detect .md files");
         assert!(script.contains("File watcher will sync"), "should confirm file watcher sync");
         assert!(script.contains("scriptum status"), "should suggest verifying sync status");
@@ -581,6 +593,10 @@ mod tests {
         assert!(script.contains("scriptum status"), "should check status for pending changes");
         assert!(script.contains("unsynced"), "should warn about unsynced changes");
         assert!(script.contains("scriptum conflicts"), "should check for overlaps at session end");
+        assert!(
+            script.contains("state is preserved"),
+            "should remind that agent state is preserved"
+        );
     }
 
     #[test]
