@@ -218,7 +218,9 @@ impl PasswordUserStore {
 #[derive(Clone)]
 pub struct OAuthState {
     flow_store: Arc<OAuthFlowStore>,
-    rate_limiter: Arc<OAuthStartRateLimiter>,
+    start_rate_limiter: Arc<SlidingWindowRateLimiter>,
+    callback_rate_limiter: Arc<SlidingWindowRateLimiter>,
+    refresh_rate_limiter: Arc<SlidingWindowRateLimiter>,
     github_client_id: String,
     github_client_secret: String,
     github_authorize_url: String,
@@ -306,11 +308,47 @@ impl OAuthState {
                 .filter(|value| *value > 0)
                 .unwrap_or(DEFAULT_RATE_LIMIT_MAX_REQUESTS);
 
+        let callback_rate_limit_window_secs =
+            env::var("SCRIPTUM_RELAY_OAUTH_CALLBACK_RATE_LIMIT_WINDOW_SECS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_RATE_LIMIT_WINDOW_SECS);
+
+        let callback_rate_limit_max_requests =
+            env::var("SCRIPTUM_RELAY_OAUTH_CALLBACK_RATE_LIMIT_MAX_REQUESTS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_RATE_LIMIT_MAX_REQUESTS);
+
+        let refresh_rate_limit_window_secs =
+            env::var("SCRIPTUM_RELAY_AUTH_REFRESH_RATE_LIMIT_WINDOW_SECS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_RATE_LIMIT_WINDOW_SECS);
+
+        let refresh_rate_limit_max_requests =
+            env::var("SCRIPTUM_RELAY_AUTH_REFRESH_RATE_LIMIT_MAX_REQUESTS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_RATE_LIMIT_MAX_REQUESTS);
+
         Self {
             flow_store: Arc::new(OAuthFlowStore::default()),
-            rate_limiter: Arc::new(OAuthStartRateLimiter::new(
+            start_rate_limiter: Arc::new(SlidingWindowRateLimiter::new(
                 rate_limit_max_requests,
                 StdDuration::from_secs(rate_limit_window_secs),
+            )),
+            callback_rate_limiter: Arc::new(SlidingWindowRateLimiter::new(
+                callback_rate_limit_max_requests,
+                StdDuration::from_secs(callback_rate_limit_window_secs),
+            )),
+            refresh_rate_limiter: Arc::new(SlidingWindowRateLimiter::new(
+                refresh_rate_limit_max_requests,
+                StdDuration::from_secs(refresh_rate_limit_window_secs),
             )),
             github_client_id,
             github_client_secret,
@@ -348,7 +386,18 @@ impl OAuthState {
     ) -> Self {
         Self {
             flow_store,
-            rate_limiter: Arc::new(OAuthStartRateLimiter::new(max_requests, rate_limit_window)),
+            start_rate_limiter: Arc::new(SlidingWindowRateLimiter::new(
+                max_requests,
+                rate_limit_window,
+            )),
+            callback_rate_limiter: Arc::new(SlidingWindowRateLimiter::new(
+                max_requests,
+                rate_limit_window,
+            )),
+            refresh_rate_limiter: Arc::new(SlidingWindowRateLimiter::new(
+                max_requests,
+                rate_limit_window,
+            )),
             github_client_id: "test-client-id".to_string(),
             github_client_secret: "test-client-secret".to_string(),
             github_authorize_url: DEFAULT_GITHUB_AUTH_URL.to_string(),
@@ -416,7 +465,7 @@ impl OAuthFlowStore {
 }
 
 #[derive(Debug)]
-struct OAuthStartRateLimiter {
+struct SlidingWindowRateLimiter {
     max_requests: usize,
     window: StdDuration,
     requests: RwLock<VecDeque<Instant>>,
@@ -428,7 +477,7 @@ enum RateLimitDecision {
     Limited { retry_after_secs: u64 },
 }
 
-impl OAuthStartRateLimiter {
+impl SlidingWindowRateLimiter {
     fn new(max_requests: usize, window: StdDuration) -> Self {
         Self { max_requests, window, requests: RwLock::new(VecDeque::new()) }
     }
@@ -504,7 +553,7 @@ async fn start_github_oauth(
     State(state): State<OAuthState>,
     ValidatedJson(payload): ValidatedJson<OAuthGithubStartRequest>,
 ) -> Result<Json<OAuthGithubStartResponse>, OAuthStartError> {
-    match state.rate_limiter.check().await {
+    match state.start_rate_limiter.check().await {
         RateLimitDecision::Allowed => {}
         RateLimitDecision::Limited { retry_after_secs } => {
             return Err(OAuthStartError::RateLimited { retry_after_secs });
@@ -870,12 +919,20 @@ impl IntoResponse for OAuthCallbackError {
     fn into_response(self) -> Response {
         match self {
             Self::Relay(error) => error.into_response(),
+            Self::RateLimited { retry_after_secs } => {
+                let mut response = RelayError::from_code(ErrorCode::RateLimited).into_response();
+                if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+                    response.headers_mut().insert(RETRY_AFTER, value);
+                }
+                response
+            }
         }
     }
 }
 
 enum OAuthCallbackError {
     Relay(RelayError),
+    RateLimited { retry_after_secs: u64 },
 }
 
 impl From<RelayError> for OAuthCallbackError {
@@ -888,6 +945,13 @@ async fn callback_github_oauth(
     State(state): State<OAuthState>,
     ValidatedJson(payload): ValidatedJson<OAuthGithubCallbackRequest>,
 ) -> Result<Json<AuthSessionResponse>, OAuthCallbackError> {
+    match state.callback_rate_limiter.check().await {
+        RateLimitDecision::Allowed => {}
+        RateLimitDecision::Limited { retry_after_secs } => {
+            return Err(OAuthCallbackError::RateLimited { retry_after_secs });
+        }
+    }
+
     // 1. Consume the flow (one-time use)
     let flow =
         state.flow_store.take(payload.flow_id).await.ok_or_else(|| {
@@ -969,6 +1033,10 @@ async fn handle_token_refresh(
     State(state): State<OAuthState>,
     ValidatedJson(payload): ValidatedJson<RefreshTokenRequest>,
 ) -> Result<Json<RefreshTokenResponse>, RelayError> {
+    if let RateLimitDecision::Limited { .. } = state.refresh_rate_limiter.check().await {
+        return Err(RelayError::from_code(ErrorCode::RateLimited));
+    }
+
     let token_hash = Sha256::digest(payload.refresh_token.as_bytes()).to_vec();
 
     let (session_id, session) = state
@@ -1421,6 +1489,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn callback_rate_limits_and_sets_retry_after_header() {
+        let flow_store = Arc::new(OAuthFlowStore::default());
+        let state = OAuthState::for_tests_with_exchange(
+            flow_store.clone(),
+            1,
+            StdDuration::from_secs(60),
+            Arc::new(MockGithubExchange),
+        );
+        let app = router(state);
+        let (code_verifier, code_challenge) = make_pkce_pair();
+        let flow_id = seed_flow(&flow_store, &code_challenge).await;
+
+        let payload = json!({
+            "flow_id": flow_id,
+            "code": "github-auth-code-123",
+            "state": "test-state-abc",
+            "code_verifier": code_verifier,
+        });
+
+        let first = app
+            .clone()
+            .oneshot(callback_request(payload.clone()))
+            .await
+            .expect("first callback should complete");
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .oneshot(callback_request(payload))
+            .await
+            .expect("second callback should complete");
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().get("retry-after").is_some());
+
+        let body = to_bytes(second.into_body(), usize::MAX).await.expect("body should read");
+        let parsed: Value = serde_json::from_slice(&body).expect("body should be JSON");
+        assert_eq!(parsed["error"]["code"], "RATE_LIMITED");
+    }
+
+    #[tokio::test]
     async fn password_register_and_login_issue_session_tokens() {
         let (app, _) = test_router(10);
         let register = app
@@ -1717,6 +1824,39 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let parsed: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed["error"]["code"], "AUTH_INVALID_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn refresh_rate_limits_requests() {
+        let flow_store = Arc::new(OAuthFlowStore::default());
+        let state = OAuthState::for_tests_with_exchange(
+            flow_store,
+            1,
+            StdDuration::from_secs(60),
+            Arc::new(MockGithubExchange),
+        );
+        let store = state.refresh_store().clone();
+        let app = router(state);
+        let user_id = Uuid::new_v4();
+        let family_id = Uuid::new_v4();
+        let raw_token = seed_refresh(&store, user_id, family_id, Duration::days(30)).await;
+
+        let first = app
+            .clone()
+            .oneshot(refresh_request(json!({ "refresh_token": raw_token })))
+            .await
+            .expect("first refresh should complete");
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .oneshot(refresh_request(json!({ "refresh_token": "totally-bogus-token" })))
+            .await
+            .expect("second refresh should complete");
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let body = to_bytes(second.into_body(), usize::MAX).await.expect("body should read");
+        let parsed: Value = serde_json::from_slice(&body).expect("body should be JSON");
+        assert_eq!(parsed["error"]["code"], "RATE_LIMITED");
     }
 
     #[tokio::test]
