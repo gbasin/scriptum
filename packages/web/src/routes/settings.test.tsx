@@ -7,6 +7,10 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseAuthResult } from "../hooks/useAuth";
 import { useAuth } from "../hooks/useAuth";
+import {
+  configureGitSyncSettings,
+  getGitSyncSettings,
+} from "../lib/api-client";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
 import { SettingsRoute } from "./settings";
@@ -24,6 +28,15 @@ vi.mock("react-router-dom", async (importOriginal) => {
 vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(),
 }));
+
+vi.mock("../lib/api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api-client")>();
+  return {
+    ...actual,
+    getGitSyncSettings: vi.fn(),
+    configureGitSyncSettings: vi.fn(),
+  };
+});
 
 declare global {
   // eslint-disable-next-line no-var
@@ -82,6 +95,20 @@ beforeEach(() => {
   useWorkspaceStore.getState().upsertWorkspace(workspace);
   useWorkspaceStore.getState().setActiveWorkspaceId(workspace.id);
   vi.mocked(useAuth).mockReturnValue(authResult());
+  vi.mocked(getGitSyncSettings).mockResolvedValue({
+    branch: "main",
+    remoteUrl: "origin",
+    pushPolicy: "manual",
+    aiCommitEnabled: true,
+    commitIntervalSeconds: 30,
+    dirty: false,
+    ahead: 0,
+    behind: 0,
+    lastSyncAt: null,
+  });
+  vi.mocked(configureGitSyncSettings).mockImplementation(
+    async (_workspaceId, settings) => settings,
+  );
   mockNavigate.mockReset();
 });
 
@@ -166,7 +193,7 @@ describe("SettingsRoute", () => {
     });
   });
 
-  it("persists tab form changes to workspace config", () => {
+  it("loads and saves git sync settings through daemon RPC", async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -183,21 +210,73 @@ describe("SettingsRoute", () => {
     const gitSyncTab = container.querySelector(
       '[data-testid="settings-tab-gitSync"]',
     ) as HTMLButtonElement | null;
-    act(() => {
+    await act(async () => {
       gitSyncTab?.click();
     });
 
-    const gitSyncEnabled = container.querySelector(
-      '[data-testid="settings-git-sync-enabled"]',
+    expect(getGitSyncSettings).toHaveBeenCalledWith("ws-alpha");
+    const remoteInput = container.querySelector(
+      '[data-testid="settings-git-sync-remote-url"]',
     ) as HTMLInputElement | null;
-    expect(gitSyncEnabled?.checked).toBe(true);
+    const branchInput = container.querySelector(
+      '[data-testid="settings-git-sync-branch"]',
+    ) as HTMLInputElement | null;
+    const pushPolicySelect = container.querySelector(
+      '[data-testid="settings-git-sync-push-policy"]',
+    ) as HTMLSelectElement | null;
+    const aiCommitToggle = container.querySelector(
+      '[data-testid="settings-git-sync-ai-commit"]',
+    ) as HTMLInputElement | null;
+    const commitIntervalInput = container.querySelector(
+      '[data-testid="settings-git-sync-interval"]',
+    ) as HTMLInputElement | null;
+    const saveButton = container.querySelector(
+      '[data-testid="settings-git-sync-save"]',
+    ) as HTMLButtonElement | null;
+
     act(() => {
-      gitSyncEnabled?.click();
+      const setInputValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      if (remoteInput) {
+        setInputValue?.call(remoteInput, "https://github.com/scriptum/project.git");
+        remoteInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (branchInput) {
+        setInputValue?.call(branchInput, "develop");
+        branchInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (pushPolicySelect) {
+        pushPolicySelect.value = "auto_rebase";
+        pushPolicySelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      aiCommitToggle?.click();
+      if (commitIntervalInput) {
+        setInputValue?.call(commitIntervalInput, "45");
+        commitIntervalInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     });
 
     const appearanceTab = container.querySelector(
       '[data-testid="settings-tab-appearance"]',
     ) as HTMLButtonElement | null;
+    await act(async () => {
+      saveButton?.click();
+    });
+    expect(configureGitSyncSettings).toHaveBeenCalledWith("ws-alpha", {
+      remoteUrl: "https://github.com/scriptum/project.git",
+      branch: "develop",
+      pushPolicy: "auto_rebase",
+      aiCommitEnabled: false,
+      commitIntervalSeconds: 45,
+    });
+    expect(useWorkspaceStore.getState().activeWorkspace?.config?.gitSync.enabled).toBe(true);
+    expect(
+      useWorkspaceStore.getState().activeWorkspace?.config?.gitSync
+        .autoCommitIntervalSeconds,
+    ).toBe(45);
+
     act(() => {
       appearanceTab?.click();
     });
@@ -233,15 +312,45 @@ describe("SettingsRoute", () => {
     });
 
     const persistedWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    expect(persistedWorkspace?.config?.gitSync.enabled).toBe(false);
-    expect(persistedWorkspace?.config?.gitSync.autoCommitIntervalSeconds).toBe(
-      30,
-    );
     expect(persistedWorkspace?.config?.appearance.density).toBe("spacious");
     expect(persistedWorkspace?.config?.appearance.fontSize).toBe(15);
     expect(persistedWorkspace?.config?.editor.fontFamily).toBe("sans");
     expect(persistedWorkspace?.config?.editor.tabSize).toBe(2);
     expect(persistedWorkspace?.config?.editor.lineNumbers).toBe(false);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows daemon connection errors in the Git Sync tab", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    vi.mocked(getGitSyncSettings).mockRejectedValueOnce(
+      new Error("Unable to connect to daemon RPC"),
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <SettingsRoute />
+        </MemoryRouter>,
+      );
+    });
+
+    const gitSyncTab = container.querySelector(
+      '[data-testid="settings-tab-gitSync"]',
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      gitSyncTab?.click();
+    });
+
+    const errorMessage = container.querySelector(
+      '[data-testid="settings-git-sync-error"]',
+    );
+    expect(errorMessage?.textContent).toContain("Unable to connect to daemon RPC");
 
     act(() => {
       root.unmount();

@@ -118,6 +118,11 @@ export type {
   WorkspaceOpenResult,
   YjsOps,
 } from "./protocol/rpc";
+export {
+  CURRENT_RPC_PROTOCOL_VERSION,
+  PREVIOUS_RPC_PROTOCOL_VERSION,
+  SUPPORTED_RPC_PROTOCOL_VERSIONS,
+} from "./protocol/rpc";
 export type {
   AckMessage,
   AwarenessPeer,

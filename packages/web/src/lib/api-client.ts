@@ -4,16 +4,35 @@ import type {
   CommentMessage,
   CommentThread,
   Document,
+  GitConfigureResult,
+  GitStatusResult,
+  GitSyncPolicy,
+  JsonRpcError,
+  JsonRpcResponse,
+  JsonRpcSuccessResponse,
+  RpcMethod,
+  RpcParamsMap,
+  RpcResultMap,
   Section,
   RelayErrorEnvelope as SharedRelayErrorEnvelope,
   Workspace,
 } from "@scriptum/shared";
-import { ScriptumApiClient, ScriptumApiError } from "@scriptum/shared";
+import {
+  CURRENT_RPC_PROTOCOL_VERSION,
+  DAEMON_LOCAL_HOST,
+  DAEMON_LOCAL_PORT,
+  ScriptumApiClient,
+  ScriptumApiError,
+} from "@scriptum/shared";
 import { getAccessToken as getAccessTokenFromAuth } from "./auth";
 import { asRecord } from "./type-guards";
 
 const DEFAULT_RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
+const DEFAULT_DAEMON_RPC_URL =
+  import.meta.env.VITE_SCRIPTUM_DAEMON_RPC_URL ??
+  `ws://${DAEMON_LOCAL_HOST}:${String(DAEMON_LOCAL_PORT)}/rpc`;
+const DEFAULT_DAEMON_RPC_TIMEOUT_MS = 3_500;
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -33,6 +52,316 @@ export class ApiClientError extends Error {
     super(message);
     this.name = "ApiClientError";
   }
+}
+
+export interface DaemonRpcOptions {
+  rpcUrl?: string;
+  timeoutMs?: number;
+}
+
+export interface GitSyncSettingsSnapshot {
+  branch: string;
+  remoteUrl: string;
+  pushPolicy: GitSyncPolicy;
+  aiCommitEnabled: boolean;
+  commitIntervalSeconds: number;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  lastSyncAt: string | null;
+}
+
+export interface GitSyncSettingsUpdate {
+  remoteUrl: string;
+  branch: string;
+  pushPolicy: GitSyncPolicy;
+  aiCommitEnabled: boolean;
+  commitIntervalSeconds: number;
+}
+
+export class DaemonRpcRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly code: number | null = null,
+    public readonly data: unknown = undefined,
+  ) {
+    super(message);
+    this.name = "DaemonRpcRequestError";
+  }
+}
+
+function isGitSyncPolicy(value: unknown): value is GitSyncPolicy {
+  return value === "disabled" || value === "manual" || value === "auto_rebase";
+}
+
+function asGitSyncPolicy(
+  value: unknown,
+  fallback: GitSyncPolicy = "manual",
+): GitSyncPolicy {
+  return isGitSyncPolicy(value) ? value : fallback;
+}
+
+function asPositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function asFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function asOptionalString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function isJsonRpcSuccessResponse<T>(
+  value: JsonRpcResponse | null,
+): value is JsonRpcSuccessResponse<RpcMethod> & { result: T } {
+  return Boolean(value && "result" in value);
+}
+
+function pickResponseForRequestId(
+  value: unknown,
+  requestId: number,
+): JsonRpcResponse | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = pickResponseForRequestId(item, requestId);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const responseId = record.id;
+  if (responseId !== requestId && responseId !== String(requestId)) {
+    return null;
+  }
+
+  return record as unknown as JsonRpcResponse;
+}
+
+function daemonConnectionError(url: string): Error {
+  return new Error(
+    `Unable to connect to daemon RPC at ${url}. Confirm the daemon is running.`,
+  );
+}
+
+export async function callDaemonRpc<M extends RpcMethod>(
+  method: M,
+  params: RpcParamsMap[M],
+  options: DaemonRpcOptions = {},
+): Promise<RpcResultMap[M]> {
+  const rpcUrl = options.rpcUrl ?? DEFAULT_DAEMON_RPC_URL;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DAEMON_RPC_TIMEOUT_MS;
+
+  if (typeof WebSocket === "undefined") {
+    throw daemonConnectionError(rpcUrl);
+  }
+
+  return new Promise<RpcResultMap[M]>((resolve, reject) => {
+    const requestId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    const requestPayload = JSON.stringify({
+      jsonrpc: "2.0",
+      protocol_version: CURRENT_RPC_PROTOCOL_VERSION,
+      id: requestId,
+      method,
+      params,
+    });
+
+    const socket = new WebSocket(rpcUrl);
+    let settled = false;
+    let opened = false;
+
+    const fail = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      globalThis.clearTimeout(timeoutHandle);
+      try {
+        socket.close();
+      } catch {
+        // no-op
+      }
+      reject(error);
+    };
+
+    const succeed = (result: RpcResultMap[M]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      globalThis.clearTimeout(timeoutHandle);
+      try {
+        socket.close();
+      } catch {
+        // no-op
+      }
+      resolve(result);
+    };
+
+    const timeoutHandle = globalThis.setTimeout(() => {
+      fail(
+        new Error(
+          `Timed out waiting for daemon RPC response (${timeoutMs}ms): ${method}`,
+        ),
+      );
+    }, timeoutMs);
+
+    socket.onopen = () => {
+      opened = true;
+      socket.send(requestPayload);
+    };
+
+    socket.onmessage = (event) => {
+      const payload =
+        typeof event.data === "string" ? event.data : String(event.data);
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(payload);
+      } catch {
+        return;
+      }
+
+      const response = pickResponseForRequestId(decoded, requestId);
+      if (!response) {
+        return;
+      }
+
+      const errorPayload = (response as { error?: JsonRpcError }).error;
+      if (errorPayload) {
+        fail(
+          new DaemonRpcRequestError(
+            errorPayload.message,
+            errorPayload.code,
+            errorPayload.data,
+          ),
+        );
+        return;
+      }
+
+      if (!isJsonRpcSuccessResponse<RpcResultMap[M]>(response)) {
+        fail(new Error(`Daemon RPC response missing result for ${method}`));
+        return;
+      }
+
+      succeed(response.result);
+    };
+
+    socket.onerror = () => {
+      fail(daemonConnectionError(rpcUrl));
+    };
+
+    socket.onclose = () => {
+      if (settled) {
+        return;
+      }
+      fail(
+        opened
+          ? new Error("Daemon RPC connection closed before a response arrived.")
+          : daemonConnectionError(rpcUrl),
+      );
+    };
+  });
+}
+
+function normalizeGitStatusResult(status: GitStatusResult): GitSyncSettingsSnapshot {
+  const commitInterval =
+    status.commit_interval_seconds ?? status.commit_interval_sec ?? 30;
+
+  return {
+    branch: asOptionalString(status.branch) ?? "main",
+    remoteUrl: asOptionalString(status.remote_url ?? status.remote) ?? "origin",
+    pushPolicy: asGitSyncPolicy(status.push_policy ?? status.policy, "manual"),
+    aiCommitEnabled:
+      typeof status.ai_commit_enabled === "boolean"
+        ? status.ai_commit_enabled
+        : typeof status.ai_enabled === "boolean"
+          ? status.ai_enabled
+          : true,
+    commitIntervalSeconds: asPositiveInteger(commitInterval, 30),
+    dirty: Boolean(status.dirty),
+    ahead: asFiniteNumber(status.ahead, 0),
+    behind: asFiniteNumber(status.behind, 0),
+    lastSyncAt: asOptionalString(status.last_sync_at),
+  };
+}
+
+function normalizeGitConfigureResult(
+  result: GitConfigureResult,
+  fallback: GitSyncSettingsUpdate,
+): GitSyncSettingsUpdate {
+  const commitInterval =
+    result.commit_interval_seconds ?? result.commit_interval_sec;
+
+  return {
+    remoteUrl: asOptionalString(result.remote_url) ?? fallback.remoteUrl,
+    branch: asOptionalString(result.branch) ?? fallback.branch,
+    pushPolicy: asGitSyncPolicy(
+      result.push_policy ?? result.policy,
+      fallback.pushPolicy,
+    ),
+    aiCommitEnabled:
+      typeof result.ai_commit_enabled === "boolean"
+        ? result.ai_commit_enabled
+        : typeof result.ai_enabled === "boolean"
+          ? result.ai_enabled
+          : fallback.aiCommitEnabled,
+    commitIntervalSeconds: asPositiveInteger(
+      commitInterval,
+      fallback.commitIntervalSeconds,
+    ),
+  };
+}
+
+export async function getGitSyncSettings(
+  workspaceId: string,
+  options?: DaemonRpcOptions,
+): Promise<GitSyncSettingsSnapshot> {
+  const result = await callDaemonRpc(
+    "git.status",
+    { workspace_id: workspaceId },
+    options,
+  );
+  return normalizeGitStatusResult(result);
+}
+
+export async function configureGitSyncSettings(
+  workspaceId: string,
+  settings: GitSyncSettingsUpdate,
+  options?: DaemonRpcOptions,
+): Promise<GitSyncSettingsUpdate> {
+  const sanitized: GitSyncSettingsUpdate = {
+    remoteUrl: settings.remoteUrl.trim(),
+    branch: settings.branch.trim() || "main",
+    pushPolicy: settings.pushPolicy,
+    aiCommitEnabled: settings.aiCommitEnabled,
+    commitIntervalSeconds: asPositiveInteger(settings.commitIntervalSeconds, 30),
+  };
+
+  const result = await callDaemonRpc(
+    "git.configure",
+    {
+      workspace_id: workspaceId,
+      remote_url: sanitized.remoteUrl,
+      branch: sanitized.branch,
+      push_policy: sanitized.pushPolicy,
+      policy: sanitized.pushPolicy,
+      ai_commit_enabled: sanitized.aiCommitEnabled,
+      commit_interval_seconds: sanitized.commitIntervalSeconds,
+    },
+    options,
+  );
+  return normalizeGitConfigureResult(result, sanitized);
 }
 
 export interface PagedResult<T> {

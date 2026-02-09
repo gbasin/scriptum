@@ -69,6 +69,46 @@
   padding-top: var(--space-3);
 }
 
+.statusGrid {
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-2);
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+}
+
+.statusRow {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+}
+
+.statusLabel {
+  color: var(--color-text-secondary);
+}
+
+.helperText {
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.errorText {
+  color: var(--color-danger-text);
+  margin: 0;
+}
+
+.successText {
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .formSection {
   border: 1px solid var(--color-border-muted);
   border-radius: var(--radius-2);

@@ -34,7 +34,7 @@ export type GitSyncJobStatus = "queued" | "running" | "completed" | "failed";
 
 export type YjsOps = unknown;
 
-export type GitSyncPolicy = Record<string, unknown>;
+export type GitSyncPolicy = "disabled" | "manual" | "auto_rebase";
 
 export interface RpcWorkspace {
   id: string;
@@ -379,10 +379,20 @@ export interface GitStatusParams {
 
 export interface GitStatusResult {
   branch: string;
+  remote_url: string;
+  push_policy: GitSyncPolicy;
+  ai_commit_enabled: boolean;
+  commit_interval_seconds: number;
   dirty: boolean;
   ahead: number;
   behind: number;
   last_sync_at: string | null;
+  // Backward-compatibility aliases used by older daemon builds.
+  remote?: string;
+  policy?: GitSyncPolicy;
+  ai_enabled?: boolean;
+  commit_interval_sec?: number;
+  status_output?: string;
 }
 
 export interface GitSyncParams {
@@ -398,11 +408,25 @@ export interface GitSyncResult {
 
 export interface GitConfigureParams {
   workspace_id: string;
-  policy: GitSyncPolicy;
+  remote_url?: string;
+  branch?: string;
+  push_policy?: GitSyncPolicy;
+  // Backward-compatibility field consumed by older daemon builds.
+  policy?: GitSyncPolicy;
+  ai_commit_enabled?: boolean;
+  commit_interval_seconds?: number;
 }
 
 export interface GitConfigureResult {
-  policy: GitSyncPolicy;
+  remote_url: string;
+  branch: string;
+  push_policy: GitSyncPolicy;
+  ai_commit_enabled: boolean;
+  commit_interval_seconds: number;
+  // Backward-compatibility aliases used by older daemon builds.
+  policy?: GitSyncPolicy;
+  ai_enabled?: boolean;
+  commit_interval_sec?: number;
 }
 
 export interface RpcParamsMap {

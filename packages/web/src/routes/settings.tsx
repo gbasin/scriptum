@@ -1,8 +1,12 @@
-import type { WorkspaceConfig } from "@scriptum/shared";
+import type { GitSyncPolicy, WorkspaceConfig } from "@scriptum/shared";
 import clsx from "clsx";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import {
+  configureGitSyncSettings,
+  getGitSyncSettings,
+} from "../lib/api-client";
 import { useDocumentsStore } from "../store/documents";
 import { defaultWorkspaceConfig, useWorkspaceStore } from "../store/workspace";
 import controls from "../styles/Controls.module.css";
@@ -33,6 +37,48 @@ function asPositiveInt(value: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+interface GitSyncFormState {
+  remoteUrl: string;
+  branch: string;
+  pushPolicy: GitSyncPolicy;
+  aiCommitEnabled: boolean;
+  commitIntervalSeconds: string;
+}
+
+interface GitSyncStatusState {
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  lastSyncAt: string | null;
+}
+
+function isGitSyncPolicy(value: string): value is GitSyncPolicy {
+  return value === "disabled" || value === "manual" || value === "auto_rebase";
+}
+
+function gitSyncFormFromWorkspaceConfig(config: WorkspaceConfig): GitSyncFormState {
+  return {
+    remoteUrl: "origin",
+    branch: "main",
+    pushPolicy: config.gitSync.enabled ? "manual" : "disabled",
+    aiCommitEnabled: true,
+    commitIntervalSeconds: String(
+      asPositiveInt(String(config.gitSync.autoCommitIntervalSeconds), 30),
+    ),
+  };
+}
+
+function formatLastSyncAt(lastSyncAt: string | null): string {
+  if (!lastSyncAt) {
+    return "Never";
+  }
+  const timestamp = Date.parse(lastSyncAt);
+  if (Number.isNaN(timestamp)) {
+    return "Unknown";
+  }
+  return new Date(timestamp).toLocaleString();
+}
+
 export function SettingsRoute() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -49,6 +95,24 @@ export function SettingsRoute() {
   const setDocuments = useDocumentsStore((state) => state.setDocuments);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [gitSyncForm, setGitSyncForm] = useState<GitSyncFormState>({
+    remoteUrl: "origin",
+    branch: "main",
+    pushPolicy: "manual",
+    aiCommitEnabled: true,
+    commitIntervalSeconds: "30",
+  });
+  const [gitSyncStatus, setGitSyncStatus] = useState<GitSyncStatusState>({
+    dirty: false,
+    ahead: 0,
+    behind: 0,
+    lastSyncAt: null,
+  });
+  const [gitSyncLoading, setGitSyncLoading] = useState(false);
+  const [gitSyncSaving, setGitSyncSaving] = useState(false);
+  const [gitSyncError, setGitSyncError] = useState<string | null>(null);
+  const [gitSyncNotice, setGitSyncNotice] = useState<string | null>(null);
+  const lastGitSyncWorkspaceIdRef = useRef<string | null>(null);
 
   const activeWorkspace = useMemo(
     () =>
@@ -62,6 +126,78 @@ export function SettingsRoute() {
   useEffect(() => {
     setIsDeleteConfirmOpen(false);
   }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (!activeWorkspace) {
+      lastGitSyncWorkspaceIdRef.current = null;
+      return;
+    }
+    if (lastGitSyncWorkspaceIdRef.current === activeWorkspace.id) {
+      return;
+    }
+
+    lastGitSyncWorkspaceIdRef.current = activeWorkspace.id;
+    const workspaceConfig =
+      activeWorkspace.config ?? defaultWorkspaceConfig(activeWorkspace.name);
+    setGitSyncForm(gitSyncFormFromWorkspaceConfig(workspaceConfig));
+    setGitSyncStatus({
+      dirty: false,
+      ahead: 0,
+      behind: 0,
+      lastSyncAt: null,
+    });
+    setGitSyncError(null);
+    setGitSyncNotice(null);
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (!activeWorkspace || activeTab !== "gitSync") {
+      return;
+    }
+
+    let cancelled = false;
+    setGitSyncLoading(true);
+    setGitSyncError(null);
+    void getGitSyncSettings(activeWorkspace.id)
+      .then((snapshot) => {
+        if (cancelled) {
+          return;
+        }
+        setGitSyncForm((current) => ({
+          ...current,
+          remoteUrl: snapshot.remoteUrl,
+          branch: snapshot.branch,
+          pushPolicy: snapshot.pushPolicy,
+          aiCommitEnabled: snapshot.aiCommitEnabled,
+          commitIntervalSeconds: String(snapshot.commitIntervalSeconds),
+        }));
+        setGitSyncStatus({
+          dirty: snapshot.dirty,
+          ahead: snapshot.ahead,
+          behind: snapshot.behind,
+          lastSyncAt: snapshot.lastSyncAt,
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setGitSyncError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load Git Sync settings from daemon.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setGitSyncLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeWorkspace]);
 
   if (!activeWorkspace) {
     return (
@@ -136,6 +272,50 @@ export function SettingsRoute() {
     navigate(`/workspace/${encodeURIComponent(fallbackWorkspace.id)}`, {
       replace: true,
     });
+  };
+
+  const handleSaveGitSync = async () => {
+    const commitIntervalSeconds = asPositiveInt(
+      gitSyncForm.commitIntervalSeconds,
+      config.gitSync.autoCommitIntervalSeconds,
+    );
+    setGitSyncSaving(true);
+    setGitSyncError(null);
+    setGitSyncNotice(null);
+
+    try {
+      const saved = await configureGitSyncSettings(activeWorkspace.id, {
+        remoteUrl: gitSyncForm.remoteUrl,
+        branch: gitSyncForm.branch,
+        pushPolicy: gitSyncForm.pushPolicy,
+        aiCommitEnabled: gitSyncForm.aiCommitEnabled,
+        commitIntervalSeconds,
+      });
+      setGitSyncForm({
+        remoteUrl: saved.remoteUrl,
+        branch: saved.branch,
+        pushPolicy: saved.pushPolicy,
+        aiCommitEnabled: saved.aiCommitEnabled,
+        commitIntervalSeconds: String(saved.commitIntervalSeconds),
+      });
+      updateConfig((current) => ({
+        ...current,
+        gitSync: {
+          ...current.gitSync,
+          enabled: saved.pushPolicy !== "disabled",
+          autoCommitIntervalSeconds: saved.commitIntervalSeconds,
+        },
+      }));
+      setGitSyncNotice("Git sync settings saved.");
+    } catch (error: unknown) {
+      setGitSyncError(
+        error instanceof Error
+          ? error.message
+          : "Failed to save Git Sync settings to daemon.",
+      );
+    } finally {
+      setGitSyncSaving(false);
+    }
   };
 
   return (
@@ -323,64 +503,159 @@ export function SettingsRoute() {
             data-testid="settings-form-git-sync"
           >
             <legend className={styles.legend}>Git Sync</legend>
+            <div className={styles.statusGrid} data-testid="settings-git-sync-state">
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>Remote</span>
+                <span data-testid="settings-git-sync-state-remote">
+                  {gitSyncForm.remoteUrl}
+                </span>
+              </p>
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>Branch</span>
+                <span data-testid="settings-git-sync-state-branch">
+                  {gitSyncForm.branch}
+                </span>
+              </p>
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>Push policy</span>
+                <span data-testid="settings-git-sync-state-policy">
+                  {gitSyncForm.pushPolicy}
+                </span>
+              </p>
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>AI commits</span>
+                <span data-testid="settings-git-sync-state-ai">
+                  {gitSyncForm.aiCommitEnabled ? "Enabled" : "Disabled"}
+                </span>
+              </p>
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>Dirty</span>
+                <span data-testid="settings-git-sync-state-dirty">
+                  {gitSyncStatus.dirty ? "Yes" : "No"}
+                </span>
+              </p>
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>Ahead/behind</span>
+                <span data-testid="settings-git-sync-state-ahead-behind">
+                  {gitSyncStatus.ahead}/{gitSyncStatus.behind}
+                </span>
+              </p>
+              <p className={styles.statusRow}>
+                <span className={styles.statusLabel}>Last sync</span>
+                <span data-testid="settings-git-sync-state-last-sync">
+                  {formatLastSyncAt(gitSyncStatus.lastSyncAt)}
+                </span>
+              </p>
+            </div>
+            {gitSyncLoading ? (
+              <p className={styles.helperText} data-testid="settings-git-sync-loading">
+                Loading Git Sync settings from daemon…
+              </p>
+            ) : null}
+            {gitSyncError ? (
+              <p className={styles.errorText} data-testid="settings-git-sync-error">
+                {gitSyncError}
+              </p>
+            ) : null}
+            {gitSyncNotice ? (
+              <p className={styles.successText} data-testid="settings-git-sync-notice">
+                {gitSyncNotice}
+              </p>
+            ) : null}
+            <label className={controls.field}>
+              Remote URL
+              <input
+                className={controls.textInput}
+                data-testid="settings-git-sync-remote-url"
+                onChange={(event) =>
+                  setGitSyncForm((current) => ({
+                    ...current,
+                    remoteUrl: event.target.value,
+                  }))
+                }
+                type="text"
+                value={gitSyncForm.remoteUrl}
+              />
+            </label>
+            <label className={controls.field}>
+              Branch name
+              <input
+                className={controls.textInput}
+                data-testid="settings-git-sync-branch"
+                onChange={(event) =>
+                  setGitSyncForm((current) => ({
+                    ...current,
+                    branch: event.target.value,
+                  }))
+                }
+                type="text"
+                value={gitSyncForm.branch}
+              />
+            </label>
+            <label className={controls.field}>
+              Push policy
+              <select
+                className={controls.selectInput}
+                data-testid="settings-git-sync-push-policy"
+                onChange={(event) =>
+                  setGitSyncForm((current) => ({
+                    ...current,
+                    pushPolicy: isGitSyncPolicy(event.target.value)
+                      ? event.target.value
+                      : "manual",
+                  }))
+                }
+                value={gitSyncForm.pushPolicy}
+              >
+                <option value="disabled">disabled</option>
+                <option value="manual">manual</option>
+                <option value="auto_rebase">auto_rebase</option>
+              </select>
+            </label>
             <label className={controls.checkboxRow}>
               <input
+                checked={gitSyncForm.aiCommitEnabled}
                 className={controls.checkbox}
-                checked={config.gitSync.enabled}
-                data-testid="settings-git-sync-enabled"
+                data-testid="settings-git-sync-ai-commit"
                 onChange={(event) =>
-                  updateConfig((current) => ({
+                  setGitSyncForm((current) => ({
                     ...current,
-                    gitSync: {
-                      ...current.gitSync,
-                      enabled: event.target.checked,
-                    },
+                    aiCommitEnabled: event.target.checked,
                   }))
                 }
                 type="checkbox"
               />
-              Enable git sync
+              Enable AI commit messages
             </label>
             <label className={controls.field}>
-              Auto commit interval (seconds)
+              Commit interval (seconds)
               <input
                 className={controls.textInput}
                 data-testid="settings-git-sync-interval"
                 min={5}
                 onChange={(event) =>
-                  updateConfig((current) => ({
+                  setGitSyncForm((current) => ({
                     ...current,
-                    gitSync: {
-                      ...current.gitSync,
-                      autoCommitIntervalSeconds: asPositiveInt(
-                        event.target.value,
-                        current.gitSync.autoCommitIntervalSeconds,
-                      ),
-                    },
+                    commitIntervalSeconds: event.target.value,
                   }))
                 }
                 type="number"
-                value={config.gitSync.autoCommitIntervalSeconds}
+                value={gitSyncForm.commitIntervalSeconds}
               />
             </label>
-            <label className={controls.field}>
-              Commit message template
-              <input
-                className={controls.textInput}
-                data-testid="settings-git-sync-message-template"
-                onChange={(event) =>
-                  updateConfig((current) => ({
-                    ...current,
-                    gitSync: {
-                      ...current.gitSync,
-                      commitMessageTemplate: event.target.value,
-                    },
-                  }))
-                }
-                type="text"
-                value={config.gitSync.commitMessageTemplate}
-              />
-            </label>
+            <div className={styles.formActions}>
+              <button
+                className={clsx(controls.buttonBase, controls.buttonPrimary)}
+                data-testid="settings-git-sync-save"
+                disabled={gitSyncSaving}
+                onClick={() => {
+                  void handleSaveGitSync();
+                }}
+                type="button"
+              >
+                {gitSyncSaving ? "Saving…" : "Save Git Sync Settings"}
+              </button>
+            </div>
           </fieldset>
         ) : null}
 
