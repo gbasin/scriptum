@@ -1,4 +1,5 @@
 import type { Document, Workspace } from "@scriptum/shared";
+import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { useDocumentCrud } from "../hooks/useDocumentCrud";
@@ -87,6 +88,7 @@ export function Layout() {
   } = useLayoutState();
   const toast = useToast();
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [showArchivedDocuments, setShowArchivedDocuments] = useState(false);
   const [pendingRenameDocumentId, setPendingRenameDocumentId] = useState<
     string | null
   >(null);
@@ -103,18 +105,39 @@ export function Layout() {
     () =>
       activeWorkspaceId
         ? documents.filter(
-            (document) => document.workspaceId === activeWorkspaceId,
+            (document) =>
+              document.workspaceId === activeWorkspaceId &&
+              document.deletedAt === null,
           )
         : [],
     [activeWorkspaceId, documents],
+  );
+  const activeWorkspaceDocuments = useMemo(
+    () =>
+      workspaceDocuments.filter((document) => document.archivedAt === null),
+    [workspaceDocuments],
+  );
+  const archivedWorkspaceDocuments = useMemo(
+    () =>
+      workspaceDocuments.filter((document) => document.archivedAt !== null),
+    [workspaceDocuments],
   );
   const workspaceTags = useMemo(
     () => collectWorkspaceTags(workspaceDocuments),
     [workspaceDocuments],
   );
-  const filteredDocuments = useMemo(
-    () => filterDocumentsByTag(workspaceDocuments, activeTag),
-    [workspaceDocuments, activeTag],
+  const filteredActiveDocuments = useMemo(
+    () => filterDocumentsByTag(activeWorkspaceDocuments, activeTag),
+    [activeWorkspaceDocuments, activeTag],
+  );
+  const filteredArchivedDocuments = useMemo(
+    () => filterDocumentsByTag(archivedWorkspaceDocuments, activeTag),
+    [archivedWorkspaceDocuments, activeTag],
+  );
+  const visibleDocuments = useMemo(
+    () =>
+      showArchivedDocuments ? filteredArchivedDocuments : filteredActiveDocuments,
+    [filteredActiveDocuments, filteredArchivedDocuments, showArchivedDocuments],
   );
   const searchPanelResults = useMemo(
     () => buildSearchPanelResults(workspaceDocuments),
@@ -167,6 +190,7 @@ export function Layout() {
 
   useEffect(() => {
     setActiveTag(null);
+    setShowArchivedDocuments(false);
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -274,6 +298,10 @@ export function Layout() {
   const handleBacklinkSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
   };
+  const handleCreateNewDocument = () => {
+    setShowArchivedDocuments(false);
+    createUntitledDocument();
+  };
   const showCompactPanelBackdrop =
     isCompactLayout && (sidebarOpen || rightPanelOpen);
   const handleCompactPanelBackdropClick = () => {
@@ -349,20 +377,44 @@ export function Layout() {
           ) : (
             <section aria-label="Document tree section">
               <div className={styles.documentTreeHeader}>
-                <h2 className={styles.documentTreeHeading}>Documents</h2>
-                <button
-                  className={styles.secondaryButton}
-                  data-testid="new-document-button"
-                  onClick={createUntitledDocument}
-                  title="Cmd+N"
-                  type="button"
-                >
-                  + New
-                </button>
+                <h2 className={styles.documentTreeHeading}>
+                  {showArchivedDocuments ? "Archived" : "Documents"}
+                </h2>
+                <div className={styles.documentTreeActions}>
+                  <button
+                    aria-pressed={showArchivedDocuments}
+                    className={clsx(
+                      styles.secondaryButton,
+                      showArchivedDocuments && styles.secondaryButtonActive,
+                    )}
+                    data-testid="document-tree-archive-toggle"
+                    disabled={
+                      !showArchivedDocuments &&
+                      archivedWorkspaceDocuments.length === 0
+                    }
+                    onClick={() =>
+                      setShowArchivedDocuments((current) => !current)
+                    }
+                    type="button"
+                  >
+                    {showArchivedDocuments
+                      ? "Show active"
+                      : `Archived (${archivedWorkspaceDocuments.length})`}
+                  </button>
+                  <button
+                    className={styles.secondaryButton}
+                    data-testid="new-document-button"
+                    onClick={handleCreateNewDocument}
+                    title="Cmd+N"
+                    type="button"
+                  >
+                    + New
+                  </button>
+                </div>
               </div>
               <DocumentTree
                 activeDocumentId={activeDocumentId}
-                documents={filteredDocuments}
+                documents={visibleDocuments}
                 loading={showPanelSkeletons}
                 onContextMenuAction={handleDocumentContextAction}
                 onDocumentSelect={handleDocumentSelect}

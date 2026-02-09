@@ -178,6 +178,95 @@ describe("DocumentTree workspace actions", () => {
     );
 
     act(() => {
+      nodeButton?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 32,
+          clientY: 44,
+        }),
+      );
+    });
+
+    const archiveAction = document.querySelector(
+      '[data-testid="context-action-archive"]',
+    ) as HTMLButtonElement | null;
+    expect(archiveAction).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="context-action-unarchive"]'),
+    ).toBeNull();
+
+    act(() => {
+      archiveAction?.click();
+    });
+
+    expect(onContextMenuAction).toHaveBeenLastCalledWith(
+      "archive",
+      expect.objectContaining({ id: "doc-1" }),
+    );
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows unarchive action for archived documents", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const onContextMenuAction = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <DocumentTree
+          activeDocumentId={null}
+          documents={[
+            makeDocument({
+              archivedAt: "2026-01-02T00:00:00.000Z",
+              id: "doc-1",
+              path: "docs/readme.md",
+            }),
+          ]}
+          onContextMenuAction={onContextMenuAction}
+        />,
+      );
+    });
+
+    const nodeButton = container.querySelector(
+      '[data-testid="tree-node-docs/readme.md"] button',
+    ) as HTMLButtonElement | null;
+    expect(nodeButton).not.toBeNull();
+
+    act(() => {
+      nodeButton?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 36,
+        }),
+      );
+    });
+
+    expect(
+      document.querySelector('[data-testid="context-action-archive"]'),
+    ).toBeNull();
+    const unarchiveAction = document.querySelector(
+      '[data-testid="context-action-unarchive"]',
+    ) as HTMLButtonElement | null;
+    expect(unarchiveAction).not.toBeNull();
+
+    act(() => {
+      unarchiveAction?.click();
+    });
+
+    expect(onContextMenuAction).toHaveBeenLastCalledWith(
+      "unarchive",
+      expect.objectContaining({ id: "doc-1" }),
+    );
+
+    act(() => {
       root.unmount();
     });
   });

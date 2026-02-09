@@ -44,9 +44,21 @@
   background: color-mix(in oklab, var(--color-accent-hex) 34%, transparent);
 }
 
+.treeNodeButtonArchived {
+  color: var(--color-text-muted);
+}
+
 .treeIcon {
   display: inline-block;
   margin-inline-end: 0.25rem;
+}
+
+.archivedBadge {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  margin-inline-start: var(--space-1);
+  text-transform: uppercase;
 }
 
 .renameRow {

@@ -259,6 +259,17 @@ export function useDocumentCrud(
       return;
     }
 
+    if (action === "unarchive") {
+      const now = new Date().toISOString();
+      updateExistingDocument(document.id, (currentDocument) => ({
+        ...currentDocument,
+        archivedAt: null,
+        etag: `${currentDocument.etag}:unarchive:${Date.now().toString(36)}`,
+        updatedAt: now,
+      }));
+      return;
+    }
+
     if (action === "new-folder") {
       createDocumentInNewFolder(document);
       return;

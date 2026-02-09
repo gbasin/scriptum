@@ -124,6 +124,27 @@ describe("DocumentTree", () => {
     expect(html).toContain('data-active="true"');
   });
 
+  it("marks archived documents with archived metadata and badge", () => {
+    const archivedDocuments = [
+      makeDoc({
+        archivedAt: "2026-01-03T00:00:00Z",
+        id: "d-archived",
+        path: "docs/old-notes.md",
+      }),
+    ];
+
+    const html = renderToString(
+      <DocumentTree
+        activeDocumentId={null}
+        documents={archivedDocuments}
+        onDocumentSelect={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-archived="true"');
+    expect(html).toContain("Archived");
+  });
+
   it("shows empty state when no documents", () => {
     const html = renderToString(
       <DocumentTree

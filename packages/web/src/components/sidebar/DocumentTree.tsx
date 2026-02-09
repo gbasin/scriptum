@@ -35,7 +35,8 @@ export type ContextMenuAction =
   | "delete"
   | "copy-link"
   | "add-tag"
-  | "archive";
+  | "archive"
+  | "unarchive";
 
 export interface DocumentTreeProps {
   /** Documents to display in the tree. */
@@ -234,15 +235,25 @@ export function fileIcon(name: string): string {
 
 // -- Context menu --------------------------------------------------------------
 
-const CONTEXT_ACTIONS: { action: ContextMenuAction; label: string }[] = [
+const BASE_CONTEXT_ACTIONS: { action: ContextMenuAction; label: string }[] = [
   { action: "new-folder", label: "New Folder" },
   { action: "rename", label: "Rename" },
   { action: "move", label: "Move" },
   { action: "delete", label: "Delete" },
   { action: "copy-link", label: "Copy Link" },
   { action: "add-tag", label: "Add Tag" },
-  { action: "archive", label: "Archive" },
 ];
+
+function contextActionsForDocument(
+  document: Document,
+): { action: ContextMenuAction; label: string }[] {
+  return [
+    ...BASE_CONTEXT_ACTIONS,
+    document.archivedAt
+      ? { action: "unarchive", label: "Unarchive" }
+      : { action: "archive", label: "Archive" },
+  ];
+}
 
 // -- Tree node component -------------------------------------------------------
 
@@ -295,6 +306,7 @@ function TreeNodeItem({
   const isEditing = node.document?.id === editingDocumentId;
   const isDropTarget = dropTargetPath === node.fullPath;
   const isFocused = focusedPath === node.fullPath;
+  const isArchived = Boolean(node.document?.archivedAt);
 
   const handleClick = () => {
     onFocusPath(node.fullPath);
@@ -398,6 +410,7 @@ function TreeNodeItem({
         styles.treeNodeButton,
         isActive && styles.treeNodeButtonActive,
         isDropTarget && styles.treeNodeButtonDropTarget,
+        isArchived && styles.treeNodeButtonArchived,
       )}
       draggable={Boolean(node.document)}
       onClick={handleClick}
@@ -415,7 +428,10 @@ function TreeNodeItem({
             : "\u{1F4C1}"
           : fileIcon(node.name)}
       </span>
-      {node.name}
+      <span>{node.name}</span>
+      {isArchived ? (
+        <span className={styles.archivedBadge}>Archived</span>
+      ) : null}
     </button>
   );
 
@@ -425,6 +441,7 @@ function TreeNodeItem({
         aria-expanded={isFolder ? isExpanded : undefined}
         className={styles.treeItem}
         data-active={isActive || undefined}
+        data-archived={isArchived || undefined}
         data-drop-target={isDropTarget || undefined}
         data-testid={`tree-node-${node.fullPath}`}
         data-tree-path={node.fullPath}
@@ -441,7 +458,8 @@ function TreeNodeItem({
                   className={styles.contextMenu}
                   data-testid="context-menu"
                 >
-                  {CONTEXT_ACTIONS.map(({ action, label }) => (
+                  {contextActionsForDocument(node.document).map(
+                    ({ action, label }) => (
                     <ContextMenu.Item
                       className={styles.contextMenuItem}
                       data-testid={`context-action-${action}`}
@@ -453,7 +471,8 @@ function TreeNodeItem({
                     >
                       {label}
                     </ContextMenu.Item>
-                  ))}
+                    ),
+                  )}
                 </ContextMenu.Popup>
               </ContextMenu.Positioner>
             </ContextMenu.Portal>

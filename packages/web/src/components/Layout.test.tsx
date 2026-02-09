@@ -139,6 +139,117 @@ describe("Layout search panel integration", () => {
     });
   });
 
+  it("toggles archived document view and supports unarchive from context menu", () => {
+    useDocumentsStore
+      .getState()
+      .setDocuments([
+        makeDocument({
+          id: "doc-active",
+          path: "docs/active.md",
+          title: "Active",
+        }),
+        makeDocument({
+          archivedAt: "2026-01-04T00:00:00.000Z",
+          id: "doc-archived",
+          path: "docs/archived.md",
+          title: "Archived",
+        }),
+      ]);
+    useDocumentsStore
+      .getState()
+      .setActiveDocumentForWorkspace("ws-alpha", "doc-active");
+
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="tree-node-docs/active.md"]'))
+      .not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="tree-node-docs/archived.md"]'),
+    ).toBeNull();
+
+    const archiveToggleButton = container.querySelector(
+      '[data-testid="document-tree-archive-toggle"]',
+    ) as HTMLButtonElement | null;
+    expect(archiveToggleButton?.textContent).toContain("Archived (1)");
+
+    act(() => {
+      archiveToggleButton?.click();
+    });
+
+    expect(container.querySelector('[data-testid="tree-node-docs/active.md"]'))
+      .toBeNull();
+    const archivedTreeNode = container.querySelector(
+      '[data-testid="tree-node-docs/archived.md"]',
+    ) as HTMLElement | null;
+    expect(archivedTreeNode).not.toBeNull();
+    expect(archivedTreeNode?.getAttribute("data-archived")).toBe("true");
+
+    const archivedNodeButton = container.querySelector(
+      '[data-testid="tree-node-docs/archived.md"] button',
+    ) as HTMLButtonElement | null;
+    expect(archivedNodeButton).not.toBeNull();
+
+    act(() => {
+      archivedNodeButton?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 36,
+        }),
+      );
+    });
+
+    const unarchiveAction = document.querySelector(
+      '[data-testid="context-action-unarchive"]',
+    ) as HTMLButtonElement | null;
+    expect(unarchiveAction).not.toBeNull();
+
+    act(() => {
+      unarchiveAction?.click();
+    });
+
+    const unarchivedDocument = useDocumentsStore
+      .getState()
+      .documents.find((document) => document.id === "doc-archived");
+    expect(unarchivedDocument?.archivedAt).toBeNull();
+    expect(
+      container.querySelector('[data-testid="tree-node-docs/archived.md"]'),
+    ).toBeNull();
+
+    const showActiveButton = container.querySelector(
+      '[data-testid="document-tree-archive-toggle"]',
+    ) as HTMLButtonElement | null;
+    expect(showActiveButton?.textContent).toContain("Show active");
+
+    act(() => {
+      showActiveButton?.click();
+    });
+
+    expect(
+      container.querySelector('[data-testid="tree-node-docs/archived.md"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("opens search panel with Cmd+Shift+F and replaces document tree", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const container = document.createElement("div");
