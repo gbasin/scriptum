@@ -133,6 +133,7 @@ export function SettingsRoute() {
       >
         {SETTINGS_TABS.map((tab) => (
           <button
+            aria-controls={`settings-panel-${tab.id}`}
             aria-selected={activeTab === tab.id}
             className={clsx(
               controls.buttonBase,
@@ -142,6 +143,7 @@ export function SettingsRoute() {
                 : controls.buttonSecondary,
             )}
             data-testid={`settings-tab-${tab.id}`}
+            id={`settings-tab-${tab.id}`}
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             role="tab"
@@ -154,8 +156,10 @@ export function SettingsRoute() {
 
       <div
         aria-label="Settings tab panel"
+        aria-labelledby={`settings-tab-${activeTab}`}
         className={styles.tabPanel}
         data-testid="settings-tab-panel"
+        id={`settings-panel-${activeTab}`}
         role="tabpanel"
       >
         {activeTab === "general" ? (

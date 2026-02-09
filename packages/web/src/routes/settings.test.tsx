@@ -105,10 +105,26 @@ describe("SettingsRoute", () => {
     expect(
       container.querySelector('[data-testid="settings-form-general"]'),
     ).not.toBeNull();
+    const generalTab = container.querySelector(
+      '[data-testid="settings-tab-general"]',
+    ) as HTMLButtonElement | null;
+    const tabPanel = container.querySelector(
+      '[data-testid="settings-tab-panel"]',
+    ) as HTMLDivElement | null;
+    expect(generalTab?.getAttribute("aria-controls")).toBe(
+      "settings-panel-general",
+    );
+    expect(tabPanel?.getAttribute("id")).toBe("settings-panel-general");
+    expect(tabPanel?.getAttribute("aria-labelledby")).toBe(
+      "settings-tab-general",
+    );
 
     const appearanceTab = container.querySelector(
       '[data-testid="settings-tab-appearance"]',
     ) as HTMLButtonElement | null;
+    expect(appearanceTab?.getAttribute("aria-controls")).toBe(
+      "settings-panel-appearance",
+    );
     act(() => {
       appearanceTab?.click();
     });
@@ -119,6 +135,13 @@ describe("SettingsRoute", () => {
     expect(
       container.querySelector('[data-testid="settings-form-appearance"]'),
     ).not.toBeNull();
+    const updatedPanel = container.querySelector(
+      '[data-testid="settings-tab-panel"]',
+    ) as HTMLDivElement | null;
+    expect(updatedPanel?.getAttribute("id")).toBe("settings-panel-appearance");
+    expect(updatedPanel?.getAttribute("aria-labelledby")).toBe(
+      "settings-tab-appearance",
+    );
 
     act(() => {
       root.unmount();
