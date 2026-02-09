@@ -142,6 +142,7 @@ export interface DocReadResult {
   content_md?: string;
   sections: RpcSection[];
   attributions?: RpcSectionAttribution[];
+  degraded: boolean;
 }
 
 export interface DocEditParams {
@@ -157,6 +158,23 @@ export interface DocEditParams {
 export interface DocEditResult {
   etag: string;
   head_seq: number;
+}
+
+export interface DocEditSectionParams {
+  workspace_id: string;
+  doc_id: string;
+  section: string;
+  content: string;
+  agent: string;
+  summary?: string;
+}
+
+export interface DocEditSectionResult {
+  doc_path: string;
+  section_id: string;
+  heading: string;
+  bytes_written: number;
+  etag: string;
 }
 
 export interface DocSectionsParams {
@@ -228,6 +246,7 @@ export interface AgentStatusParams {
 
 export interface AgentStatusResult {
   active_sessions: RpcAgentSession[];
+  change_token: string;
 }
 
 export interface AgentConflictsParams {
@@ -338,6 +357,7 @@ export interface RpcParamsMap {
   "workspace.create": WorkspaceCreateParams;
   "doc.read": DocReadParams;
   "doc.edit": DocEditParams;
+  "doc.edit_section": DocEditSectionParams;
   "doc.sections": DocSectionsParams;
   "doc.tree": DocTreeParams;
   "doc.search": DocSearchParams;
@@ -359,6 +379,7 @@ export interface RpcResultMap {
   "workspace.create": WorkspaceCreateResult;
   "doc.read": DocReadResult;
   "doc.edit": DocEditResult;
+  "doc.edit_section": DocEditSectionResult;
   "doc.sections": DocSectionsResult;
   "doc.tree": DocTreeResult;
   "doc.search": DocSearchResult;

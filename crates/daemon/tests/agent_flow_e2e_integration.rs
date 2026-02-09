@@ -126,7 +126,7 @@ async fn mcp_edit_flows_through_daemon_crdt_file_and_git_with_attribution() {
         read_result["content_md"].as_str().expect("content_md should be a string").to_string();
     assert!(content.contains("Edited from MCP."));
     assert_eq!(
-        read_result["metadata"]["head_seq"].as_i64(),
+        read_result["document"]["head_seq"].as_i64(),
         Some(1),
         "head_seq should advance after doc.edit"
     );

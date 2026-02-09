@@ -11,11 +11,13 @@ use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
 use crate::rpc::trace::{trace_id_from_raw_request, with_trace_id_scope};
 use crate::search::indexer::extract_title;
 use crate::search::{
-    resolve_wiki_links, BacklinkStore, Fts5Index, IndexEntry, LinkableDocument, SearchIndex,
+    resolve_wiki_links, BacklinkStore, Fts5Index, IndexEntry, LinkableDocument, SearchHit,
+    SearchIndex,
 };
 use crate::store::documents_local::{DocumentsLocalStore, LocalDocumentRecord};
 use crate::store::meta_db::MetaDb;
 use crate::store::recovery::{recover_documents_into_manager, StartupRecoveryReport};
+use crate::store::wal::WalStore;
 use crate::watcher::hash::sha256_hex;
 use base64::Engine;
 use regex::Regex;
@@ -25,17 +27,17 @@ use scriptum_common::protocol::jsonrpc::{
     Request, RequestId, Response, RpcError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     METHOD_NOT_FOUND, PARSE_ERROR,
 };
-use scriptum_common::section::parser::parse_sections;
+use scriptum_common::section::{parser::parse_sections, slug::slugify};
 use scriptum_common::types::{
-    AgentSession as RpcAgentSession, EditorType, OverlapEditor, OverlapSeverity, Section,
-    SectionOverlap,
+    AgentSession as RpcAgentSession, Document as RpcDocument, EditorType, OverlapEditor,
+    OverlapSeverity, Section, SectionOverlap, Workspace as RpcWorkspace,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tiktoken_rs::CoreBPE;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
-use tracing::{info_span, Instrument};
+use tracing::{info_span, warn, Instrument};
 use uuid::Uuid;
 
 // ── Git sync policy ─────────────────────────────────────────────────
@@ -90,6 +92,7 @@ pub struct RpcServerState {
     doc_metadata: Arc<RwLock<HashMap<(Uuid, Uuid), DocMetadataRecord>>>,
     doc_history: Arc<RwLock<HashMap<(Uuid, Uuid), BTreeMap<i64, String>>>>,
     degraded_docs: Arc<RwLock<HashSet<Uuid>>>,
+    crdt_store_dir: Arc<PathBuf>,
     workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
     shutdown_notifier: Option<broadcast::Sender<()>>,
     git_state: Option<Arc<dyn GitOps + Send + Sync>>,
@@ -186,11 +189,20 @@ struct DocReadParams {
 
 #[derive(Debug, Clone, Serialize)]
 struct DocReadResult {
-    metadata: DocMetadataRecord,
+    document: RpcDocument,
     sections: Vec<Section>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content_md: Option<String>,
+    attributions: Vec<SectionAttribution>,
     degraded: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SectionAttribution {
+    section_id: String,
+    author_id: String,
+    author_type: EditorType,
+    timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -413,6 +425,7 @@ struct AgentWhoamiResult {
 #[derive(Debug, Clone, Serialize)]
 struct AgentStatusResult {
     active_sessions: Vec<RpcAgentSession>,
+    change_token: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -463,18 +476,40 @@ fn default_workspace_list_limit() -> usize {
     20
 }
 
+fn workspace_to_rpc_workspace(workspace: &WorkspaceInfo) -> RpcWorkspace {
+    let mut slug = slugify(&workspace.name);
+    if slug.is_empty() {
+        slug = workspace.workspace_id.simple().to_string();
+    }
+
+    RpcWorkspace {
+        id: workspace.workspace_id,
+        slug,
+        name: workspace.name.clone(),
+        role: None,
+        created_at: workspace.created_at,
+        updated_at: workspace.created_at,
+        etag: format!(
+            "workspace:{}:{}",
+            workspace.workspace_id,
+            workspace.created_at.timestamp_millis()
+        ),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct WorkspaceListItem {
+    #[serde(flatten)]
+    workspace: RpcWorkspace,
     workspace_id: Uuid,
-    name: String,
     root_path: String,
     doc_count: usize,
-    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct WorkspaceListResult {
     items: Vec<WorkspaceListItem>,
+    next_cursor: Option<String>,
     total: usize,
 }
 
@@ -485,9 +520,10 @@ struct WorkspaceOpenParams {
 
 #[derive(Debug, Clone, Serialize)]
 struct WorkspaceOpenResult {
+    workspace: RpcWorkspace,
+    root_path: String,
     workspace_id: Uuid,
     name: String,
-    root_path: String,
     doc_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -500,6 +536,7 @@ struct WorkspaceCreateParams {
 
 #[derive(Debug, Clone, Serialize)]
 struct WorkspaceCreateResult {
+    workspace: RpcWorkspace,
     workspace_id: Uuid,
     name: String,
     root_path: String,
@@ -706,11 +743,13 @@ impl Default for RpcServerState {
         let meta_db = MetaDb::open(":memory:").expect("in-memory meta.db should initialize");
         let lease_store = LeaseStore::new(meta_db.connection(), chrono::Utc::now())
             .expect("lease store should initialize");
+        let default_crdt_store_dir = std::env::temp_dir().join("scriptum").join("crdt_store");
         Self {
             doc_manager: Arc::new(RwLock::new(DocManager::default())),
             doc_metadata: Arc::new(RwLock::new(HashMap::new())),
             doc_history: Arc::new(RwLock::new(HashMap::new())),
             degraded_docs: Arc::new(RwLock::new(HashSet::new())),
+            crdt_store_dir: Arc::new(default_crdt_store_dir),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notifier: None,
             git_state: None,
@@ -765,6 +804,11 @@ impl RpcServerState {
         self
     }
 
+    pub fn with_crdt_store_dir(mut self, crdt_store_dir: impl Into<PathBuf>) -> Self {
+        self.crdt_store_dir = Arc::new(crdt_store_dir.into());
+        self
+    }
+
     fn with_agent_storage<T, F>(&self, f: F) -> Result<T, String>
     where
         F: FnOnce(&rusqlite::Connection, &mut LeaseStore) -> Result<T, String>,
@@ -773,6 +817,39 @@ impl RpcServerState {
         let mut leases =
             self.lease_store.lock().map_err(|_| "agent lease store lock poisoned".to_string())?;
         f(db.connection(), &mut leases)
+    }
+
+    fn ensure_search_index<'a>(conn: &'a rusqlite::Connection) -> Result<Fts5Index<'a>, String> {
+        let search_index = Fts5Index::new(conn);
+        search_index
+            .ensure_schema()
+            .map_err(|error| format!("failed to ensure FTS index schema: {error}"))?;
+        Ok(search_index)
+    }
+
+    fn upsert_search_index_entry(
+        conn: &rusqlite::Connection,
+        doc_id: Uuid,
+        title: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let search_index = Self::ensure_search_index(conn)?;
+        search_index
+            .upsert(&IndexEntry {
+                doc_id: doc_id.to_string(),
+                title: title.to_string(),
+                content: content.to_string(),
+            })
+            .map_err(|error| format!("failed to update search index for doc {doc_id}: {error}"))
+    }
+
+    fn search_index_hits(
+        conn: &rusqlite::Connection,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, String> {
+        let search_index = Self::ensure_search_index(conn)?;
+        search_index.search(query, limit).map_err(|error| format!("failed to search docs: {error}"))
     }
 
     fn ensure_active_session(
@@ -818,9 +895,48 @@ impl RpcServerState {
         dedupe.into_iter().map(|(agent_id, sections)| (agent_id, sections.len() as u32)).collect()
     }
 
-    fn agent_status(&self, workspace_id: Uuid) -> Result<AgentStatusResult, String> {
+    fn build_workspace_change_token(
+        workspace_id: Uuid,
+        active_sessions: &[RpcAgentSession],
+        workspace_doc_heads: &[(Uuid, i64)],
+    ) -> String {
+        let mut fingerprint = String::new();
+        fingerprint.push_str("workspace:");
+        fingerprint.push_str(&workspace_id.to_string());
+        fingerprint.push('\n');
+
+        let mut session_fingerprint = active_sessions
+            .iter()
+            .map(|session| {
+                format!(
+                    "{}|{}|{}",
+                    session.agent_id,
+                    session.last_seen_at.to_rfc3339(),
+                    session.active_sections
+                )
+            })
+            .collect::<Vec<_>>();
+        session_fingerprint.sort();
+        for line in session_fingerprint {
+            fingerprint.push_str("session:");
+            fingerprint.push_str(&line);
+            fingerprint.push('\n');
+        }
+
+        for (doc_id, head_seq) in workspace_doc_heads {
+            fingerprint.push_str("doc:");
+            fingerprint.push_str(&doc_id.to_string());
+            fingerprint.push(':');
+            fingerprint.push_str(&head_seq.to_string());
+            fingerprint.push('\n');
+        }
+
+        sha256_hex(fingerprint.as_bytes())
+    }
+
+    async fn agent_status(&self, workspace_id: Uuid) -> Result<AgentStatusResult, String> {
         let now = chrono::Utc::now();
-        self.with_agent_storage(|conn, lease_store| {
+        let active_sessions = self.with_agent_storage(|conn, lease_store| {
             let workspace = workspace_id.to_string();
             let sessions =
                 SessionStore::list_active(conn, &workspace).map_err(|error| error.to_string())?;
@@ -841,8 +957,26 @@ impl RpcServerState {
                         .unwrap_or(0),
                 })
                 .collect::<Vec<_>>();
-            Ok(AgentStatusResult { active_sessions })
-        })
+            Ok(active_sessions)
+        })?;
+
+        let workspace_doc_heads = {
+            let metadata = self.doc_metadata.read().await;
+            let mut doc_heads = metadata
+                .iter()
+                .filter(|((ws_id, _), _)| *ws_id == workspace_id)
+                .map(|((_, doc_id), record)| (*doc_id, record.head_seq))
+                .collect::<Vec<_>>();
+            doc_heads.sort_by_key(|(doc_id, _)| *doc_id);
+            doc_heads
+        };
+        let change_token = Self::build_workspace_change_token(
+            workspace_id,
+            &active_sessions,
+            &workspace_doc_heads,
+        );
+
+        Ok(AgentStatusResult { active_sessions, change_token })
     }
 
     fn agent_list(&self, workspace_id: Uuid) -> Result<AgentListResult, String> {
@@ -1024,12 +1158,17 @@ impl RpcServerState {
             workspace_id,
             doc_id,
             path,
-            title,
+            title: title.clone(),
             head_seq: 0,
             etag: format!("doc:{doc_id}:0"),
         };
         self.doc_metadata.write().await.insert((workspace_id, doc_id), metadata);
         self.record_doc_snapshot(workspace_id, doc_id, 0, markdown).await;
+        self.with_agent_storage(|conn, _| {
+            Self::upsert_search_index_entry(conn, doc_id, &title, markdown)?;
+            Ok(())
+        })
+        .expect("seeded docs should be indexed in FTS");
         self.degraded_docs.write().await.remove(&doc_id);
     }
 
@@ -1064,6 +1203,19 @@ impl RpcServerState {
             .or_insert_with(|| content_md.to_string());
     }
 
+    fn append_doc_wal_update(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        payload: &[u8],
+    ) -> Result<(), String> {
+        let wal_root = self.crdt_store_dir.join("wal");
+        let wal = WalStore::for_doc(&wal_root, workspace_id, doc_id)
+            .map_err(|error| format!("failed to open WAL for doc {doc_id}: {error}"))?;
+        wal.append_update(payload)
+            .map_err(|error| format!("failed to append WAL update for doc {doc_id}: {error}"))
+    }
+
     async fn workspace_list(&self, offset: usize, limit: usize) -> WorkspaceListResult {
         let workspaces = self.workspaces.read().await;
         let doc_metadata = self.doc_metadata.read().await;
@@ -1077,19 +1229,20 @@ impl RpcServerState {
         let mut items: Vec<WorkspaceListItem> = workspaces
             .values()
             .map(|ws| WorkspaceListItem {
+                workspace: workspace_to_rpc_workspace(ws),
                 workspace_id: ws.workspace_id,
-                name: ws.name.clone(),
                 root_path: ws.root_path.clone(),
                 doc_count: doc_counts.get(&ws.workspace_id).copied().unwrap_or(0),
-                created_at: ws.created_at,
             })
             .collect();
-        items.sort_by(|a, b| a.name.cmp(&b.name));
+        items.sort_by(|a, b| a.workspace.name.cmp(&b.workspace.name));
 
         let total = items.len();
         let items: Vec<WorkspaceListItem> = items.into_iter().skip(offset).take(limit).collect();
+        let next_offset = offset.saturating_add(items.len());
+        let next_cursor = (next_offset < total).then(|| next_offset.to_string());
 
-        WorkspaceListResult { items, total }
+        WorkspaceListResult { items, next_cursor, total }
     }
 
     async fn workspace_open(&self, workspace_id: Uuid) -> Result<WorkspaceOpenResult, String> {
@@ -1100,11 +1253,13 @@ impl RpcServerState {
 
         let doc_metadata = self.doc_metadata.read().await;
         let doc_count = doc_metadata.keys().filter(|(ws_id, _)| *ws_id == workspace_id).count();
+        let workspace = workspace_to_rpc_workspace(ws);
 
         Ok(WorkspaceOpenResult {
+            workspace,
+            root_path: ws.root_path.clone(),
             workspace_id: ws.workspace_id,
             name: ws.name.clone(),
-            root_path: ws.root_path.clone(),
             doc_count,
             created_at: ws.created_at,
         })
@@ -1141,10 +1296,7 @@ impl RpcServerState {
 
         // Seed local metadata/index stores for imported docs.
         self.with_agent_storage(|conn, _| {
-            let search_index = Fts5Index::new(conn);
-            search_index
-                .ensure_schema()
-                .map_err(|error| format!("failed to ensure FTS index schema: {error}"))?;
+            let search_index = Self::ensure_search_index(conn)?;
 
             let backlink_store = BacklinkStore::new(conn);
             backlink_store
@@ -1171,6 +1323,9 @@ impl RpcServerState {
                     last_fs_mtime_ns: doc.last_fs_mtime_ns,
                     last_content_hash: doc.content_hash.clone(),
                     projection_rev: 0,
+                    last_server_seq: 0,
+                    last_ack_seq: 0,
+                    parse_error: None,
                 };
                 DocumentsLocalStore::insert(conn, &local_record).map_err(|error| {
                     format!("failed to register imported local doc `{}`: {error}", doc.path)
@@ -1241,9 +1396,16 @@ impl RpcServerState {
             root_path: root_path.clone(),
             created_at,
         };
-        self.workspaces.write().await.insert(workspace_id, info);
+        self.workspaces.write().await.insert(workspace_id, info.clone());
+        let workspace = workspace_to_rpc_workspace(&info);
 
-        Ok(WorkspaceCreateResult { workspace_id, name: trimmed_name, root_path, created_at })
+        Ok(WorkspaceCreateResult {
+            workspace,
+            workspace_id,
+            name: trimmed_name,
+            root_path,
+            created_at,
+        })
     }
 
     async fn read_doc(
@@ -1264,6 +1426,7 @@ impl RpcServerState {
                 .or_insert_with(|| default_metadata(workspace_id, doc_id))
                 .clone()
         };
+        let document = metadata_to_rpc_document(&metadata);
 
         let content_md = doc.get_text_string("content");
         let sections = parse_sections(&content_md);
@@ -1276,9 +1439,10 @@ impl RpcServerState {
         }
 
         DocReadResult {
-            metadata,
+            document,
             sections,
             content_md: include_content.then_some(content_md),
+            attributions: Vec::new(),
             degraded,
         }
     }
@@ -1325,28 +1489,42 @@ impl RpcServerState {
             )
             .await;
 
+            let current_state = doc.encode_state();
+            let staged_doc = YDoc::from_state(&current_state)
+                .map_err(|error| format!("failed to stage doc state for WAL append: {error}"))?;
+
             if let Some(content_md) = params.content_md.as_deref() {
-                let existing_len = doc.text_len("content");
-                doc.replace_text("content", 0, existing_len, content_md);
+                let existing_len = staged_doc.text_len("content");
+                staged_doc.replace_text("content", 0, existing_len, content_md);
             }
 
             if let Some(ops_value) = params.ops.as_ref() {
                 let update_bytes = decode_doc_edit_ops(ops_value)?;
-                doc.apply_update(&update_bytes)
+                staged_doc
+                    .apply_update(&update_bytes)
                     .map_err(|error| format!("failed to apply Yjs ops: {error}"))?;
             }
 
+            let wal_update = staged_doc.encode_state();
+            self.append_doc_wal_update(params.workspace_id, params.doc_id, &wal_update)?;
+            doc.apply_update(&wal_update)
+                .map_err(|error| format!("failed to apply staged Yjs update: {error}"))?;
+
             let updated_content = doc.get_text_string("content");
-            let (result, updated_seq) = {
+            let (result, updated_seq, updated_title) = {
                 let mut metadata = self.doc_metadata.write().await;
                 let record = metadata
                     .entry((params.workspace_id, params.doc_id))
                     .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id));
                 record.head_seq = record.head_seq.saturating_add(1);
                 record.etag = format!("doc:{}:{}", params.doc_id, record.head_seq);
+                let normalized_title =
+                    extract_title(&updated_content, Path::new(record.path.as_str()));
+                record.title = normalized_title.clone();
                 (
                     DocEditResult { etag: record.etag.clone(), head_seq: record.head_seq },
                     record.head_seq,
+                    normalized_title,
                 )
             };
             self.record_doc_snapshot(
@@ -1356,6 +1534,22 @@ impl RpcServerState {
                 &updated_content,
             )
             .await;
+            if let Err(error) = self.with_agent_storage(|conn, _| {
+                Self::upsert_search_index_entry(
+                    conn,
+                    params.doc_id,
+                    &updated_title,
+                    &updated_content,
+                )?;
+                Ok(())
+            }) {
+                warn!(
+                    doc_id = %params.doc_id,
+                    workspace_id = %params.workspace_id,
+                    error = %error,
+                    "failed to update persistent search index after doc.edit"
+                );
+            }
 
             Ok(result)
         }
@@ -1429,61 +1623,36 @@ impl RpcServerState {
         }
 
         let offset = decode_doc_search_cursor(params.cursor.as_deref())?;
-        let metadata: Vec<DocMetadataRecord> = self
-            .doc_metadata
-            .read()
-            .await
-            .values()
-            .filter(|record| record.workspace_id == params.workspace_id)
-            .cloned()
-            .collect();
-        if metadata.is_empty() {
+        let (metadata_by_doc_id, search_limit) = {
+            let metadata = self.doc_metadata.read().await;
+            let search_limit = metadata.len().min(i64::MAX as usize).max(1);
+            let metadata_by_doc_id = metadata
+                .values()
+                .filter(|record| record.workspace_id == params.workspace_id)
+                .cloned()
+                .map(|record| (record.doc_id.to_string(), record))
+                .collect::<HashMap<_, _>>();
+            (metadata_by_doc_id, search_limit)
+        };
+
+        if metadata_by_doc_id.is_empty() {
             return Ok(DocSearchResult { items: Vec::new(), total: 0, next_cursor: None });
         }
 
-        let mut doc_entries: Vec<(DocMetadataRecord, String)> = Vec::with_capacity(metadata.len());
-        for record in metadata {
-            let doc = {
-                let mut manager = self.doc_manager.write().await;
-                manager.subscribe_or_create(record.doc_id)
-            };
-            let content = doc.get_text_string("content");
-            {
-                let mut manager = self.doc_manager.write().await;
-                let _ = manager.unsubscribe(record.doc_id);
-            }
-            doc_entries.push((record, content));
-        }
-
-        let connection = rusqlite::Connection::open_in_memory()
-            .map_err(|error| format!("failed to initialize in-memory search db: {error}"))?;
-        let index = Fts5Index::new(&connection);
-        index
-            .ensure_schema()
-            .map_err(|error| format!("failed to create search index schema: {error}"))?;
-
-        let mut metadata_by_doc_id = HashMap::with_capacity(doc_entries.len());
-        for (record, content) in doc_entries {
-            index
-                .upsert(&IndexEntry {
-                    doc_id: record.doc_id.to_string(),
-                    title: record.title.clone(),
-                    content,
-                })
-                .map_err(|error| format!("failed to index doc {}: {error}", record.doc_id))?;
-            metadata_by_doc_id.insert(record.doc_id.to_string(), record);
-        }
-
-        let hits = index
-            .search(query, metadata_by_doc_id.len())
-            .map_err(|error| format!("failed to search docs: {error}"))?;
-        if offset > hits.len() {
+        let workspace_hits: Vec<SearchHit> = self.with_agent_storage(|conn, _| {
+            let hits = Self::search_index_hits(conn, query, search_limit)?;
+            Ok(hits
+                .into_iter()
+                .filter(|hit| metadata_by_doc_id.contains_key(&hit.doc_id))
+                .collect())
+        })?;
+        if offset > workspace_hits.len() {
             return Err(format!("cursor offset {offset} is out of range"));
         }
 
-        let end = offset.saturating_add(params.limit).min(hits.len());
+        let end = offset.saturating_add(params.limit).min(workspace_hits.len());
         let mut items = Vec::with_capacity(end.saturating_sub(offset));
-        for hit in &hits[offset..end] {
+        for hit in &workspace_hits[offset..end] {
             if let Some(record) = metadata_by_doc_id.get(&hit.doc_id) {
                 items.push(DocSearchHit {
                     doc_id: record.doc_id,
@@ -1495,8 +1664,8 @@ impl RpcServerState {
             }
         }
 
-        let next_cursor = (end < hits.len()).then(|| encode_doc_search_cursor(end));
-        Ok(DocSearchResult { items, total: hits.len(), next_cursor })
+        let next_cursor = (end < workspace_hits.len()).then(|| encode_doc_search_cursor(end));
+        Ok(DocSearchResult { items, total: workspace_hits.len(), next_cursor })
     }
 
     async fn doc_diff(
@@ -1801,7 +1970,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
         "doc.search" => handle_doc_search(request, state).await,
         "doc.tree" => handle_doc_tree(request, state).await,
         "agent.whoami" => handle_agent_whoami(request, state),
-        "agent.status" => handle_agent_status(request, state),
+        "agent.status" => handle_agent_status(request, state).await,
         "agent.conflicts" => handle_agent_conflicts(request, state),
         "agent.list" => handle_agent_list(request, state),
         "agent.claim" => handle_agent_claim(request, state),
@@ -2027,13 +2196,13 @@ fn handle_agent_whoami(request: Request, state: &RpcServerState) -> Response {
     Response::success(request.id, json!(result))
 }
 
-fn handle_agent_status(request: Request, state: &RpcServerState) -> Response {
+async fn handle_agent_status(request: Request, state: &RpcServerState) -> Response {
     let params = match parse_agent_status_params(request.params, request.id.clone()) {
         Ok(params) => params,
         Err(response) => return response,
     };
 
-    match state.agent_status(params.workspace_id) {
+    match state.agent_status(params.workspace_id).await {
         Ok(result) => Response::success(request.id, json!(result)),
         Err(reason) => Response::error(
             request.id,
@@ -2730,6 +2899,28 @@ fn default_metadata(workspace_id: Uuid, doc_id: Uuid) -> DocMetadataRecord {
     }
 }
 
+fn metadata_to_rpc_document(metadata: &DocMetadataRecord) -> RpcDocument {
+    let created_at =
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(0).expect("unix epoch should fit");
+    let updated_at =
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(metadata.head_seq.max(0))
+            .unwrap_or(created_at);
+
+    RpcDocument {
+        id: metadata.doc_id,
+        workspace_id: metadata.workspace_id,
+        path: metadata.path.clone(),
+        title: metadata.title.clone(),
+        tags: Vec::new(),
+        head_seq: metadata.head_seq,
+        etag: metadata.etag.clone(),
+        archived_at: None,
+        deleted_at: None,
+        created_at,
+        updated_at,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2851,10 +3042,11 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success response: {response:?}");
         let result = response.result.expect("result should be populated");
-        assert_eq!(result["metadata"]["workspace_id"], json!(workspace_id));
-        assert_eq!(result["metadata"]["doc_id"], json!(doc_id));
-        assert_eq!(result["metadata"]["path"], json!("docs/readme.md"));
-        assert_eq!(result["metadata"]["title"], json!("Readme"));
+        assert_eq!(result["document"]["workspace_id"], json!(workspace_id));
+        assert_eq!(result["document"]["id"], json!(doc_id));
+        assert_eq!(result["document"]["path"], json!("docs/readme.md"));
+        assert_eq!(result["document"]["title"], json!("Readme"));
+        assert_eq!(result["attributions"], json!([]));
         assert_eq!(result["content_md"], json!(markdown));
         assert_eq!(result["sections"].as_array().expect("sections should be an array").len(), 2);
     }
@@ -2930,8 +3122,8 @@ mod tests {
 
         let read = state.read_doc(workspace_id, doc_id, true).await;
         assert_eq!(read.content_md, Some("# After\nnew".to_string()));
-        assert_eq!(read.metadata.head_seq, 1);
-        assert_eq!(read.metadata.etag, format!("doc:{doc_id}:1"));
+        assert_eq!(read.document.head_seq, 1);
+        assert_eq!(read.document.etag, format!("doc:{doc_id}:1"));
     }
 
     #[tokio::test]
@@ -2959,7 +3151,47 @@ mod tests {
         assert!(response.error.is_none(), "expected success response: {response:?}");
         let read = state.read_doc(workspace_id, doc_id, true).await;
         assert_eq!(read.content_md, Some("inserted via ops".to_string()));
-        assert_eq!(read.metadata.head_seq, 1);
+        assert_eq!(read.document.head_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn doc_edit_writes_wal_and_recovery_restores_content_after_restart() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let crdt_store_dir = tmp.path().join("crdt_store");
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+
+        let state = RpcServerState::default().with_crdt_store_dir(crdt_store_dir.clone());
+        let edit_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_id,
+                    "client_update_id": "upd-recover-1",
+                    "content_md": "# Recovered\nfrom wal\n",
+                })),
+                RequestId::Number(815),
+            ),
+            &state,
+        )
+        .await;
+        assert!(edit_response.error.is_none(), "doc.edit should succeed: {edit_response:?}");
+
+        let wal_path = crdt_store_dir.join("wal").join(workspace_id.to_string()).join(format!("{doc_id}.wal"));
+        assert!(wal_path.exists(), "doc.edit should create a WAL file");
+
+        // Simulate daemon crash/restart by creating a fresh state and recovering from the same store.
+        let recovered_state = RpcServerState::default().with_crdt_store_dir(crdt_store_dir.clone());
+        let report = recovered_state
+            .recover_docs_at_startup(&crdt_store_dir)
+            .await
+            .expect("startup recovery should succeed");
+        assert_eq!(report.recovered_docs, 1);
+        assert!(report.degraded_docs.is_empty());
+
+        let recovered_doc = recovered_state.read_doc(workspace_id, doc_id, true).await;
+        assert_eq!(recovered_doc.content_md, Some("# Recovered\nfrom wal\n".to_string()));
     }
 
     #[tokio::test]
@@ -2994,8 +3226,8 @@ mod tests {
 
         let read = state.read_doc(workspace_id, doc_id, true).await;
         assert_eq!(read.content_md, Some("unchanged".to_string()));
-        assert_eq!(read.metadata.head_seq, 0);
-        assert_eq!(read.metadata.etag, format!("doc:{doc_id}:0"));
+        assert_eq!(read.document.head_seq, 0);
+        assert_eq!(read.document.etag, format!("doc:{doc_id}:0"));
     }
 
     #[tokio::test]
@@ -3421,6 +3653,9 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result should be populated");
+        let change_token =
+            result["change_token"].as_str().expect("change_token should be present and a string");
+        assert!(!change_token.is_empty(), "change_token should not be empty");
         let sessions =
             result["active_sessions"].as_array().expect("active_sessions should be an array");
         assert_eq!(sessions.len(), 2);
@@ -3436,6 +3671,74 @@ mod tests {
         }
         assert_eq!(sections_by_agent.get("claude-1"), Some(&2));
         assert_eq!(sections_by_agent.get("copilot-1"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn agent_status_change_token_changes_after_doc_edit() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/status.md", "Status", "# Before\n").await;
+
+        let status_before = Request::new(
+            "agent.status",
+            Some(json!({ "workspace_id": workspace_id })),
+            RequestId::Number(670),
+        );
+        let before_response = dispatch_request(status_before, &state).await;
+        assert!(before_response.error.is_none(), "expected success: {before_response:?}");
+        let before_token = before_response
+            .result
+            .as_ref()
+            .and_then(|result| result["change_token"].as_str())
+            .expect("change_token should be present")
+            .to_string();
+
+        let status_no_change = Request::new(
+            "agent.status",
+            Some(json!({ "workspace_id": workspace_id })),
+            RequestId::Number(671),
+        );
+        let no_change_response = dispatch_request(status_no_change, &state).await;
+        assert!(no_change_response.error.is_none(), "expected success: {no_change_response:?}");
+        let no_change_token = no_change_response
+            .result
+            .as_ref()
+            .and_then(|result| result["change_token"].as_str())
+            .expect("change_token should be present")
+            .to_string();
+        assert_eq!(before_token, no_change_token, "token should be stable when state is unchanged");
+
+        let edit_request = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "status-token-upd-1",
+                "content_md": "# After\n"
+            })),
+            RequestId::Number(672),
+        );
+        let edit_response = dispatch_request(edit_request, &state).await;
+        assert!(edit_response.error.is_none(), "expected edit to succeed: {edit_response:?}");
+
+        let status_after = Request::new(
+            "agent.status",
+            Some(json!({ "workspace_id": workspace_id })),
+            RequestId::Number(673),
+        );
+        let after_response = dispatch_request(status_after, &state).await;
+        assert!(after_response.error.is_none(), "expected success: {after_response:?}");
+        let after_token = after_response
+            .result
+            .as_ref()
+            .and_then(|result| result["change_token"].as_str())
+            .expect("change_token should be present")
+            .to_string();
+        assert_ne!(
+            before_token, after_token,
+            "token should change when workspace head_seq changes"
+        );
     }
 
     #[tokio::test]
@@ -4019,6 +4322,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn doc_search_reflects_doc_edit_index_updates() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state
+            .seed_doc(
+                workspace_id,
+                doc_id,
+                "docs/live-index.md",
+                "Live Index",
+                "# Live Index\n\nLegacy token text.\n",
+            )
+            .await;
+
+        let edit_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_id,
+                    "client_update_id": "search-reindex-1",
+                    "content_md": "# Live Index\n\nFresh token appears now.\n",
+                })),
+                RequestId::Number(218),
+            ),
+            &state,
+        )
+        .await;
+        assert!(edit_response.error.is_none(), "doc.edit should succeed: {edit_response:?}");
+
+        let fresh_search = dispatch_request(
+            Request::new(
+                "doc.search",
+                Some(json!({ "workspace_id": workspace_id, "q": "Fresh", "limit": 10 })),
+                RequestId::Number(219),
+            ),
+            &state,
+        )
+        .await;
+        assert!(fresh_search.error.is_none(), "doc.search should succeed: {fresh_search:?}");
+        let fresh_result = fresh_search.result.expect("search result should be present");
+        assert_eq!(fresh_result["total"], 1);
+        let fresh_items = fresh_result["items"].as_array().expect("items should be an array");
+        assert_eq!(fresh_items.len(), 1);
+        assert_eq!(fresh_items[0]["doc_id"], doc_id.to_string());
+
+        let stale_search = dispatch_request(
+            Request::new(
+                "doc.search",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "q": "Legacy",
+                    "limit": 10
+                })),
+                RequestId::Number(220),
+            ),
+            &state,
+        )
+        .await;
+        assert!(stale_search.error.is_none(), "doc.search should succeed: {stale_search:?}");
+        let stale_result = stale_search.result.expect("search result should be present");
+        assert_eq!(stale_result["total"], 0);
+    }
+
+    #[tokio::test]
     async fn doc_search_rejects_invalid_cursor() {
         let state = RpcServerState::default();
         let request = Request::new(
@@ -4028,7 +4396,7 @@ mod tests {
                 "q": "Scriptum",
                 "cursor": "not-base64"
             })),
-            RequestId::Number(218),
+            RequestId::Number(221),
         );
         let response = dispatch_request(request, &state).await;
 
@@ -4047,6 +4415,7 @@ mod tests {
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result");
         assert_eq!(result["items"].as_array().unwrap().len(), 0);
+        assert_eq!(result["next_cursor"], serde_json::Value::Null);
         assert_eq!(result["total"], 0);
     }
 
@@ -4068,12 +4437,19 @@ mod tests {
         let result = response.result.expect("result");
         let items = result["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
+        assert_eq!(result["next_cursor"], serde_json::Value::Null);
         assert_eq!(result["total"], 2);
 
         // Sorted by name: Alpha before Beta.
         assert_eq!(items[0]["name"], "Alpha");
+        assert_eq!(items[0]["workspace_id"], json!(ws_a));
+        assert_eq!(items[0]["id"], json!(ws_a));
+        assert_eq!(items[0]["slug"], "alpha");
         assert_eq!(items[0]["doc_count"], 1);
         assert_eq!(items[1]["name"], "Beta");
+        assert_eq!(items[1]["workspace_id"], json!(ws_b));
+        assert_eq!(items[1]["id"], json!(ws_b));
+        assert_eq!(items[1]["slug"], "beta");
         assert_eq!(items[1]["doc_count"], 0);
     }
 
@@ -4097,6 +4473,7 @@ mod tests {
         let result = response.result.expect("result");
         let items = result["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
+        assert_eq!(result["next_cursor"], "4");
         assert_eq!(result["total"], 5);
     }
 
@@ -4119,6 +4496,8 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result");
+        assert_eq!(result["workspace"]["id"], json!(ws_id));
+        assert_eq!(result["workspace"]["name"], "MyProject");
         assert_eq!(result["workspace_id"], json!(ws_id));
         assert_eq!(result["name"], "MyProject");
         assert_eq!(result["root_path"], "/projects/my-project");
@@ -4167,8 +4546,11 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result");
+        assert_eq!(result["workspace"]["name"], "New Project");
+        assert_eq!(result["workspace"]["slug"], "new-project");
         assert_eq!(result["name"], "New Project");
         assert_eq!(result["root_path"], json!(root));
+        assert!(result["workspace"]["id"].as_str().is_some());
         assert!(result["workspace_id"].as_str().is_some());
         assert!(result["created_at"].as_str().is_some());
 
@@ -4254,7 +4636,7 @@ mod tests {
         let create_resp = dispatch_request(create, &state).await;
         assert!(create_resp.error.is_none(), "workspace.create should succeed: {create_resp:?}");
         let create_result = create_resp.result.expect("workspace.create result should be present");
-        let workspace_id: Uuid = serde_json::from_value(create_result["workspace_id"].clone())
+        let workspace_id: Uuid = serde_json::from_value(create_result["workspace"]["id"].clone())
             .expect("workspace_id should decode");
 
         let tree_resp = dispatch_request(

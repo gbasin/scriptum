@@ -247,8 +247,8 @@ async fn rpc_doc_read_returns_content_from_seeded_doc() {
 
     assert!(response.error.is_none(), "expected success: {response:?}");
     let result = response.result.expect("result should be populated");
-    assert_eq!(result["metadata"]["path"], json!("docs/readme.md"));
-    assert_eq!(result["metadata"]["title"], json!("README"));
+    assert_eq!(result["document"]["path"], json!("docs/readme.md"));
+    assert_eq!(result["document"]["title"], json!("README"));
     assert_eq!(
         result["content_md"],
         json!("# README\n\n## Getting Started\n\nInstall dependencies.\n")

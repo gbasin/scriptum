@@ -59,7 +59,9 @@ async fn run_standalone_with_paths(paths: DaemonPaths) -> Result<()> {
     let yjs_ws_task = start_local_yjs_ws_server().await?;
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
-    let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx.clone());
+    let state = RpcServerState::default()
+        .with_crdt_store_dir(paths.base_dir.join("crdt_store"))
+        .with_shutdown_notifier(shutdown_tx.clone());
     recover_state_from_crdt_store(&state, &paths.base_dir).await?;
     let ctrl_c_tx = shutdown_tx.clone();
     tokio::spawn(async move {
@@ -83,7 +85,9 @@ async fn start_embedded_with_paths(paths: DaemonPaths) -> Result<EmbeddedDaemonH
     let yjs_ws_task = start_local_yjs_ws_server().await?;
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
-    let state = RpcServerState::default().with_shutdown_notifier(shutdown_tx.clone());
+    let state = RpcServerState::default()
+        .with_crdt_store_dir(paths.base_dir.join("crdt_store"))
+        .with_shutdown_notifier(shutdown_tx.clone());
     recover_state_from_crdt_store(&state, &paths.base_dir).await?;
     let socket_path = paths.socket_path.clone();
     let pid_path = paths.pid_path.clone();

@@ -15,6 +15,9 @@ pub struct LocalDocumentRecord {
     pub last_fs_mtime_ns: i64,
     pub last_content_hash: String,
     pub projection_rev: i64,
+    pub last_server_seq: i64,
+    pub last_ack_seq: i64,
+    pub parse_error: Option<String>,
 }
 
 /// CRUD operations for `documents_local`.
@@ -26,8 +29,8 @@ impl DocumentsLocalStore {
         conn.execute(
             "INSERT INTO documents_local \
              (doc_id, workspace_id, abs_path, line_ending_style, last_fs_mtime_ns, \
-              last_content_hash, projection_rev) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+              last_content_hash, projection_rev, last_server_seq, last_ack_seq, parse_error) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 record.doc_id,
                 record.workspace_id,
@@ -36,6 +39,9 @@ impl DocumentsLocalStore {
                 record.last_fs_mtime_ns,
                 record.last_content_hash,
                 record.projection_rev,
+                record.last_server_seq,
+                record.last_ack_seq,
+                record.parse_error,
             ],
         )
         .context("failed to insert documents_local row")?;
@@ -48,8 +54,9 @@ impl DocumentsLocalStore {
             .execute(
                 "UPDATE documents_local \
                  SET workspace_id = ?1, abs_path = ?2, line_ending_style = ?3, \
-                     last_fs_mtime_ns = ?4, last_content_hash = ?5, projection_rev = ?6 \
-                 WHERE doc_id = ?7",
+                     last_fs_mtime_ns = ?4, last_content_hash = ?5, projection_rev = ?6, \
+                     last_server_seq = ?7, last_ack_seq = ?8, parse_error = ?9 \
+                 WHERE doc_id = ?10",
                 params![
                     record.workspace_id,
                     record.abs_path,
@@ -57,6 +64,9 @@ impl DocumentsLocalStore {
                     record.last_fs_mtime_ns,
                     record.last_content_hash,
                     record.projection_rev,
+                    record.last_server_seq,
+                    record.last_ack_seq,
+                    record.parse_error,
                     record.doc_id,
                 ],
             )
@@ -69,7 +79,8 @@ impl DocumentsLocalStore {
         let mut stmt = conn
             .prepare(
                 "SELECT doc_id, workspace_id, abs_path, line_ending_style, \
-                        last_fs_mtime_ns, last_content_hash, projection_rev \
+                        last_fs_mtime_ns, last_content_hash, projection_rev, \
+                        last_server_seq, last_ack_seq, parse_error \
                  FROM documents_local \
                  WHERE doc_id = ?1",
             )
@@ -93,7 +104,8 @@ impl DocumentsLocalStore {
         let mut stmt = conn
             .prepare(
                 "SELECT doc_id, workspace_id, abs_path, line_ending_style, \
-                        last_fs_mtime_ns, last_content_hash, projection_rev \
+                        last_fs_mtime_ns, last_content_hash, projection_rev, \
+                        last_server_seq, last_ack_seq, parse_error \
                  FROM documents_local \
                  WHERE workspace_id = ?1 \
                  ORDER BY abs_path ASC, doc_id ASC",
@@ -118,6 +130,9 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalDocumentRecor
         last_fs_mtime_ns: row.get(4)?,
         last_content_hash: row.get(5)?,
         projection_rev: row.get(6)?,
+        last_server_seq: row.get(7)?,
+        last_ack_seq: row.get(8)?,
+        parse_error: row.get(9)?,
     })
 }
 
@@ -163,6 +178,9 @@ mod tests {
             last_fs_mtime_ns: 1_700_000_000_000_000_000,
             last_content_hash: format!("hash-{doc}-{rev}"),
             projection_rev: rev,
+            last_server_seq: 0,
+            last_ack_seq: 0,
+            parse_error: None,
         }
     }
 
@@ -191,6 +209,9 @@ mod tests {
         let updated = LocalDocumentRecord {
             line_ending_style: "crlf".to_string(),
             last_fs_mtime_ns: 1_700_000_000_000_123_456,
+            last_server_seq: 7,
+            last_ack_seq: 5,
+            parse_error: Some("parse failed".to_string()),
             ..rec("doc-1", "ws-1", "/repo/renamed.md", 2)
         };
         let changed =
