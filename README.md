@@ -100,6 +100,36 @@ cargo install cargo-nextest
 cargo install cargo-llvm-cov
 ```
 
+## Starting the Daemon
+
+Scriptum clients talk to the local daemon (`scriptumd`) over a Unix socket.
+
+Start it directly:
+
+```bash
+cargo run --bin scriptumd
+```
+
+Or run the built binary:
+
+```bash
+./target/debug/scriptumd
+```
+
+Socket-activated mode:
+- The `scriptum` CLI can auto-start the daemon when needed.
+- This is useful for one-off CLI workflows where you do not want a dedicated daemon terminal.
+
+Runtime files:
+- Unix socket: `~/.scriptum/daemon.sock`
+- WebSocket port file: `~/.scriptum/ws.port`
+
+Verify daemon health:
+
+```bash
+scriptum status
+```
+
 ## Development
 
 ```bash
