@@ -219,6 +219,10 @@ fn rest_contract_sources_emit_audit_events_for_mutations() {
         "membership mutation handlers must record audit events",
     );
     assert!(
+        COMMENTS_SOURCE.contains("try_record_comment_audit_event("),
+        "comment mutation handlers must record audit events",
+    );
+    assert!(
         API_MOD_SOURCE.contains("AuditEventType::ShareLinkOperation"),
         "share-link mutation handlers must record share-link audit events",
     );

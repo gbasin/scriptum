@@ -19,6 +19,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::{
     types::chrono::{DateTime, Utc},
     PgPool,
@@ -27,11 +28,12 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::{
+    audit::{self, AuditEventType, NewAuditEvent},
     auth::{
         jwt::JwtAccessTokenService,
-        middleware::{require_bearer_auth, AuthenticatedUser},
+        middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
     },
-    error::{ErrorCode, RelayError},
+    error::{current_request_id, ErrorCode, RelayError},
     validation::ValidatedJson,
 };
 
@@ -113,12 +115,13 @@ struct ListCommentsResponse {
 #[derive(Serialize)]
 struct CreateThreadResponse {
     thread: CommentThread,
-    message: CommentMessage,
+    messages: Vec<CommentMessage>,
 }
 
 #[derive(Serialize)]
 struct CreateMessageResponse {
-    message: CommentMessage,
+    thread: CommentThread,
+    messages: Vec<CommentMessage>,
 }
 
 #[derive(Serialize)]
@@ -144,6 +147,7 @@ enum CommentStore {
 struct MemoryCommentStore {
     threads: HashMap<Uuid, MemoryCommentThread>,
     messages: HashMap<Uuid, Vec<MemoryCommentMessage>>,
+    workspace_members: HashMap<(Uuid, Uuid), WorkspaceRole>,
 }
 
 #[derive(Clone)]
@@ -202,6 +206,12 @@ struct CommentMessageRow {
     edited_at: Option<DateTime<Utc>>,
 }
 
+#[derive(sqlx::FromRow)]
+struct CommentThreadStatusRow {
+    version: i32,
+    status: String,
+}
+
 impl From<CommentThreadRow> for CommentThread {
     fn from(value: CommentThreadRow) -> Self {
         Self {
@@ -240,6 +250,7 @@ impl From<CommentMessageRow> for CommentMessage {
 #[derive(Debug)]
 enum CommentsApiError {
     BadRequest { message: String },
+    Forbidden,
     NotFound { message: &'static str },
     PreconditionFailed,
     Internal(anyhow::Error),
@@ -260,6 +271,10 @@ impl IntoResponse for CommentsApiError {
         match self {
             Self::BadRequest { message } => {
                 RelayError::new(ErrorCode::ValidationFailed, message).into_response()
+            }
+            Self::Forbidden => {
+                RelayError::new(ErrorCode::AuthForbidden, "caller lacks required role")
+                    .into_response()
             }
             Self::NotFound { message } => {
                 RelayError::new(ErrorCode::NotFound, message).into_response()
@@ -302,10 +317,12 @@ fn build_router_with_store(store: CommentStore, jwt_service: Arc<JwtAccessTokenS
 
 async fn list_comments(
     State(state): State<CommentsApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<ListCommentsQuery>,
 ) -> Result<Json<ListCommentsResponse>, CommentsApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Viewer).await?;
+
     let status_filter = parse_status_filter(query.status.as_deref())?;
     let limit = normalize_limit(query.limit);
     let cursor = match query.cursor {
@@ -325,6 +342,8 @@ async fn create_comment_thread(
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<CreateCommentThreadRequest>,
 ) -> Result<(StatusCode, Json<CreateThreadResponse>), CommentsApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+
     validate_anchor(&payload.anchor)?;
     validate_markdown_body("message", &payload.message)?;
 
@@ -333,7 +352,21 @@ async fn create_comment_thread(
         .create_thread(ws_id, doc_id, user.user_id, payload.anchor, payload.message)
         .await?;
 
-    Ok((StatusCode::CREATED, Json(CreateThreadResponse { thread, message })))
+    try_record_comment_audit_event(
+        &state,
+        ws_id,
+        user.user_id,
+        thread.id,
+        "create",
+        json!({
+            "doc_id": doc_id,
+            "message_id": message.id,
+            "section_id": thread.section_id,
+        }),
+    )
+    .await;
+
+    Ok((StatusCode::CREATED, Json(CreateThreadResponse { thread, messages: vec![message] })))
 }
 
 async fn create_comment_message(
@@ -341,21 +374,36 @@ async fn create_comment_message(
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, thread_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<CreateCommentMessageRequest>,
-) -> Result<(StatusCode, Json<CreateMessageResponse>), CommentsApiError> {
+) -> Result<Json<CreateMessageResponse>, CommentsApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+
     validate_markdown_body("body_md", &payload.body_md)?;
 
     let message =
         state.store.create_message(ws_id, thread_id, user.user_id, payload.body_md).await?;
+    let thread_with_messages = state.store.get_thread_with_messages(ws_id, thread_id).await?;
 
-    Ok((StatusCode::CREATED, Json(CreateMessageResponse { message })))
+    // Sanity check to ensure the newly-created message is reflected in the thread response.
+    if !thread_with_messages.messages.iter().any(|existing| existing.id == message.id) {
+        return Err(CommentsApiError::internal(anyhow::anyhow!(
+            "created comment message missing from thread view"
+        )));
+    }
+
+    Ok(Json(CreateMessageResponse {
+        thread: thread_with_messages.thread,
+        messages: thread_with_messages.messages,
+    }))
 }
 
 async fn resolve_comment_thread(
     State(state): State<CommentsApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, thread_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<SetCommentStatusRequest>,
 ) -> Result<Json<ThreadResponse>, CommentsApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+
     if payload.if_version < 1 {
         return Err(CommentsApiError::bad_request("if_version must be >= 1"));
     }
@@ -365,15 +413,30 @@ async fn resolve_comment_thread(
         .set_thread_status(ws_id, thread_id, payload.if_version, CommentStatus::Resolved)
         .await?;
 
+    try_record_comment_audit_event(
+        &state,
+        ws_id,
+        user.user_id,
+        thread.id,
+        "resolve",
+        json!({
+            "if_version": payload.if_version,
+            "next_version": thread.version,
+        }),
+    )
+    .await;
+
     Ok(Json(ThreadResponse { thread }))
 }
 
 async fn reopen_comment_thread(
     State(state): State<CommentsApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, thread_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<SetCommentStatusRequest>,
 ) -> Result<Json<ThreadResponse>, CommentsApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+
     if payload.if_version < 1 {
         return Err(CommentsApiError::bad_request("if_version must be >= 1"));
     }
@@ -382,6 +445,19 @@ async fn reopen_comment_thread(
         .store
         .set_thread_status(ws_id, thread_id, payload.if_version, CommentStatus::Open)
         .await?;
+
+    try_record_comment_audit_event(
+        &state,
+        ws_id,
+        user.user_id,
+        thread.id,
+        "reopen",
+        json!({
+            "if_version": payload.if_version,
+            "next_version": thread.version,
+        }),
+    )
+    .await;
 
     Ok(Json(ThreadResponse { thread }))
 }
@@ -444,6 +520,21 @@ impl CommentStore {
         }
     }
 
+    async fn get_thread_with_messages(
+        &self,
+        workspace_id: Uuid,
+        thread_id: Uuid,
+    ) -> Result<CommentThreadWithMessages, CommentsApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                get_thread_with_messages_pg(pool, workspace_id, thread_id).await
+            }
+            Self::Memory(store) => {
+                get_thread_with_messages_mem(store, workspace_id, thread_id).await
+            }
+        }
+    }
+
     async fn set_thread_status(
         &self,
         workspace_id: Uuid,
@@ -458,6 +549,36 @@ impl CommentStore {
             Self::Memory(store) => {
                 set_thread_status_mem(store, workspace_id, thread_id, if_version, next_status).await
             }
+        }
+    }
+
+    async fn workspace_role_for_user(
+        &self,
+        user_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<WorkspaceRole>, CommentsApiError> {
+        match self {
+            Self::Postgres(pool) => workspace_role_for_user_pg(pool, user_id, workspace_id).await,
+            Self::Memory(store) => workspace_role_for_user_mem(store, user_id, workspace_id).await,
+        }
+    }
+
+    fn postgres_pool(&self) -> Option<&PgPool> {
+        match self {
+            Self::Postgres(pool) => Some(pool),
+            Self::Memory(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    async fn grant_workspace_role_for_tests(
+        &self,
+        workspace_id: Uuid,
+        user_id: Uuid,
+        role: WorkspaceRole,
+    ) {
+        if let Self::Memory(store) = self {
+            store.write().await.workspace_members.insert((workspace_id, user_id), role);
         }
     }
 }
@@ -661,6 +782,64 @@ async fn list_threads_pg(
     Ok((items, next_cursor))
 }
 
+async fn get_thread_with_messages_pg(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    thread_id: Uuid,
+) -> Result<CommentThreadWithMessages, CommentsApiError> {
+    let thread_row = sqlx::query_as::<_, CommentThreadRow>(
+        r#"
+        SELECT
+            id,
+            workspace_id,
+            doc_id,
+            section_id,
+            start_offset_utf16,
+            end_offset_utf16,
+            status,
+            version,
+            created_by_user_id,
+            created_by_agent_id,
+            created_at,
+            resolved_at
+        FROM comment_threads
+        WHERE id = $1
+          AND workspace_id = $2
+        "#,
+    )
+    .bind(thread_id)
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?
+    .ok_or(CommentsApiError::NotFound { message: "comment thread not found" })?;
+
+    let message_rows = sqlx::query_as::<_, CommentMessageRow>(
+        r#"
+        SELECT
+            id,
+            thread_id,
+            author_user_id,
+            author_agent_id,
+            body_md,
+            created_at,
+            edited_at
+        FROM comment_messages
+        WHERE thread_id = $1
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    Ok(CommentThreadWithMessages {
+        thread: thread_row.into(),
+        messages: message_rows.into_iter().map(CommentMessage::from).collect(),
+    })
+}
+
 async fn create_message_pg(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -675,6 +854,7 @@ async fn create_message_pg(
         FROM comment_threads
         WHERE id = $1
           AND workspace_id = $2
+          AND status = 'open'
         RETURNING
             id,
             thread_id,
@@ -691,10 +871,36 @@ async fn create_message_pg(
     .bind(body_md)
     .fetch_optional(pool)
     .await
-    .map_err(map_sqlx_error)?
-    .ok_or(CommentsApiError::NotFound { message: "comment thread not found" })?;
+    .map_err(map_sqlx_error)?;
 
-    Ok(row.into())
+    if let Some(row) = row {
+        return Ok(row.into());
+    }
+
+    let status = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT status
+        FROM comment_threads
+        WHERE id = $1
+          AND workspace_id = $2
+        "#,
+    )
+    .bind(thread_id)
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    match status.as_deref() {
+        None => Err(CommentsApiError::NotFound { message: "comment thread not found" }),
+        Some("resolved") => Err(CommentsApiError::bad_request("comment thread is resolved")),
+        Some("open") => Err(CommentsApiError::internal(anyhow::anyhow!(
+            "failed to insert comment message for open thread"
+        ))),
+        Some(other) => Err(CommentsApiError::internal(anyhow::anyhow!(
+            "invalid comment thread status '{other}'"
+        ))),
+    }
 }
 
 async fn set_thread_status_pg(
@@ -704,6 +910,7 @@ async fn set_thread_status_pg(
     if_version: i32,
     next_status: CommentStatus,
 ) -> Result<CommentThread, CommentsApiError> {
+    let expected_status = next_status.required_current_status();
     let row = sqlx::query_as::<_, CommentThreadRow>(
         r#"
         UPDATE comment_threads
@@ -717,6 +924,7 @@ async fn set_thread_status_pg(
         WHERE id = $1
           AND workspace_id = $2
           AND version = $4
+          AND status = $5
         RETURNING
             id,
             workspace_id,
@@ -736,6 +944,7 @@ async fn set_thread_status_pg(
     .bind(workspace_id)
     .bind(next_status.as_str())
     .bind(if_version)
+    .bind(expected_status.as_str())
     .fetch_optional(pool)
     .await
     .map_err(map_sqlx_error)?;
@@ -744,27 +953,76 @@ async fn set_thread_status_pg(
         return Ok(row.into());
     }
 
-    let exists = sqlx::query_scalar::<_, bool>(
+    let thread_metadata = sqlx::query_as::<_, CommentThreadStatusRow>(
         r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM comment_threads
-            WHERE id = $1
-              AND workspace_id = $2
-        )
+        SELECT version, status
+        FROM comment_threads
+        WHERE id = $1
+          AND workspace_id = $2
         "#,
     )
     .bind(thread_id)
     .bind(workspace_id)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
     .map_err(map_sqlx_error)?;
 
-    if exists {
-        Err(CommentsApiError::PreconditionFailed)
-    } else {
-        Err(CommentsApiError::NotFound { message: "comment thread not found" })
+    let Some(thread_metadata) = thread_metadata else {
+        return Err(CommentsApiError::NotFound { message: "comment thread not found" });
+    };
+
+    if thread_metadata.version != if_version {
+        return Err(CommentsApiError::PreconditionFailed);
     }
+
+    let current_status =
+        CommentStatus::parse(thread_metadata.status.as_str()).ok_or_else(|| {
+            CommentsApiError::internal(anyhow::anyhow!(
+                "invalid comment thread status '{}' in database",
+                thread_metadata.status
+            ))
+        })?;
+
+    if current_status != expected_status {
+        return Err(CommentsApiError::bad_request(
+            next_status.transition_error_message(current_status),
+        ));
+    }
+
+    Err(CommentsApiError::internal(anyhow::anyhow!(
+        "failed to transition thread status without a matching row"
+    )))
+}
+
+async fn workspace_role_for_user_pg(
+    pool: &PgPool,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, CommentsApiError> {
+    let role = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT role
+        FROM workspace_members
+        WHERE workspace_id = $1
+          AND user_id = $2
+          AND status = 'active'
+        LIMIT 1
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    role.map(|value| {
+        WorkspaceRole::from_db_value(&value).ok_or_else(|| {
+            CommentsApiError::internal(anyhow::anyhow!(
+                "invalid workspace role '{value}' in database"
+            ))
+        })
+    })
+    .transpose()
 }
 
 // ── In-memory store ──────────────────────────────────────────────────────────
@@ -871,6 +1129,15 @@ async fn create_message_mem(
     if thread.workspace_id != workspace_id {
         return Err(CommentsApiError::NotFound { message: "comment thread not found" });
     }
+    let status = CommentStatus::parse(thread.status.as_str()).ok_or_else(|| {
+        CommentsApiError::internal(anyhow::anyhow!(
+            "invalid comment thread status '{}' in memory store",
+            thread.status
+        ))
+    })?;
+    if status != CommentStatus::Open {
+        return Err(CommentsApiError::bad_request("comment thread is resolved"));
+    }
 
     let message = MemoryCommentMessage {
         id: Uuid::new_v4(),
@@ -885,6 +1152,32 @@ async fn create_message_mem(
     store.messages.entry(thread_id).or_default().push(message);
 
     Ok(response)
+}
+
+async fn get_thread_with_messages_mem(
+    store: &RwLock<MemoryCommentStore>,
+    workspace_id: Uuid,
+    thread_id: Uuid,
+) -> Result<CommentThreadWithMessages, CommentsApiError> {
+    let store = store.read().await;
+    let thread = store
+        .threads
+        .get(&thread_id)
+        .ok_or(CommentsApiError::NotFound { message: "comment thread not found" })?;
+    if thread.workspace_id != workspace_id {
+        return Err(CommentsApiError::NotFound { message: "comment thread not found" });
+    }
+
+    let messages = store
+        .messages
+        .get(&thread_id)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|message| mem_message_to_public(&message))
+        .collect();
+
+    Ok(CommentThreadWithMessages { thread: mem_thread_to_public(thread), messages })
 }
 
 async fn set_thread_status_mem(
@@ -905,6 +1198,18 @@ async fn set_thread_status_mem(
     if thread.version != if_version {
         return Err(CommentsApiError::PreconditionFailed);
     }
+    let current_status = CommentStatus::parse(thread.status.as_str()).ok_or_else(|| {
+        CommentsApiError::internal(anyhow::anyhow!(
+            "invalid comment thread status '{}' in memory store",
+            thread.status
+        ))
+    })?;
+    let expected_status = next_status.required_current_status();
+    if current_status != expected_status {
+        return Err(CommentsApiError::bad_request(
+            next_status.transition_error_message(current_status),
+        ));
+    }
 
     thread.status = next_status.as_str().to_string();
     thread.version += 1;
@@ -912,6 +1217,15 @@ async fn set_thread_status_mem(
         if next_status == CommentStatus::Resolved { Some(Utc::now()) } else { None };
 
     Ok(mem_thread_to_public(thread))
+}
+
+async fn workspace_role_for_user_mem(
+    store: &RwLock<MemoryCommentStore>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, CommentsApiError> {
+    let store = store.read().await;
+    Ok(store.workspace_members.get(&(workspace_id, user_id)).copied())
 }
 
 fn mem_thread_to_public(value: &MemoryCommentThread) -> CommentThread {
@@ -964,6 +1278,23 @@ impl CommentStatus {
             "open" => Some(Self::Open),
             "resolved" => Some(Self::Resolved),
             _ => None,
+        }
+    }
+
+    fn required_current_status(self) -> Self {
+        match self {
+            Self::Resolved => Self::Open,
+            Self::Open => Self::Resolved,
+        }
+    }
+
+    fn transition_error_message(self, current_status: Self) -> &'static str {
+        match (self, current_status) {
+            (Self::Resolved, Self::Resolved) => "comment thread is already resolved",
+            (Self::Open, Self::Open) => "comment thread is already open",
+            (Self::Resolved, Self::Open) | (Self::Open, Self::Resolved) => {
+                "comment thread cannot transition to requested status"
+            }
         }
     }
 }
@@ -1086,6 +1417,60 @@ fn map_sqlx_error(error: sqlx::Error) -> CommentsApiError {
     CommentsApiError::internal(error.into())
 }
 
+async fn require_workspace_role(
+    store: &CommentStore,
+    user: &AuthenticatedUser,
+    workspace_id: Uuid,
+    required_role: WorkspaceRole,
+) -> Result<(), CommentsApiError> {
+    if user.workspace_id != workspace_id {
+        return Err(CommentsApiError::Forbidden);
+    }
+
+    let role = store.workspace_role_for_user(user.user_id, workspace_id).await?;
+    let Some(role) = role else {
+        return Err(CommentsApiError::Forbidden);
+    };
+    if !role.allows(required_role) {
+        return Err(CommentsApiError::Forbidden);
+    }
+
+    Ok(())
+}
+
+async fn try_record_comment_audit_event(
+    state: &CommentsApiState,
+    workspace_id: Uuid,
+    actor_user_id: Uuid,
+    thread_id: Uuid,
+    action: &'static str,
+    details: serde_json::Value,
+) {
+    let Some(pool) = state.store.postgres_pool() else {
+        return;
+    };
+
+    let event = NewAuditEvent {
+        workspace_id: Some(workspace_id),
+        actor_user_id: Some(actor_user_id),
+        actor_agent_id: None,
+        event_type: AuditEventType::AdminAction,
+        entity_type: "comment_thread".to_owned(),
+        entity_id: thread_id.to_string(),
+        request_id: current_request_id(),
+        ip_address: None,
+        user_agent: None,
+        details: Some(json!({
+            "action": action,
+            "comment_thread": details,
+        })),
+    };
+
+    if let Err(error) = audit::record_event(pool, event).await {
+        tracing::warn!(error = ?error, "failed to record comment audit event");
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1110,8 +1495,19 @@ mod tests {
         CommentStore::Memory(Arc::new(RwLock::new(MemoryCommentStore::default())))
     }
 
-    fn test_router() -> Router {
-        build_router_with_store(test_store(), test_jwt_service())
+    fn test_app() -> (Router, CommentStore) {
+        let store = test_store();
+        let app = build_router_with_store(store.clone(), test_jwt_service());
+        (app, store)
+    }
+
+    async fn grant_workspace_role(
+        store: &CommentStore,
+        workspace_id: Uuid,
+        user_id: Uuid,
+        role: WorkspaceRole,
+    ) {
+        store.grant_workspace_role_for_tests(workspace_id, user_id, role).await;
     }
 
     fn auth_token(jwt: &JwtAccessTokenService, user_id: Uuid, workspace_id: Uuid) -> String {
@@ -1151,11 +1547,13 @@ mod tests {
 
     #[tokio::test]
     async fn create_list_resolve_and_filter_comments() {
-        let app = test_router();
+        let (app, store) = test_app();
         let jwt = test_jwt_service();
         let ws_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
-        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+        let user_id = Uuid::new_v4();
+        let token = auth_token(&jwt, user_id, ws_id);
+        grant_workspace_role(&store, ws_id, user_id, WorkspaceRole::Editor).await;
 
         let create_response = app
             .clone()
@@ -1182,6 +1580,7 @@ mod tests {
             create_body["thread"]["id"].as_str().expect("thread id should be present").to_string();
         assert_eq!(create_body["thread"]["status"], "open");
         assert_eq!(create_body["thread"]["version"], 1);
+        assert_eq!(create_body["messages"].as_array().expect("messages should be array").len(), 1);
 
         let list_open_response = app
             .clone()
@@ -1242,11 +1641,13 @@ mod tests {
 
     #[tokio::test]
     async fn reply_and_reopen_comment_thread() {
-        let app = test_router();
+        let (app, store) = test_app();
         let jwt = test_jwt_service();
         let ws_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
-        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+        let user_id = Uuid::new_v4();
+        let token = auth_token(&jwt, user_id, ws_id);
+        grant_workspace_role(&store, ws_id, user_id, WorkspaceRole::Editor).await;
 
         let create_response = app
             .clone()
@@ -1269,6 +1670,7 @@ mod tests {
         let create_body = body_json(create_response).await;
         let thread_id =
             create_body["thread"]["id"].as_str().expect("thread id should be present").to_string();
+        assert_eq!(create_body["messages"].as_array().expect("messages should be array").len(), 1);
 
         let reply_response = app
             .clone()
@@ -1280,10 +1682,11 @@ mod tests {
             ))
             .await
             .expect("reply request should return response");
-        assert_eq!(reply_response.status(), StatusCode::CREATED);
+        assert_eq!(reply_response.status(), StatusCode::OK);
         let reply_body = body_json(reply_response).await;
-        assert_eq!(reply_body["message"]["thread_id"], thread_id);
-        assert_eq!(reply_body["message"]["body_md"], "Follow-up");
+        assert_eq!(reply_body["thread"]["id"], thread_id);
+        assert_eq!(reply_body["messages"].as_array().expect("messages should be array").len(), 2);
+        assert_eq!(reply_body["messages"][1]["body_md"], "Follow-up");
 
         let resolve_response = app
             .clone()
@@ -1316,11 +1719,13 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_with_stale_if_version_returns_412() {
-        let app = test_router();
+        let (app, store) = test_app();
         let jwt = test_jwt_service();
         let ws_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
-        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+        let user_id = Uuid::new_v4();
+        let token = auth_token(&jwt, user_id, ws_id);
+        grant_workspace_role(&store, ws_id, user_id, WorkspaceRole::Editor).await;
 
         let create_response = app
             .clone()
@@ -1358,8 +1763,163 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn viewer_role_can_list_but_cannot_mutate_comment_threads() {
+        let (app, store) = test_app();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let viewer_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let viewer_token = auth_token(&jwt, viewer_id, ws_id);
+        grant_workspace_role(&store, ws_id, owner_id, WorkspaceRole::Owner).await;
+        grant_workspace_role(&store, ws_id, viewer_id, WorkspaceRole::Viewer).await;
+
+        let create_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/comments"),
+                serde_json::json!({
+                    "anchor": { "section_id": "h1:rbac" },
+                    "message": "Owner-created thread"
+                }),
+                &owner_token,
+            ))
+            .await
+            .expect("owner create request should return response");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let create_body = body_json(create_response).await;
+        let thread_id =
+            create_body["thread"]["id"].as_str().expect("thread id should be present").to_string();
+
+        let list_response = app
+            .clone()
+            .oneshot(get_request(
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/comments"),
+                &viewer_token,
+            ))
+            .await
+            .expect("viewer list request should return response");
+        assert_eq!(list_response.status(), StatusCode::OK);
+
+        let create_forbidden = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/comments"),
+                serde_json::json!({
+                    "anchor": { "section_id": "h1:rbac" },
+                    "message": "Viewer create attempt"
+                }),
+                &viewer_token,
+            ))
+            .await
+            .expect("viewer create request should return response");
+        assert_eq!(create_forbidden.status(), StatusCode::FORBIDDEN);
+
+        let message_forbidden = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/comments/{thread_id}/messages"),
+                serde_json::json!({ "body_md": "Viewer reply attempt" }),
+                &viewer_token,
+            ))
+            .await
+            .expect("viewer reply request should return response");
+        assert_eq!(message_forbidden.status(), StatusCode::FORBIDDEN);
+
+        let resolve_forbidden = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/comments/{thread_id}/resolve"),
+                serde_json::json!({ "if_version": 1 }),
+                &viewer_token,
+            ))
+            .await
+            .expect("viewer resolve request should return response");
+        assert_eq!(resolve_forbidden.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn status_transitions_enforce_open_and_resolved_guards() {
+        let (app, store) = test_app();
+        let jwt = test_jwt_service();
+        let ws_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let token = auth_token(&jwt, user_id, ws_id);
+        grant_workspace_role(&store, ws_id, user_id, WorkspaceRole::Editor).await;
+
+        let create_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/comments"),
+                serde_json::json!({
+                    "anchor": { "section_id": "h2:guards" },
+                    "message": "Transition guard"
+                }),
+                &token,
+            ))
+            .await
+            .expect("create request should return response");
+        let create_body = body_json(create_response).await;
+        let thread_id =
+            create_body["thread"]["id"].as_str().expect("thread id should be present").to_string();
+
+        let reopen_open_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/comments/{thread_id}/reopen"),
+                serde_json::json!({ "if_version": 1 }),
+                &token,
+            ))
+            .await
+            .expect("reopen request should return response");
+        assert_eq!(reopen_open_response.status(), StatusCode::BAD_REQUEST);
+
+        let resolve_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/comments/{thread_id}/resolve"),
+                serde_json::json!({ "if_version": 1 }),
+                &token,
+            ))
+            .await
+            .expect("resolve request should return response");
+        assert_eq!(resolve_response.status(), StatusCode::OK);
+
+        let second_resolve_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/comments/{thread_id}/resolve"),
+                serde_json::json!({ "if_version": 2 }),
+                &token,
+            ))
+            .await
+            .expect("second resolve request should return response");
+        assert_eq!(second_resolve_response.status(), StatusCode::BAD_REQUEST);
+
+        let reply_resolved_response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/comments/{thread_id}/messages"),
+                serde_json::json!({ "body_md": "Resolved reply should fail" }),
+                &token,
+            ))
+            .await
+            .expect("reply request should return response");
+        assert_eq!(reply_resolved_response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn unauthenticated_request_returns_401() {
-        let app = test_router();
+        let (app, _) = test_app();
         let ws_id = Uuid::new_v4();
         let doc_id = Uuid::new_v4();
 
