@@ -189,3 +189,15 @@ fn rest_contract_mounts_documents_router_in_api_builder() {
         "build_router_from_env must merge the documents router so document CRUD routes are reachable",
     );
 }
+
+#[test]
+fn rest_contract_applies_idempotency_middleware_for_api_posts() {
+    assert!(
+        API_MOD_SOURCE.contains("IdempotencyDbState::new(pool.clone())"),
+        "build_router_from_env must initialize idempotency DB state from the shared API pool",
+    );
+    assert!(
+        API_MOD_SOURCE.contains("idempotency::idempotency_db_middleware"),
+        "build_router_from_env must layer idempotency middleware to protect POST mutations",
+    );
+}

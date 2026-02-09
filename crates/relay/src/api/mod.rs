@@ -45,6 +45,7 @@ use crate::{
     },
     db::pool::{check_pool_health, create_pg_pool, PoolConfig},
     error::{ErrorCode, RelayError},
+    idempotency::{self, IdempotencyDbState},
     validation::ValidatedJson,
 };
 
@@ -653,12 +654,17 @@ pub async fn build_router_from_env(
     check_pool_health(&pool)
         .await
         .context("relay PostgreSQL health check failed for workspace API")?;
+    let idempotency_state = IdempotencyDbState::new(pool.clone());
 
     Ok(build_router_with_store(WorkspaceStore::Postgres(pool.clone()), Arc::clone(&jwt_service))
         .merge(auth::router(oauth_state))
         .merge(documents::router(pool.clone(), Arc::clone(&jwt_service)))
         .merge(comments::router(pool.clone(), Arc::clone(&jwt_service)))
-        .merge(search::router(pool, jwt_service)))
+        .merge(search::router(pool, jwt_service))
+        .layer(middleware::from_fn_with_state(
+            idempotency_state,
+            idempotency::idempotency_db_middleware,
+        )))
 }
 
 fn build_router_with_store(
