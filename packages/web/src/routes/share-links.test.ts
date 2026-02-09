@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildShareLinkUrl,
+  shareLinkFromCreateShareLinkResponse,
+  shareLinksFromListResponse,
   shareUrlFromCreateShareLinkResponse,
 } from "./share-links";
 
@@ -48,5 +50,80 @@ describe("shareUrlFromCreateShareLinkResponse", () => {
     expect(
       shareUrlFromCreateShareLinkResponse({}, "https://app.scriptum.dev"),
     ).toBeNull();
+  });
+});
+
+describe("shareLinkFromCreateShareLinkResponse", () => {
+  it("parses a share link envelope with snake_case fields", () => {
+    expect(
+      shareLinkFromCreateShareLinkResponse({
+        share_link: {
+          id: "share-1",
+          target_type: "document",
+          target_id: "doc-1",
+          permission: "edit",
+          expires_at: null,
+          max_uses: 5,
+          use_count: 1,
+          disabled: false,
+          created_at: "2026-02-09T00:00:00.000Z",
+          revoked_at: null,
+          etag: "etag-1",
+          url_once: "https://relay.scriptum.dev/share/token-1",
+        },
+      }),
+    ).toEqual({
+      id: "share-1",
+      targetType: "document",
+      targetId: "doc-1",
+      permission: "edit",
+      expiresAt: null,
+      maxUses: 5,
+      useCount: 1,
+      disabled: false,
+      createdAt: "2026-02-09T00:00:00.000Z",
+      revokedAt: null,
+      etag: "etag-1",
+      urlOnce: "https://relay.scriptum.dev/share/token-1",
+    });
+  });
+});
+
+describe("shareLinksFromListResponse", () => {
+  it("parses and sorts list payload items by createdAt descending", () => {
+    expect(
+      shareLinksFromListResponse({
+        items: [
+          {
+            id: "share-old",
+            target_type: "workspace",
+            target_id: "ws-1",
+            permission: "view",
+            expires_at: null,
+            max_uses: null,
+            use_count: 0,
+            disabled: false,
+            created_at: "2026-02-08T00:00:00.000Z",
+            revoked_at: null,
+            etag: "etag-old",
+            url_once: "",
+          },
+          {
+            id: "share-new",
+            target_type: "workspace",
+            target_id: "ws-1",
+            permission: "view",
+            expires_at: null,
+            max_uses: null,
+            use_count: 0,
+            disabled: false,
+            created_at: "2026-02-09T00:00:00.000Z",
+            revoked_at: null,
+            etag: "etag-new",
+            url_once: "",
+          },
+        ],
+      }).map((item) => item.id),
+    ).toEqual(["share-new", "share-old"]);
   });
 });

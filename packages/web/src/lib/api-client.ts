@@ -3,6 +3,9 @@
 import type {
   CommentMessage,
   CommentThread,
+  DocDiffResult,
+  DocEditResult,
+  DocHistoryResult,
   Document,
   GitConfigureResult,
   GitStatusResult,
@@ -57,6 +60,16 @@ export class ApiClientError extends Error {
 export interface DaemonRpcOptions {
   rpcUrl?: string;
   timeoutMs?: number;
+}
+
+function daemonClientUpdateId(prefix: string): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export interface GitSyncSettingsSnapshot {
@@ -371,6 +384,68 @@ export async function configureGitSyncSettings(
   return normalizeGitConfigureResult(result, sanitized);
 }
 
+export async function getDocumentHistoryTimeline(
+  workspaceId: string,
+  documentId: string,
+  options?: DaemonRpcOptions,
+): Promise<DocHistoryResult> {
+  return callDaemonRpc(
+    "doc.history",
+    {
+      workspace_id: workspaceId,
+      doc_id: documentId,
+    },
+    options,
+  );
+}
+
+export interface DocumentDiffTimelineOptions extends DaemonRpcOptions {
+  fromSeq?: number;
+  toSeq?: number;
+  granularity?: "snapshot" | "coarse" | "fine";
+}
+
+export async function getDocumentDiffTimeline(
+  workspaceId: string,
+  documentId: string,
+  options: DocumentDiffTimelineOptions = {},
+): Promise<DocDiffResult> {
+  const { fromSeq, toSeq, granularity, rpcUrl, timeoutMs } = options;
+  return callDaemonRpc(
+    "doc.diff",
+    {
+      workspace_id: workspaceId,
+      doc_id: documentId,
+      ...(fromSeq === undefined ? {} : { from_seq: fromSeq }),
+      ...(toSeq === undefined ? {} : { to_seq: toSeq }),
+      ...(granularity === undefined ? {} : { granularity }),
+    },
+    {
+      rpcUrl,
+      timeoutMs,
+    },
+  );
+}
+
+export async function restoreDocumentFromSnapshot(
+  workspaceId: string,
+  documentId: string,
+  contentMd: string,
+  options?: DaemonRpcOptions,
+): Promise<DocEditResult> {
+  return callDaemonRpc(
+    "doc.edit",
+    {
+      workspace_id: workspaceId,
+      doc_id: documentId,
+      client_update_id: daemonClientUpdateId("history-restore"),
+      content_md: contentMd,
+      agent_id: "web-history-restore",
+    },
+    options,
+  );
+}
+
 export interface PagedResult<T> {
   items: T[];
   nextCursor: string | null;
@@ -539,9 +614,18 @@ interface ApiClient {
   createShareLink: (
     ...args: SharedMethodArgs<"createShareLink">
   ) => SharedMethodResult<"createShareLink">;
+  listShareLinks: (
+    ...args: SharedMethodArgs<"listShareLinks">
+  ) => SharedMethodResult<"listShareLinks">;
   updateShareLink: (
     ...args: SharedMethodArgs<"updateShareLink">
   ) => SharedMethodResult<"updateShareLink">;
+  revokeShareLink: (
+    ...args: SharedMethodArgs<"revokeShareLink">
+  ) => SharedMethodResult<"revokeShareLink">;
+  redeemShareLink: (
+    ...args: SharedMethodArgs<"redeemShareLink">
+  ) => SharedMethodResult<"redeemShareLink">;
   createAclOverride: (
     ...args: SharedMethodArgs<"createAclOverride">
   ) => SharedMethodResult<"createAclOverride">;
@@ -1038,8 +1122,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
     createShareLink: (...args) =>
       runWithApiError(() => sharedClient.createShareLink(...args)),
+    listShareLinks: (...args) =>
+      runWithApiError(() => sharedClient.listShareLinks(...args)),
     updateShareLink: (...args) =>
       runWithApiError(() => sharedClient.updateShareLink(...args)),
+    revokeShareLink: (...args) =>
+      runWithApiError(() => sharedClient.revokeShareLink(...args)),
+    redeemShareLink: (...args) =>
+      runWithApiError(() => sharedClient.redeemShareLink(...args)),
     createAclOverride: (...args) =>
       runWithApiError(() => sharedClient.createAclOverride(...args)),
     deleteAclOverride: (...args) =>
@@ -1261,10 +1351,28 @@ export function createShareLink(
   return getDefaultClient().createShareLink(...args);
 }
 
+export function listShareLinks(
+  ...args: SharedMethodArgs<"listShareLinks">
+): SharedMethodResult<"listShareLinks"> {
+  return getDefaultClient().listShareLinks(...args);
+}
+
 export function updateShareLink(
   ...args: SharedMethodArgs<"updateShareLink">
 ): SharedMethodResult<"updateShareLink"> {
   return getDefaultClient().updateShareLink(...args);
+}
+
+export function revokeShareLink(
+  ...args: SharedMethodArgs<"revokeShareLink">
+): SharedMethodResult<"revokeShareLink"> {
+  return getDefaultClient().revokeShareLink(...args);
+}
+
+export function redeemShareLink(
+  ...args: SharedMethodArgs<"redeemShareLink">
+): SharedMethodResult<"redeemShareLink"> {
+  return getDefaultClient().redeemShareLink(...args);
 }
 
 export function createAclOverride(

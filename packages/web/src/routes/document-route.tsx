@@ -11,7 +11,7 @@ import type {
   WorkspaceEditorFontFamily,
 } from "@scriptum/shared";
 import clsx from "clsx";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
 import {
@@ -37,9 +37,14 @@ import {
   type CreateCommentInput,
   createComment as createCommentApi,
   createShareLink as createShareLinkApi,
+  getDocumentDiffTimeline,
+  getDocumentHistoryTimeline,
   listComments as listCommentsApi,
+  listShareLinks as listShareLinksApi,
   reopenCommentThread as reopenCommentThreadApi,
   resolveCommentThread as resolveCommentThreadApi,
+  restoreDocumentFromSnapshot,
+  revokeShareLink as revokeShareLinkApi,
 } from "../lib/api-client";
 import {
   buildOpenDocumentTabs,
@@ -64,7 +69,9 @@ import {
   deriveTimelineSnapshotEntry,
   LOCAL_TIMELINE_AUTHOR,
   type TimelineSnapshotEntry,
+  timelineAuthorFromHistory,
   timelineAuthorFromPeer,
+  timelineSnapshotEntryFromAuthorshipSegments,
   UNKNOWN_REMOTE_TIMELINE_AUTHOR,
 } from "../lib/timeline";
 import { useCommentsStore } from "../store/comments";
@@ -79,9 +86,12 @@ import {
   createShareLinkRecord,
   expirationIsoFromOption,
   parseShareLinkMaxUses,
+  type RelayShareLinkRecord,
   type ShareLinkExpirationOption,
   type ShareLinkPermission,
   type ShareLinkTargetType,
+  shareLinkFromCreateShareLinkResponse,
+  shareLinksFromListResponse,
   sharePermissionLabel,
   shareUrlFromCreateShareLinkResponse,
   storeShareLinkRecord,
@@ -109,6 +119,14 @@ interface EditorRuntimeConfig {
   fontFamily: WorkspaceEditorFontFamily;
   tabSize: number;
   lineNumbers: boolean;
+}
+
+interface TimelinePoint {
+  seq: number;
+  timestamp: string;
+  authorId: string;
+  authorType: "agent" | "human";
+  summary?: string;
 }
 
 const DEFAULT_TEST_STATE: ScriptumTestState = {
@@ -342,10 +360,17 @@ export function DocumentRoute() {
   const [shareExpirationOption, setShareExpirationOption] =
     useState<ShareLinkExpirationOption>("none");
   const [shareMaxUsesInput, setShareMaxUsesInput] = useState("3");
+  const [sharePasswordInput, setSharePasswordInput] = useState("");
   const [generatedShareUrl, setGeneratedShareUrl] = useState("");
   const [shareGenerationError, setShareGenerationError] = useState<
     string | null
   >(null);
+  const [existingShareLinks, setExistingShareLinks] = useState<
+    RelayShareLinkRecord[]
+  >([]);
+  const [shareLinksLoading, setShareLinksLoading] = useState(false);
+  const [shareLinksError, setShareLinksError] = useState<string | null>(null);
+  const [shareRevokingId, setShareRevokingId] = useState<string | null>(null);
   const [dropUploadProgress, setDropUploadProgress] =
     useState<DropUploadProgress | null>(null);
   const activeEditors = fixtureModeEnabled
@@ -376,9 +401,19 @@ export function DocumentRoute() {
   >([
     createTimelineSnapshotEntry(fixtureState.docContent, LOCAL_TIMELINE_AUTHOR),
   ]);
+  const [timelinePoints, setTimelinePoints] = useState<TimelinePoint[]>([
+    {
+      seq: 0,
+      timestamp: new Date().toISOString(),
+      authorId: LOCAL_TIMELINE_AUTHOR.id,
+      authorType: LOCAL_TIMELINE_AUTHOR.type,
+    },
+  ]);
   const [timelineIndex, setTimelineIndex] = useState(0);
   const [timelineViewMode, setTimelineViewMode] =
     useState<HistoryViewMode>("authorship");
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineReloadToken, setTimelineReloadToken] = useState(0);
   const roomId = useMemo(
     () =>
       `${workspaceId ?? "unknown-workspace"}:${documentId ?? "unknown-document"}`,
@@ -513,6 +548,10 @@ export function DocumentRoute() {
     nextContent: string,
     isRemoteTransaction: boolean,
   ) => {
+    if (!fixtureModeEnabled) {
+      return;
+    }
+
     const nextAuthor = isRemoteTransaction
       ? timelineRemotePeersRef.current[0]
         ? timelineAuthorFromPeer(timelineRemotePeersRef.current[0])
@@ -540,6 +579,20 @@ export function DocumentRoute() {
       setTimelineIndex(nextEntries.length - 1);
       return nextEntries;
     });
+    setTimelinePoints((currentPoints) => {
+      const nextSeq = (currentPoints[currentPoints.length - 1]?.seq ?? -1) + 1;
+      const nextPoint: TimelinePoint = {
+        seq: nextSeq,
+        timestamp: new Date().toISOString(),
+        authorId: nextAuthor.id,
+        authorType: nextAuthor.type,
+      };
+      const nextPoints = [...currentPoints, nextPoint];
+      if (nextPoints.length > MAX_TIMELINE_SNAPSHOTS) {
+        nextPoints.splice(0, nextPoints.length - MAX_TIMELINE_SNAPSHOTS);
+      }
+      return nextPoints;
+    });
   };
   const { collaborationProviderRef, editorHostRef, editorViewRef } =
     useScriptumEditor({
@@ -554,13 +607,23 @@ export function DocumentRoute() {
       onDocContentChanged: handleEditorDocContentChanged,
       onDropUploadProgressChanged: setDropUploadProgress,
       onEditorReady: () => {
-        setTimelineEntries([
-          createTimelineSnapshotEntry(
-            fixtureState.docContent,
-            LOCAL_TIMELINE_AUTHOR,
-          ),
-        ]);
-        setTimelineIndex(0);
+        if (fixtureModeEnabled) {
+          setTimelineEntries([
+            createTimelineSnapshotEntry(
+              fixtureState.docContent,
+              LOCAL_TIMELINE_AUTHOR,
+            ),
+          ]);
+          setTimelinePoints([
+            {
+              seq: 0,
+              timestamp: new Date().toISOString(),
+              authorId: LOCAL_TIMELINE_AUTHOR.id,
+              authorType: LOCAL_TIMELINE_AUTHOR.type,
+            },
+          ]);
+          setTimelineIndex(0);
+        }
       },
       onEditorRuntimeError: setEditorRuntimeError,
       onSyncStateChanged: setSyncState,
@@ -753,32 +816,205 @@ export function DocumentRoute() {
     }
   }, [fixtureModeEnabled, fixtureState.docContent]);
 
+  const applyTimelineSnapshotToEditor = useCallback(
+    (snapshot: string) => {
+      const view = editorViewRef.current;
+      if (!view) {
+        return;
+      }
+      if (view.state.doc.toString() === snapshot) {
+        return;
+      }
+
+      isApplyingTimelineSnapshotRef.current = true;
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: snapshot,
+        },
+      });
+      isApplyingTimelineSnapshotRef.current = false;
+    },
+    [editorViewRef],
+  );
+
+  useEffect(() => {
+    if (fixtureModeEnabled || !workspaceId || !documentId) {
+      return;
+    }
+
+    let isCancelled = false;
+    setTimelineLoading(true);
+    void (async () => {
+      try {
+        const history = await getDocumentHistoryTimeline(
+          workspaceId,
+          documentId,
+        );
+        const events = [...history.events].sort(
+          (left, right) => left.seq - right.seq,
+        );
+        const fromSeq = events.length > 0 ? events[0].seq : undefined;
+        const toSeq =
+          events.length > 0 ? events[events.length - 1].seq : undefined;
+        const diff = await getDocumentDiffTimeline(workspaceId, documentId, {
+          fromSeq,
+          toSeq,
+          granularity: "snapshot",
+        });
+        const snapshots = [...diff.snapshots].sort(
+          (left, right) => left.seq - right.seq,
+        );
+        const snapshotsBySeq = new Map(
+          snapshots.map((snapshot) => [snapshot.seq, snapshot]),
+        );
+
+        const points: TimelinePoint[] =
+          events.length > 0
+            ? events.map((event) => ({
+                seq: event.seq,
+                timestamp: event.timestamp,
+                authorId: event.author_id,
+                authorType: event.author_type,
+                summary: event.summary,
+              }))
+            : snapshots.map((snapshot) => ({
+                seq: snapshot.seq,
+                timestamp: snapshot.timestamp,
+                authorId:
+                  snapshot.author_attributions[0]?.author_id ??
+                  LOCAL_TIMELINE_AUTHOR.id,
+                authorType:
+                  snapshot.author_attributions[0]?.author_type ??
+                  LOCAL_TIMELINE_AUTHOR.type,
+              }));
+
+        const safePoints =
+          points.length > 0
+            ? points
+            : [
+                {
+                  seq: 0,
+                  timestamp: new Date().toISOString(),
+                  authorId: LOCAL_TIMELINE_AUTHOR.id,
+                  authorType: LOCAL_TIMELINE_AUTHOR.type,
+                },
+              ];
+        const nextEntries = safePoints.map((point) => {
+          const snapshot =
+            snapshotsBySeq.get(point.seq) ?? snapshots[snapshots.length - 1];
+          if (!snapshot) {
+            return createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+          }
+          return timelineSnapshotEntryFromAuthorshipSegments(
+            snapshot.content_md,
+            snapshot.authorship_segments,
+            timelineAuthorFromHistory(point.authorId, point.authorType),
+          );
+        });
+
+        if (isCancelled) {
+          return;
+        }
+        setTimelinePoints(safePoints);
+        setTimelineEntries(nextEntries);
+        setTimelineIndex(Math.max(0, nextEntries.length - 1));
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        toast.error("Failed to load timeline history.");
+        const fallbackEntry = createTimelineSnapshotEntry(
+          editorViewRef.current?.state.doc.toString() ?? "",
+          LOCAL_TIMELINE_AUTHOR,
+        );
+        setTimelinePoints([
+          {
+            seq: 0,
+            timestamp: new Date().toISOString(),
+            authorId: LOCAL_TIMELINE_AUTHOR.id,
+            authorType: LOCAL_TIMELINE_AUTHOR.type,
+          },
+        ]);
+        setTimelineEntries([fallbackEntry]);
+        setTimelineIndex(0);
+      } finally {
+        if (!isCancelled) {
+          setTimelineLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    documentId,
+    editorViewRef,
+    fixtureModeEnabled,
+    timelineReloadToken,
+    toast,
+    workspaceId,
+  ]);
+
   const scrubToTimelineIndex = (nextIndex: number) => {
-    const snapshot = timelineEntries[nextIndex]?.content;
-    if (snapshot === undefined) {
+    const clampedIndex = Math.max(
+      0,
+      Math.min(nextIndex, Math.max(0, timelineEntries.length - 1)),
+    );
+    const localSnapshot = timelineEntries[clampedIndex]?.content;
+    setTimelineIndex(clampedIndex);
+
+    if (fixtureModeEnabled) {
+      if (localSnapshot !== undefined) {
+        applyTimelineSnapshotToEditor(localSnapshot);
+      }
+      return;
+    }
+    if (!workspaceId || !documentId) {
       return;
     }
 
-    setTimelineIndex(nextIndex);
-    const view = editorViewRef.current;
-    if (!view) {
+    const seq = timelinePoints[clampedIndex]?.seq;
+    if (seq === undefined) {
+      if (localSnapshot !== undefined) {
+        applyTimelineSnapshotToEditor(localSnapshot);
+      }
       return;
     }
 
-    const currentContent = view.state.doc.toString();
-    if (currentContent === snapshot) {
-      return;
-    }
+    void (async () => {
+      try {
+        const diff = await getDocumentDiffTimeline(workspaceId, documentId, {
+          fromSeq: seq,
+          toSeq: seq,
+          granularity: "snapshot",
+        });
+        const snapshot = diff.snapshots.find((item) => item.seq === seq);
+        if (!snapshot) {
+          return;
+        }
 
-    isApplyingTimelineSnapshotRef.current = true;
-    view.dispatch({
-      changes: {
-        from: 0,
-        to: view.state.doc.length,
-        insert: snapshot,
-      },
-    });
-    isApplyingTimelineSnapshotRef.current = false;
+        const point = timelinePoints[clampedIndex];
+        const entry = timelineSnapshotEntryFromAuthorshipSegments(
+          snapshot.content_md,
+          snapshot.authorship_segments,
+          timelineAuthorFromHistory(
+            point?.authorId ?? LOCAL_TIMELINE_AUTHOR.id,
+            point?.authorType ?? LOCAL_TIMELINE_AUTHOR.type,
+          ),
+        );
+        setTimelineEntries((currentEntries) => {
+          const nextEntries = currentEntries.slice();
+          nextEntries[clampedIndex] = entry;
+          return nextEntries;
+        });
+        applyTimelineSnapshotToEditor(entry.content);
+      } catch {
+        toast.error("Failed to load selected history snapshot.");
+      }
+    })();
   };
 
   useEffect(() => {
@@ -1133,15 +1369,94 @@ export function DocumentRoute() {
     return toThreadWithMessages(updatedThread, documentId).thread;
   };
 
+  const loadExistingShareLinks = async () => {
+    if (fixtureModeEnabled || !workspaceId) {
+      setExistingShareLinks([]);
+      setShareLinksError(null);
+      return;
+    }
+
+    try {
+      setShareLinksLoading(true);
+      setShareLinksError(null);
+      const payload = await listShareLinksApi(workspaceId);
+      setExistingShareLinks(shareLinksFromListResponse(payload));
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Failed to load existing share links.";
+      setShareLinksError(message);
+      setExistingShareLinks([]);
+    } finally {
+      setShareLinksLoading(false);
+    }
+  };
+
   const openShareDialog = () => {
     setGeneratedShareUrl("");
     setShareGenerationError(null);
+    setShareLinksError(null);
+    setSharePasswordInput("");
     setShareDialogOpen(true);
+    void loadExistingShareLinks();
   };
 
   const closeShareDialog = () => {
     setShareDialogOpen(false);
     setShareGenerationError(null);
+    setShareLinksError(null);
+    setShareRevokingId(null);
+  };
+
+  const copyGeneratedShareUrl = () => {
+    if (!generatedShareUrl) {
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      toast.error("Clipboard is unavailable in this environment.");
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(generatedShareUrl)
+      .then(() => {
+        toast.success("Copied share link.");
+      })
+      .catch(() => {
+        toast.error("Failed to copy share link.");
+      });
+  };
+
+  const revokeShareLink = async (shareLinkId: string) => {
+    if (!workspaceId || fixtureModeEnabled) {
+      return;
+    }
+    const link = existingShareLinks.find((item) => item.id === shareLinkId);
+    if (!link) {
+      return;
+    }
+
+    try {
+      setShareRevokingId(shareLinkId);
+      await revokeShareLinkApi(workspaceId, shareLinkId, {
+        ifMatch: link.etag,
+      });
+      setExistingShareLinks((current) =>
+        current.map((item) =>
+          item.id === shareLinkId ? { ...item, disabled: true } : item,
+        ),
+      );
+      toast.success("Revoked share link.");
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Failed to revoke share link.";
+      toast.error(message);
+    } finally {
+      setShareRevokingId(null);
+    }
   };
 
   const generateShareLink = async () => {
@@ -1173,6 +1488,7 @@ export function DocumentRoute() {
     }
 
     const expiresAt = expirationIsoFromOption(shareExpirationOption);
+    const password = sharePasswordInput.trim();
 
     try {
       setGeneratedShareUrl("");
@@ -1206,6 +1522,7 @@ export function DocumentRoute() {
           permission: sharePermission,
           expires_at: expiresAt,
           ...(maxUses === null ? {} : { max_uses: maxUses }),
+          ...(password.length === 0 ? {} : { password }),
         });
         const shareUrl = shareUrlFromCreateShareLinkResponse(
           payload,
@@ -1217,6 +1534,17 @@ export function DocumentRoute() {
           );
         }
         setGeneratedShareUrl(shareUrl);
+        const createdRecord = shareLinkFromCreateShareLinkResponse(payload);
+        if (createdRecord) {
+          setExistingShareLinks((current) => {
+            const deduped = current.filter(
+              (item) => item.id !== createdRecord.id,
+            );
+            return [createdRecord, ...deduped];
+          });
+        } else {
+          void loadExistingShareLinks();
+        }
       }
 
       toast.success(
@@ -1270,6 +1598,44 @@ export function DocumentRoute() {
   const latestTimelineEntry =
     timelineEntries[timelineEntries.length - 1] ??
     createTimelineSnapshotEntry("", LOCAL_TIMELINE_AUTHOR);
+  const activeTimelinePoint =
+    timelinePoints[timelineIndex] ??
+    timelinePoints[timelinePoints.length - 1] ??
+    null;
+  const activeTimelineAuthorLabel = activeTimelinePoint
+    ? timelineAuthorFromHistory(
+        activeTimelinePoint.authorId,
+        activeTimelinePoint.authorType,
+      ).name
+    : "Unknown";
+  const restoreTimelineVersion = () => {
+    if (fixtureModeEnabled || !workspaceId || !documentId) {
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        "Restore the document to this version? This creates a new update.",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    void (async () => {
+      try {
+        await restoreDocumentFromSnapshot(
+          workspaceId,
+          documentId,
+          activeTimelineEntry.content,
+        );
+        applyTimelineSnapshotToEditor(activeTimelineEntry.content);
+        toast.success("Restored document to selected version.");
+        setTimelineReloadToken((current) => current + 1);
+      } catch {
+        toast.error("Failed to restore selected version.");
+      }
+    })();
+  };
   const timelineAuthorshipMap = useMemo(
     () => authorshipMapFromTimelineEntry(activeTimelineEntry),
     [activeTimelineEntry],
@@ -1303,16 +1669,24 @@ export function DocumentRoute() {
           {isShareDialogOpen ? (
             <ShareDialog
               documentId={documentId}
+              existingShareLinks={existingShareLinks}
+              existingShareLinksError={shareLinksError}
               generationError={shareGenerationError}
               generatedShareUrl={generatedShareUrl}
+              isLoadingExistingShareLinks={shareLinksLoading}
+              isRevokingShareLinkId={shareRevokingId}
               onClose={closeShareDialog}
+              onCopyGeneratedUrl={copyGeneratedShareUrl}
               onExpirationOptionChange={setShareExpirationOption}
               onGenerate={generateShareLink}
               onMaxUsesInputChange={setShareMaxUsesInput}
+              onPasswordInputChange={setSharePasswordInput}
               onPermissionChange={setSharePermission}
+              onRevokeShareLink={revokeShareLink}
               onTargetTypeChange={setShareTargetType}
               shareExpirationOption={shareExpirationOption}
               shareMaxUsesInput={shareMaxUsesInput}
+              sharePasswordInput={sharePasswordInput}
               sharePermission={sharePermission}
               shareTargetType={shareTargetType}
               summaryPermissionLabel={sharePermissionLabel(sharePermission)}
@@ -1544,6 +1918,24 @@ export function DocumentRoute() {
         data-testid="history-view-panel"
         className={styles.historyPanel}
       >
+        <p data-testid="history-selected-point">
+          {activeTimelinePoint
+            ? `Seq ${activeTimelinePoint.seq} • ${activeTimelineAuthorLabel}`
+            : "No timeline points available"}
+        </p>
+        {timelineLoading ? (
+          <p data-testid="history-loading">Loading history timeline…</p>
+        ) : null}
+        <button
+          data-testid="history-restore-button"
+          disabled={
+            fixtureModeEnabled || timelineLoading || !workspaceId || !documentId
+          }
+          onClick={restoreTimelineVersion}
+          type="button"
+        >
+          Restore to this version
+        </button>
         <DiffView
           authorshipMap={timelineAuthorshipMap}
           currentContent={latestTimelineEntry.content}

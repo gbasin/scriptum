@@ -14,6 +14,21 @@ export interface ShareLinkRecord {
   readonly createdAt: string;
 }
 
+export interface RelayShareLinkRecord {
+  readonly id: string;
+  readonly targetType: ShareLinkTargetType;
+  readonly targetId: string;
+  readonly permission: ShareLinkPermission;
+  readonly expiresAt: string | null;
+  readonly maxUses: number | null;
+  readonly useCount: number;
+  readonly disabled: boolean;
+  readonly createdAt: string;
+  readonly revokedAt: string | null;
+  readonly etag: string;
+  readonly urlOnce: string;
+}
+
 const SHARE_LINK_STORAGE_PREFIX = "scriptum-share-link:";
 
 function storageKey(token: string): string {
@@ -84,6 +99,116 @@ function coerceRecord(value: unknown): ShareLinkRecord | null {
   };
 }
 
+function readApiString(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readApiNullableString(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): string | null | undefined {
+  for (const key of keys) {
+    if (!(key in record)) {
+      continue;
+    }
+    const value = record[key];
+    if (value === null) {
+      return null;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readApiNullableInteger(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): number | null | undefined {
+  for (const key of keys) {
+    if (!(key in record)) {
+      continue;
+    }
+    const value = record[key];
+    if (value === null) {
+      return null;
+    }
+    if (typeof value === "number" && Number.isInteger(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function coerceRelayShareLinkRecord(
+  value: unknown,
+): RelayShareLinkRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+
+  const id = readApiString(record, ["id"]);
+  const targetType = readApiString(record, ["target_type", "targetType"]);
+  const targetId = readApiString(record, ["target_id", "targetId"]);
+  const permission = readApiString(record, ["permission"]);
+  const expiresAt =
+    readApiNullableString(record, ["expires_at", "expiresAt"]) ?? null;
+  const maxUses =
+    readApiNullableInteger(record, ["max_uses", "maxUses"]) ?? null;
+  const useCount = readApiNullableInteger(record, ["use_count", "useCount"]);
+  const disabled = record.disabled;
+  const createdAt = readApiString(record, ["created_at", "createdAt"]);
+  const revokedAt =
+    readApiNullableString(record, ["revoked_at", "revokedAt"]) ?? null;
+  const etag = readApiString(record, ["etag"]);
+  const urlOnce = readApiString(record, ["url_once", "urlOnce"]) ?? "";
+
+  if (!id || !targetId || !createdAt || !etag) {
+    return null;
+  }
+  if (targetType !== "workspace" && targetType !== "document") {
+    return null;
+  }
+  if (permission !== "view" && permission !== "edit") {
+    return null;
+  }
+  if (useCount === undefined || useCount === null || useCount < 0) {
+    return null;
+  }
+  if (typeof disabled !== "boolean") {
+    return null;
+  }
+  if (maxUses !== null && maxUses < 1) {
+    return null;
+  }
+
+  return {
+    id,
+    targetType,
+    targetId,
+    permission,
+    expiresAt,
+    maxUses,
+    useCount,
+    disabled,
+    createdAt,
+    revokedAt,
+    etag,
+    urlOnce,
+  };
+}
+
 export function buildShareLinkUrl(token: string, origin: string): string {
   const normalizedOrigin = origin.replace(/\/+$/, "");
   return `${normalizedOrigin}/share/${encodeURIComponent(token)}`;
@@ -124,6 +249,36 @@ export function shareUrlFromCreateShareLinkResponse(
   }
 
   return buildShareLinkUrl(token, origin);
+}
+
+export function shareLinkFromCreateShareLinkResponse(
+  payload: unknown,
+): RelayShareLinkRecord | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const envelope = payload as Record<string, unknown>;
+  return coerceRelayShareLinkRecord(envelope.share_link ?? envelope.shareLink);
+}
+
+export function shareLinksFromListResponse(
+  payload: unknown,
+): RelayShareLinkRecord[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return [];
+  }
+  const envelope = payload as Record<string, unknown>;
+  const items = envelope.items;
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  const parsed = items
+    .map((item) => coerceRelayShareLinkRecord(item))
+    .filter((item): item is RelayShareLinkRecord => item !== null);
+
+  return parsed.sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  );
 }
 
 export function sharePermissionLabel(permission: ShareLinkPermission): string {

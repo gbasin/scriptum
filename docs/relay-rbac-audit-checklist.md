@@ -35,20 +35,19 @@ Issue: scriptum-14kp
   - Handler-level check validates token workspace against route workspace.
 - [x] Sync session creation enforces workspace scope and membership.
   - `POST /v1/workspaces/{workspace_id}/sync-sessions` checks `workspace_id` match and viewer+ membership.
-- [ ] Search endpoint lacks explicit RBAC enforcement in handler.
-  - `GET /v1/workspaces/{id}/search` currently only requires bearer auth middleware.
-  - Handler ignores authenticated workspace/user role and directly queries by path workspace id.
-- [ ] Document delete policy does not match required owner-only matrix.
-  - `DELETE /documents/{doc_id}` currently requires editor+ in `documents.rs`.
-- [ ] ACL override management policy does not match required owner-only matrix.
-  - `POST/DELETE /documents/{doc_id}/acl-overrides*` currently requires editor+.
-- [ ] Share-link revoke/update policy does not match required owner-only matrix.
-  - `PATCH/DELETE /share-links/{share_link_id}` currently run under editor-role middleware.
-- [ ] Workspace API role middleware does not enforce token workspace scope.
-  - `api/mod.rs` role middleware checks membership+role but does not validate JWT `workspace_id` against route `workspace_id`.
-  - This differs from comments/documents/ws handlers that enforce explicit workspace match.
-- [ ] Document-level ACL overrides are writable but not enforced on document access paths.
-  - `documents.rs` includes CRUD for `acl_overrides`, but document read/write authorization checks only workspace role.
+- [x] Search endpoint enforces explicit workspace RBAC in handler. (Resolved in `scriptum-18ai`)
+  - `GET /v1/workspaces/{id}/search` validates token workspace scope and requires viewer+ membership.
+- [x] Document delete policy matches owner-only matrix. (Resolved in `scriptum-39k8`)
+  - `DELETE /documents/{doc_id}` requires owner role in `documents.rs`.
+- [x] ACL override management matches owner-only matrix. (Resolved in `scriptum-39k8`)
+  - `POST/DELETE /documents/{doc_id}/acl-overrides*` require owner role.
+- [x] Share-link destructive policy aligned with owner-only requirements. (Resolved in `scriptum-39k8`)
+  - `DELETE /share-links/{share_link_id}` requires owner role.
+  - `PATCH /share-links/{share_link_id}` remains editor+ for non-destructive updates.
+- [x] Workspace API role middleware enforces token workspace scope. (Resolved in `scriptum-2im7`)
+  - `api/mod.rs` middleware rejects requests when JWT `workspace_id` differs from route workspace.
+- [x] Document-level ACL overrides are enforced on document access decisions. (Resolved in `scriptum-2z4v`)
+  - `documents.rs` combines workspace role with document ACL override role during authorization.
 
 ## Unauthenticated-access review
 - Expected unauthenticated endpoints:

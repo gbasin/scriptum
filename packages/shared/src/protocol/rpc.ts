@@ -138,6 +138,17 @@ export interface WorkspaceCreateResult {
   workspace: RpcWorkspace;
 }
 
+export interface DocCreateParams {
+  workspace_id: string;
+  path: string;
+  title?: string;
+  initial_content?: string;
+}
+
+export interface DocCreateResult {
+  document: RpcDocument;
+}
+
 export interface DocReadParams {
   workspace_id: string;
   doc_id: string;
@@ -158,6 +169,7 @@ export interface DocEditParams {
   workspace_id: string;
   doc_id: string;
   client_update_id: string;
+  path?: string;
   ops?: YjsOps;
   content_md?: string;
   if_etag?: string;
@@ -435,6 +447,7 @@ export interface RpcParamsMap {
   "workspace.list": WorkspaceListParams;
   "workspace.open": WorkspaceOpenParams;
   "workspace.create": WorkspaceCreateParams;
+  "doc.create": DocCreateParams;
   "doc.read": DocReadParams;
   "doc.edit": DocEditParams;
   "doc.edit_section": DocEditSectionParams;
@@ -458,6 +471,7 @@ export interface RpcResultMap {
   "workspace.list": WorkspaceListResult;
   "workspace.open": WorkspaceOpenResult;
   "workspace.create": WorkspaceCreateResult;
+  "doc.create": DocCreateResult;
   "doc.read": DocReadResult;
   "doc.edit": DocEditResult;
   "doc.edit_section": DocEditSectionResult;

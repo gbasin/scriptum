@@ -17,6 +17,7 @@ const rpcMethodKeys: Record<keyof RpcParamsMap, true> = {
   "workspace.list": true,
   "workspace.open": true,
   "workspace.create": true,
+  "doc.create": true,
   "doc.read": true,
   "doc.edit": true,
   "doc.edit_section": true,

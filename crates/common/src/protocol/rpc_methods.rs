@@ -6,6 +6,7 @@ pub const DAEMON_SHUTDOWN: &str = "daemon.shutdown";
 
 // ── Document ───────────────────────────────────────────────────────
 pub const DOC_READ: &str = "doc.read";
+pub const DOC_CREATE: &str = "doc.create";
 pub const DOC_EDIT: &str = "doc.edit";
 pub const DOC_EDIT_SECTION: &str = "doc.edit_section";
 pub const DOC_BUNDLE: &str = "doc.bundle";
@@ -37,6 +38,7 @@ pub const IMPLEMENTED_METHODS: &[&str] = &[
     RPC_PING,
     DAEMON_SHUTDOWN,
     DOC_READ,
+    DOC_CREATE,
     DOC_EDIT,
     DOC_EDIT_SECTION,
     DOC_BUNDLE,

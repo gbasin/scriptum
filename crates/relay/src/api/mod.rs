@@ -960,6 +960,11 @@ async fn require_workspace_role(
         Err(error) => return error.into_response(),
     };
 
+    if user.workspace_id != workspace_id {
+        return ApiError::forbidden("AUTH_FORBIDDEN", "caller lacks workspace access")
+            .into_response();
+    }
+
     let role = match state.store.workspace_role_for_user(user.user_id, workspace_id).await {
         Ok(Some(role)) => role,
         Ok(None) => {
@@ -3541,7 +3546,13 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri(format!("/v1/workspaces/{}", create_body.workspace.id))
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header(
+                        AUTHORIZATION,
+                        format!(
+                            "Bearer {}",
+                            bearer_token(&jwt_service, user_id, create_body.workspace.id)
+                        ),
+                    )
                     .body(Body::empty())
                     .expect("request should build"),
             )
@@ -3628,7 +3639,21 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri(format!("/v1/workspaces/{workspace_id}"))
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header(
+                        AUTHORIZATION,
+                        format!(
+                            "Bearer {}",
+                            bearer_token(
+                                &jwt_service,
+                                user_id,
+                                create_workspace["id"]
+                                    .as_str()
+                                    .expect("workspace id should be a string")
+                                    .parse()
+                                    .expect("workspace id should be a uuid")
+                            )
+                        ),
+                    )
                     .body(Body::empty())
                     .expect("request should build"),
             )
@@ -3723,6 +3748,7 @@ mod tests {
             .await
             .expect("create request should return response");
         let create_body: WorkspaceEnvelope = read_json(create_response).await;
+        let scoped_token = bearer_token(&jwt_service, user_id, create_body.workspace.id);
 
         let missing_if_match = router
             .clone()
@@ -3730,7 +3756,7 @@ mod tests {
                 Request::builder()
                     .method(Method::PATCH)
                     .uri(format!("/v1/workspaces/{}", create_body.workspace.id))
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header(AUTHORIZATION, format!("Bearer {scoped_token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(json!({ "name": "Docs 2" }).to_string()))
                     .expect("request should build"),
@@ -3745,7 +3771,7 @@ mod tests {
                 Request::builder()
                     .method(Method::PATCH)
                     .uri(format!("/v1/workspaces/{}", create_body.workspace.id))
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header(AUTHORIZATION, format!("Bearer {scoped_token}"))
                     .header("if-match", "\"stale\"")
                     .header("content-type", "application/json")
                     .body(Body::from(json!({ "name": "Docs 2" }).to_string()))
@@ -3760,7 +3786,7 @@ mod tests {
                 Request::builder()
                     .method(Method::PATCH)
                     .uri(format!("/v1/workspaces/{}", create_body.workspace.id))
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header(AUTHORIZATION, format!("Bearer {scoped_token}"))
                     .header("if-match", &create_body.workspace.etag)
                     .header("content-type", "application/json")
                     .body(Body::from(json!({ "name": "Docs Updated" }).to_string()))
@@ -3856,6 +3882,27 @@ mod tests {
         assert_eq!(body.items.len(), 2);
         assert!(body.items.iter().any(|m| m.role == "owner"));
         assert!(body.items.iter().any(|m| m.role == "editor"));
+    }
+
+    #[tokio::test]
+    async fn list_members_rejects_token_workspace_mismatch() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, Uuid::new_v4());
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/v1/workspaces/{workspace_id}/members"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("list members request should return response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -4143,6 +4190,58 @@ mod tests {
         assert_eq!(body.invite.email, "invitee@example.com");
         assert_eq!(body.invite.role, "editor");
         assert_eq!(body.invite.workspace_id, workspace_id);
+    }
+
+    #[tokio::test]
+    async fn create_share_link_rejects_token_workspace_mismatch() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, Uuid::new_v4());
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "target_type": "workspace",
+                            "target_id": workspace_id,
+                            "permission": "view"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create share link request should return response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn patch_workspace_rejects_token_workspace_mismatch() {
+        let (router, jwt_service, owner_id, _member_id, workspace_id, _store) =
+            setup_workspace_with_members();
+        let token = bearer_token(&jwt_service, owner_id, Uuid::new_v4());
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/v1/workspaces/{workspace_id}"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("if-match", "*")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "name": "Team Updated" }).to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("patch workspace request should return response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

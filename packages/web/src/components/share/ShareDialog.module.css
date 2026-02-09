@@ -18,6 +18,11 @@
   margin-top: var(--space-2);
 }
 
+.generatedRow {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .errorMessage {
   background: var(--color-danger-soft);
   border: 1px solid var(--color-danger);
@@ -25,4 +30,33 @@
   color: var(--color-danger-text);
   margin: var(--space-2) 0 0;
   padding: var(--space-1) var(--space-2);
+}
+
+.existingSection {
+  border-top: 1px solid var(--color-border-muted);
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.existingSection h3 {
+  margin: 0 0 var(--space-1);
+}
+
+.existingList {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.existingList li {
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+}
+
+.existingList p {
+  margin: 0 0 var(--space-1);
+  word-break: break-word;
 }

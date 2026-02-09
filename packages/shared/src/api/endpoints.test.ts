@@ -21,10 +21,13 @@ import {
   listComments,
   listDocuments,
   listMembers,
+  listShareLinks,
   listWorkspaces,
+  redeemShareLink,
   removeMember,
   reopenComment,
   resolveComment,
+  revokeShareLink,
   searchDocuments,
   updateDocument,
   updateMember,
@@ -82,9 +85,14 @@ describe("api endpoint builders", () => {
       "/v1/workspaces/ws-1/comments/comment-1/reopen",
     );
     expect(createShareLink("ws-1")).toBe("/v1/workspaces/ws-1/share-links");
+    expect(listShareLinks("ws-1")).toBe("/v1/workspaces/ws-1/share-links");
     expect(updateShareLink("ws-1", "share-1")).toBe(
       "/v1/workspaces/ws-1/share-links/share-1",
     );
+    expect(revokeShareLink("ws-1", "share-1")).toBe(
+      "/v1/workspaces/ws-1/share-links/share-1",
+    );
+    expect(redeemShareLink()).toBe("/v1/share-links/redeem");
     expect(createAclOverride("ws-1", "doc-1")).toBe(
       "/v1/workspaces/ws-1/documents/doc-1/acl-overrides",
     );

@@ -35,6 +35,7 @@ use crate::watcher::hash::sha256_hex;
 use base64::Engine;
 use regex::Regex;
 use scriptum_common::backlink::parse_wiki_links;
+use scriptum_common::crdt::origin::{AuthorType, OriginTag};
 use scriptum_common::path::normalize_path;
 use scriptum_common::protocol::jsonrpc::{
     is_supported_protocol_version, Request, RequestId, Response, RpcError,
@@ -238,6 +239,8 @@ fn append_trigger_metadata(message: String, trigger_type: Option<&str>) -> Strin
 
 const HISTORY_SYSTEM_AUTHOR_ID: &str = "system";
 const HISTORY_LOCAL_HUMAN_AUTHOR_ID: &str = "local-user";
+const BACKLINK_AUTO_UPDATE_AUTHOR_ID: &str = "backlink-auto-update";
+const BACKLINK_AUTO_UPDATE_SUMMARY: &str = "backlink-auto-update";
 
 #[derive(Debug, Clone)]
 struct DocSnapshotRecord {
@@ -348,6 +351,21 @@ pub struct DocMetadataRecord {
     pub title: String,
     pub head_seq: i64,
     pub etag: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocCreateParams {
+    workspace_id: Uuid,
+    path: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    initial_content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocCreateResult {
+    document: RpcDocument,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -614,6 +632,8 @@ struct DocEditParams {
     workspace_id: Uuid,
     doc_id: Uuid,
     client_update_id: String,
+    #[serde(default)]
+    path: Option<String>,
     #[serde(default)]
     ops: Option<serde_json::Value>,
     #[serde(default)]
@@ -1374,6 +1394,207 @@ impl RpcServerState {
             backlinks.sort_by(|left, right| left.path.cmp(&right.path));
             Ok(backlinks)
         })
+    }
+
+    async fn workspace_linkable_documents(
+        &self,
+        workspace_id: Uuid,
+        path_override: Option<(Uuid, String)>,
+    ) -> Vec<LinkableDocument> {
+        let metadata = self.doc_metadata.read().await;
+        metadata
+            .values()
+            .filter(|record| record.workspace_id == workspace_id)
+            .map(|record| {
+                let path = path_override
+                    .as_ref()
+                    .filter(|(doc_id, _)| *doc_id == record.doc_id)
+                    .map(|(_, path)| path.clone())
+                    .unwrap_or_else(|| record.path.clone());
+                LinkableDocument {
+                    doc_id: record.doc_id.to_string(),
+                    path,
+                    title: Some(record.title.clone()),
+                }
+            })
+            .collect()
+    }
+
+    async fn refresh_search_and_backlinks_for_doc(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        title: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let source_doc_id = doc_id.to_string();
+        let linkable_docs = self.workspace_linkable_documents(workspace_id, None).await;
+        let parsed_links = parse_wiki_links(content);
+        let resolved_backlinks = resolve_wiki_links(&source_doc_id, &parsed_links, &linkable_docs);
+
+        self.with_agent_storage(|conn, _| {
+            Self::upsert_search_index_entry(conn, doc_id, title, content)?;
+            let backlink_store = BacklinkStore::new(conn);
+            backlink_store
+                .ensure_schema()
+                .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
+            backlink_store
+                .replace_for_source(&source_doc_id, &resolved_backlinks)
+                .map_err(|error| format!("failed to update backlinks for doc {doc_id}: {error}"))?;
+            Ok(())
+        })
+    }
+
+    async fn auto_update_backlinks_for_renamed_doc(
+        &self,
+        workspace_id: Uuid,
+        renamed_doc_id: Uuid,
+        old_path: &str,
+        new_path: &str,
+    ) -> Result<(), String> {
+        if old_path == new_path {
+            return Ok(());
+        }
+
+        let renamed_doc_id_text = renamed_doc_id.to_string();
+        let source_doc_ids: Vec<String> = self.with_agent_storage(|conn, _| {
+            let backlink_store = BacklinkStore::new(conn);
+            backlink_store
+                .ensure_schema()
+                .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
+            let incoming = backlink_store
+                .incoming_for_target(&renamed_doc_id_text)
+                .map_err(|error| {
+                    format!(
+                        "failed to query incoming backlinks for renamed doc {renamed_doc_id}: {error}"
+                    )
+                })?;
+            let mut unique_sources = BTreeSet::new();
+            for backlink in incoming {
+                unique_sources.insert(backlink.source_doc_id);
+            }
+            Ok(unique_sources.into_iter().collect())
+        })?;
+
+        if source_doc_ids.is_empty() {
+            return Ok(());
+        }
+
+        let old_resolution_docs = self
+            .workspace_linkable_documents(
+                workspace_id,
+                Some((renamed_doc_id, old_path.to_string())),
+            )
+            .await;
+        let origin_tag = OriginTag {
+            author_id: BACKLINK_AUTO_UPDATE_AUTHOR_ID.to_string(),
+            author_type: AuthorType::Agent,
+            timestamp: chrono::Utc::now(),
+        };
+
+        for source_doc_id in source_doc_ids {
+            if source_doc_id == renamed_doc_id_text {
+                continue;
+            }
+
+            let Ok(source_doc_uuid) = Uuid::parse_str(&source_doc_id) else {
+                continue;
+            };
+
+            let belongs_to_workspace = {
+                let metadata = self.doc_metadata.read().await;
+                metadata.contains_key(&(workspace_id, source_doc_uuid))
+            };
+            if !belongs_to_workspace {
+                continue;
+            }
+
+            let source_doc = {
+                let mut manager = self.doc_manager.write().await;
+                manager.subscribe_or_create(source_doc_uuid)
+            };
+
+            let original_content = source_doc.get_text_string("content");
+            let (rewritten_content, replacement_count) = rewrite_backlinks_for_renamed_target(
+                &original_content,
+                &source_doc_id,
+                &renamed_doc_id_text,
+                &old_resolution_docs,
+                new_path,
+            );
+            if replacement_count == 0 {
+                let mut manager = self.doc_manager.write().await;
+                let _ = manager.unsubscribe(source_doc_uuid);
+                continue;
+            }
+
+            let existing_len = source_doc.text_len("content");
+            source_doc
+                .replace_text_with_origin(
+                    "content",
+                    0,
+                    existing_len,
+                    &rewritten_content,
+                    &origin_tag,
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to apply backlink auto-update for doc {source_doc_uuid}: {error}"
+                    )
+                })?;
+
+            let metadata_update = {
+                let mut metadata = self.doc_metadata.write().await;
+                metadata.get_mut(&(workspace_id, source_doc_uuid)).map(|record| {
+                    record.head_seq = record.head_seq.saturating_add(1);
+                    record.etag = format!("doc:{}:{}", source_doc_uuid, record.head_seq);
+                    let normalized_title =
+                        extract_title(&rewritten_content, Path::new(record.path.as_str()));
+                    record.title = normalized_title.clone();
+                    (record.head_seq, normalized_title, record.path.clone())
+                })
+            };
+            let Some((updated_seq, updated_title, updated_path)) = metadata_update else {
+                let mut manager = self.doc_manager.write().await;
+                let _ = manager.unsubscribe(source_doc_uuid);
+                continue;
+            };
+
+            self.record_doc_snapshot_with_metadata(
+                workspace_id,
+                source_doc_uuid,
+                updated_seq,
+                &rewritten_content,
+                BACKLINK_AUTO_UPDATE_AUTHOR_ID,
+                EditorType::Agent,
+                Some(BACKLINK_AUTO_UPDATE_SUMMARY),
+            )
+            .await;
+
+            if let Err(error) = self
+                .refresh_search_and_backlinks_for_doc(
+                    workspace_id,
+                    source_doc_uuid,
+                    &updated_title,
+                    &rewritten_content,
+                )
+                .await
+            {
+                warn!(
+                    doc_id = %source_doc_uuid,
+                    workspace_id = %workspace_id,
+                    error = %error,
+                    "failed to refresh indexes for backlink auto-update"
+                );
+            }
+
+            self.register_git_change(updated_path.as_str());
+
+            let mut manager = self.doc_manager.write().await;
+            let _ = manager.unsubscribe(source_doc_uuid);
+        }
+
+        Ok(())
     }
 
     fn load_bundle_comments(
@@ -2261,6 +2482,150 @@ impl RpcServerState {
         })
     }
 
+    async fn create_doc(&self, params: DocCreateParams) -> Result<DocCreateResult, String> {
+        let workspace = {
+            let workspaces = self.workspaces.read().await;
+            workspaces
+                .get(&params.workspace_id)
+                .cloned()
+                .ok_or_else(|| format!("workspace {} not found", params.workspace_id))?
+        };
+
+        let raw_path = params.path.trim();
+        let normalized_path = normalize_path(raw_path)
+            .map_err(|error| format!("invalid doc path `{raw_path}`: {error}"))?;
+        if normalized_path == ".scriptum" || normalized_path.starts_with(".scriptum/") {
+            return Err("doc path must not target `.scriptum` internals".to_string());
+        }
+
+        {
+            let metadata = self.doc_metadata.read().await;
+            if metadata.values().any(|record| {
+                record.workspace_id == params.workspace_id && record.path == normalized_path
+            }) {
+                return Err(format!("path `{normalized_path}` already exists in workspace"));
+            }
+        }
+
+        let workspace_root = Path::new(&workspace.root_path);
+        let abs_path = workspace_root.join(&normalized_path);
+        if abs_path.exists() {
+            return Err(format!("path `{normalized_path}` already exists in workspace"));
+        }
+
+        if let Some(parent) = abs_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create parent directory `{}` for new document: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+
+        let initial_content = params.initial_content.unwrap_or_default();
+        fs::write(&abs_path, initial_content.as_bytes()).map_err(|error| {
+            format!("failed to write new document `{}`: {error}", abs_path.display())
+        })?;
+
+        let doc_id = Uuid::new_v4();
+        let title = params
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                extract_title(&initial_content, Path::new(normalized_path.as_str()))
+            });
+        let tags = extract_index_tags(&initial_content);
+        let content_hash = sha256_hex(initial_content.as_bytes());
+        let last_fs_mtime_ns = modified_to_unix_nanos(&abs_path)?;
+        let line_ending_style = detect_line_ending_style(&initial_content);
+
+        let mut linkables = self.workspace_linkable_documents(params.workspace_id, None).await;
+        linkables.push(LinkableDocument {
+            doc_id: doc_id.to_string(),
+            path: normalized_path.clone(),
+            title: Some(title.clone()),
+        });
+        let parsed_links = parse_wiki_links(&initial_content);
+        let resolved_backlinks = resolve_wiki_links(&doc_id.to_string(), &parsed_links, &linkables);
+
+        self.with_agent_storage(|conn, _| {
+            let local_record = LocalDocumentRecord {
+                doc_id: doc_id.to_string(),
+                workspace_id: params.workspace_id.to_string(),
+                abs_path: abs_path.to_string_lossy().to_string(),
+                line_ending_style: line_ending_style.clone(),
+                last_fs_mtime_ns,
+                last_content_hash: content_hash.clone(),
+                projection_rev: 0,
+                last_server_seq: 0,
+                last_ack_seq: 0,
+                parse_error: None,
+            };
+            DocumentsLocalStore::insert(conn, &local_record)
+                .map_err(|error| format!("failed to register local document state: {error}"))?;
+
+            Self::upsert_search_index_entry(
+                conn,
+                doc_id,
+                title.as_str(),
+                initial_content.as_str(),
+            )?;
+
+            let backlink_store = BacklinkStore::new(conn);
+            backlink_store
+                .ensure_schema()
+                .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
+            backlink_store.replace_for_source(&doc_id.to_string(), &resolved_backlinks).map_err(
+                |error| format!("failed to index backlinks for `{normalized_path}`: {error}"),
+            )?;
+
+            ensure_tag_schema(conn)?;
+            replace_document_tags(conn, &doc_id.to_string(), &tags)?;
+            Ok(())
+        })?;
+
+        {
+            let mut manager = self.doc_manager.write().await;
+            let ydoc = manager.subscribe_or_create(doc_id);
+            if !initial_content.is_empty() {
+                ydoc.insert_text("content", 0, &initial_content);
+            }
+            let _ = manager.unsubscribe(doc_id);
+        }
+
+        let metadata = DocMetadataRecord {
+            workspace_id: params.workspace_id,
+            doc_id,
+            path: normalized_path.clone(),
+            title,
+            head_seq: 0,
+            etag: format!("doc:{doc_id}:0"),
+        };
+
+        {
+            let mut all_metadata = self.doc_metadata.write().await;
+            all_metadata.insert((params.workspace_id, doc_id), metadata.clone());
+        }
+
+        self.record_doc_snapshot_with_metadata(
+            params.workspace_id,
+            doc_id,
+            0,
+            &initial_content,
+            HISTORY_SYSTEM_AUTHOR_ID,
+            EditorType::Agent,
+            Some("doc create"),
+        )
+        .await;
+
+        self.register_git_change(normalized_path.as_str());
+
+        Ok(DocCreateResult { document: metadata_to_rpc_document(&metadata) })
+    }
+
     async fn read_doc(
         &self,
         workspace_id: Uuid,
@@ -2345,6 +2710,13 @@ impl RpcServerState {
             if params.content_md.is_none() && params.ops.is_none() {
                 return Err("doc.edit requires either `ops` or `content_md`".to_string());
             }
+            let normalized_path = match params.path.as_deref() {
+                Some(raw_path) => Some(
+                    normalize_path(raw_path)
+                        .map_err(|error| format!("invalid doc path `{raw_path}`: {error}"))?,
+                ),
+                None => None,
+            };
 
             let current_head_seq = {
                 let mut metadata = self.doc_metadata.write().await;
@@ -2391,11 +2763,25 @@ impl RpcServerState {
                 .map_err(|error| format!("failed to apply staged Yjs update: {error}"))?;
 
             let updated_content = doc.get_text_string("content");
-            let (result, updated_seq, updated_title, updated_path) = {
+            let (result, updated_seq, updated_title, old_path, updated_path) = {
                 let mut metadata = self.doc_metadata.write().await;
+                if let Some(new_path) = normalized_path.as_deref() {
+                    if metadata.values().any(|record| {
+                        record.workspace_id == params.workspace_id
+                            && record.doc_id != params.doc_id
+                            && record.path == new_path
+                    }) {
+                        return Err(format!("path `{new_path}` already exists in workspace"));
+                    }
+                }
+
                 let record = metadata
                     .entry((params.workspace_id, params.doc_id))
                     .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id));
+                let old_path = record.path.clone();
+                if let Some(new_path) = normalized_path.as_deref() {
+                    record.path = new_path.to_string();
+                }
                 record.head_seq = record.head_seq.saturating_add(1);
                 record.etag = format!("doc:{}:{}", params.doc_id, record.head_seq);
                 let normalized_title =
@@ -2405,6 +2791,7 @@ impl RpcServerState {
                     DocEditResult { etag: record.etag.clone(), head_seq: record.head_seq },
                     record.head_seq,
                     normalized_title,
+                    old_path,
                     record.path.clone(),
                 )
             };
@@ -2425,46 +2812,41 @@ impl RpcServerState {
                 Some(snapshot_summary.as_str()),
             )
             .await;
-            let source_doc_id = params.doc_id.to_string();
-            let linkable_docs = {
-                let metadata = self.doc_metadata.read().await;
-                metadata
-                    .values()
-                    .filter(|record| record.workspace_id == params.workspace_id)
-                    .map(|record| LinkableDocument {
-                        doc_id: record.doc_id.to_string(),
-                        path: record.path.clone(),
-                        title: Some(record.title.clone()),
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let parsed_links = parse_wiki_links(&updated_content);
-            let resolved_backlinks =
-                resolve_wiki_links(&source_doc_id, &parsed_links, &linkable_docs);
-            if let Err(error) = self.with_agent_storage(|conn, _| {
-                Self::upsert_search_index_entry(
-                    conn,
+            if let Err(error) = self
+                .refresh_search_and_backlinks_for_doc(
+                    params.workspace_id,
                     params.doc_id,
                     &updated_title,
                     &updated_content,
-                )?;
-                let backlink_store = BacklinkStore::new(conn);
-                backlink_store
-                    .ensure_schema()
-                    .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
-                backlink_store.replace_for_source(&source_doc_id, &resolved_backlinks).map_err(
-                    |error| {
-                        format!("failed to update backlinks for doc {}: {error}", params.doc_id)
-                    },
-                )?;
-                Ok(())
-            }) {
+                )
+                .await
+            {
                 warn!(
                     doc_id = %params.doc_id,
                     workspace_id = %params.workspace_id,
                     error = %error,
                     "failed to update persistent search/backlink indexes after doc.edit"
                 );
+            }
+            if old_path != updated_path {
+                if let Err(error) = self
+                    .auto_update_backlinks_for_renamed_doc(
+                        params.workspace_id,
+                        params.doc_id,
+                        old_path.as_str(),
+                        updated_path.as_str(),
+                    )
+                    .await
+                {
+                    warn!(
+                        doc_id = %params.doc_id,
+                        workspace_id = %params.workspace_id,
+                        old_path = %old_path,
+                        new_path = %updated_path,
+                        error = %error,
+                        "failed to auto-update backlinks after rename"
+                    );
+                }
             }
 
             self.register_git_change(updated_path.as_str());
@@ -2990,6 +3372,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
                 }),
             )
         }
+        rpc_methods::DOC_CREATE => handle_doc_create(request, state).await,
         rpc_methods::DOC_READ => handle_doc_read(request, state).await,
         rpc_methods::DOC_EDIT => handle_doc_edit(request, state).await,
         rpc_methods::DOC_BUNDLE => handle_doc_bundle(request, state).await,
@@ -3040,6 +3423,31 @@ async fn handle_doc_read(request: Request, state: &RpcServerState) -> Response {
         )
         .await;
     Response::success(request.id, json!(result))
+}
+
+async fn handle_doc_create(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_doc_create_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.create_doc(params).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => invalid_params_response(request.id, reason),
+    }
+}
+
+fn parse_doc_create_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<DocCreateParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(request_id, "doc.create requires params".to_string()));
+    };
+
+    serde_json::from_value::<DocCreateParams>(params).map_err(|error| {
+        invalid_params_response(request_id, format!("failed to decode doc.create params: {error}"))
+    })
 }
 
 fn parse_doc_read_params(
@@ -3606,6 +4014,68 @@ fn cl100k_tokenizer() -> Result<&'static CoreBPE, String> {
     }
 }
 
+fn compose_renamed_wiki_link_inner(
+    new_target: &str,
+    heading: Option<&str>,
+    alias: Option<&str>,
+) -> String {
+    let mut inner = new_target.to_string();
+    if let Some(heading) = heading {
+        if !heading.is_empty() {
+            inner.push('#');
+            inner.push_str(heading);
+        }
+    }
+    if let Some(alias) = alias {
+        if !alias.is_empty() {
+            inner.push('|');
+            inner.push_str(alias);
+        }
+    }
+    inner
+}
+
+fn rewrite_backlinks_for_renamed_target(
+    markdown: &str,
+    source_doc_id: &str,
+    target_doc_id: &str,
+    old_path_linkable_docs: &[LinkableDocument],
+    new_path: &str,
+) -> (String, usize) {
+    let parsed_links = parse_wiki_links(markdown);
+    if parsed_links.is_empty() {
+        return (markdown.to_string(), 0);
+    }
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    for link in &parsed_links {
+        let resolved =
+            resolve_wiki_links(source_doc_id, std::slice::from_ref(link), old_path_linkable_docs);
+        if !resolved.iter().any(|edge| edge.target_doc_id == target_doc_id) {
+            continue;
+        }
+
+        let rewritten_inner = compose_renamed_wiki_link_inner(
+            new_path,
+            link.heading.as_deref(),
+            link.alias.as_deref(),
+        );
+        replacements.push((link.start_offset, link.end_offset, format!("[[{rewritten_inner}]]")));
+    }
+
+    if replacements.is_empty() {
+        return (markdown.to_string(), 0);
+    }
+
+    let replacement_count = replacements.len();
+    let mut updated = markdown.to_string();
+    for (start, end, replacement) in replacements.into_iter().rev() {
+        updated.replace_range(start..end, &replacement);
+    }
+
+    (updated, replacement_count)
+}
+
 fn decode_doc_edit_ops(value: &serde_json::Value) -> Result<Vec<u8>, String> {
     match value {
         serde_json::Value::String(payload_b64) => decode_doc_edit_ops_base64(payload_b64),
@@ -4127,13 +4597,14 @@ mod tests {
 
     use base64::Engine;
     use chrono::Utc;
+    use scriptum_common::crdt::origin::AuthorType;
     use scriptum_common::protocol::jsonrpc::{Request, RequestId, INTERNAL_ERROR, INVALID_PARAMS};
     use scriptum_common::types::Section;
     use serde_json::json;
     use tokio::sync::broadcast;
     use uuid::Uuid;
 
-    use crate::engine::ydoc::YDoc;
+    use crate::engine::ydoc::{ObservedDocUpdate, YDoc};
     use crate::git::commit::{AiCommitClient, AiCommitError, RedactionPolicy as AiRedactionPolicy};
     use crate::git::worker::{CommandExecutor, CommandResult};
     use crate::search::{BacklinkStore, ResolvedBacklink};
@@ -4315,6 +4786,163 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: String::new(),
         })
+    }
+
+    #[tokio::test]
+    async fn doc_create_writes_file_and_registers_document() {
+        let state = RpcServerState::default();
+        let workspace_root = tempfile::tempdir().expect("workspace root should be created");
+
+        let workspace_create = Request::new(
+            "workspace.create",
+            Some(json!({
+                "name": "Doc Create Workspace",
+                "root_path": workspace_root.path().to_str().expect("workspace path should be UTF-8"),
+            })),
+            RequestId::Number(100),
+        );
+        let workspace_response = dispatch_request(workspace_create, &state).await;
+        assert!(
+            workspace_response.error.is_none(),
+            "workspace.create should succeed before doc.create"
+        );
+        let workspace_result =
+            workspace_response.result.expect("workspace.create should return result");
+        let workspace_id: Uuid = serde_json::from_value(
+            workspace_result
+                .get("workspace_id")
+                .cloned()
+                .expect("workspace.create should include workspace_id"),
+        )
+        .expect("workspace_id should decode as uuid");
+
+        let initial_content = "# API Spec\n\nInitial draft";
+        let create_request = Request::new(
+            "doc.create",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "path": "docs/api-spec.md",
+                "title": "API Spec",
+                "initial_content": initial_content,
+            })),
+            RequestId::Number(101),
+        );
+        let create_response = dispatch_request(create_request, &state).await;
+        assert!(create_response.error.is_none(), "doc.create should succeed: {create_response:?}");
+
+        let create_result =
+            create_response.result.expect("doc.create should return a result object");
+        let document = create_result
+            .get("document")
+            .cloned()
+            .expect("doc.create should include document payload");
+        assert_eq!(document["workspace_id"], json!(workspace_id));
+        assert_eq!(document["path"], json!("docs/api-spec.md"));
+        assert_eq!(document["title"], json!("API Spec"));
+        assert_eq!(document["head_seq"], json!(0));
+
+        let doc_id: Uuid =
+            serde_json::from_value(document["id"].clone()).expect("document.id should be uuid");
+        assert_eq!(document["etag"], json!(format!("doc:{doc_id}:0")));
+
+        let created_file = workspace_root.path().join("docs").join("api-spec.md");
+        assert!(created_file.exists(), "doc.create should write markdown file");
+        let disk_content = std::fs::read_to_string(&created_file)
+            .expect("created markdown file should be readable");
+        assert_eq!(disk_content, initial_content);
+
+        let tree_response = dispatch_request(
+            Request::new(
+                "doc.tree",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                })),
+                RequestId::Number(102),
+            ),
+            &state,
+        )
+        .await;
+        assert!(tree_response.error.is_none(), "doc.tree should succeed after doc.create");
+        let tree_result = tree_response.result.expect("doc.tree result should be present");
+        assert_eq!(tree_result["total"], json!(1));
+        assert_eq!(tree_result["items"][0]["path"], json!("docs/api-spec.md"));
+        assert_eq!(tree_result["items"][0]["doc_id"], json!(doc_id));
+
+        let read_response = dispatch_request(
+            Request::new(
+                "doc.read",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_id,
+                    "include_content": true
+                })),
+                RequestId::Number(103),
+            ),
+            &state,
+        )
+        .await;
+        assert!(
+            read_response.error.is_none(),
+            "doc.read should succeed for created doc: {read_response:?}"
+        );
+        let read_result = read_response.result.expect("doc.read result should be present");
+        assert_eq!(read_result["content_md"], json!(initial_content));
+    }
+
+    #[tokio::test]
+    async fn doc_create_rejects_duplicate_paths() {
+        let state = RpcServerState::default();
+        let workspace_root = tempfile::tempdir().expect("workspace root should be created");
+        let workspace_id = Uuid::new_v4();
+        state
+            .seed_workspace(
+                workspace_id,
+                "Duplicate Path Workspace",
+                workspace_root.path().to_str().expect("workspace path should be UTF-8"),
+            )
+            .await;
+
+        let first = dispatch_request(
+            Request::new(
+                "doc.create",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "path": "notes/duplicate.md",
+                    "initial_content": "first",
+                })),
+                RequestId::Number(104),
+            ),
+            &state,
+        )
+        .await;
+        assert!(first.error.is_none(), "initial doc.create should succeed: {first:?}");
+
+        let second = dispatch_request(
+            Request::new(
+                "doc.create",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "path": "notes/duplicate.md",
+                    "initial_content": "second",
+                })),
+                RequestId::Number(105),
+            ),
+            &state,
+        )
+        .await;
+        assert!(second.result.is_none(), "duplicate doc.create must not return result");
+        let error = second.error.expect("duplicate doc.create should return error");
+        assert_eq!(error.code, INVALID_PARAMS);
+        let reason = error
+            .data
+            .as_ref()
+            .and_then(|value| value.get("reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(
+            reason.contains("already exists"),
+            "duplicate path reason should mention existing path: {error:?}"
+        );
     }
 
     #[tokio::test]
@@ -4591,6 +5219,175 @@ mod tests {
             })
             .expect("backlink count should query");
         assert_eq!(backlink_count, 0);
+    }
+
+    #[tokio::test]
+    async fn doc_edit_rename_auto_updates_backlinks_and_preserves_alias_and_heading() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let target_doc_id = Uuid::new_v4();
+        let source_doc_id = Uuid::new_v4();
+        state
+            .seed_doc(workspace_id, target_doc_id, "docs/old-target.md", "Old Target", "# Target\n")
+            .await;
+        state.seed_doc(workspace_id, source_doc_id, "docs/source.md", "Source", "# Source\n").await;
+
+        let link_seed = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": source_doc_id,
+                    "client_update_id": "upd-rename-link-seed-1",
+                    "content_md": "# Source\nSee [[docs/old-target.md#section-a|Custom Label]] and [[old-target]].",
+                })),
+                RequestId::Number(891),
+            ),
+            &state,
+        )
+        .await;
+        assert!(link_seed.error.is_none(), "initial link seed should succeed: {link_seed:?}");
+
+        let observed_updates: Arc<Mutex<Vec<ObservedDocUpdate>>> = Arc::new(Mutex::new(Vec::new()));
+        let source_doc = {
+            let mut manager = state.doc_manager_for_test().write().await;
+            manager.subscribe_or_create(source_doc_id)
+        };
+        let _subscription = source_doc
+            .observe_updates_v1({
+                let observed_updates = Arc::clone(&observed_updates);
+                move |update| {
+                    observed_updates
+                        .lock()
+                        .expect("observed updates lock should be available")
+                        .push(update);
+                }
+            })
+            .expect("source doc observer should register");
+        observed_updates.lock().expect("observed updates lock should be available").clear();
+
+        let rename_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": target_doc_id,
+                    "client_update_id": "upd-rename-target-1",
+                    "path": "docs/new-target.md",
+                    "content_md": "# Target\n",
+                })),
+                RequestId::Number(892),
+            ),
+            &state,
+        )
+        .await;
+        assert!(
+            rename_response.error.is_none(),
+            "rename doc.edit should succeed: {rename_response:?}"
+        );
+
+        let source_read = state.read_doc(workspace_id, source_doc_id, true, false).await;
+        let source_content =
+            source_read.content_md.expect("source doc.read should include markdown content");
+        assert!(source_content.contains("[[docs/new-target.md#section-a|Custom Label]]"));
+        assert!(source_content.contains("[[docs/new-target.md]]"));
+
+        let target_read = state.read_doc(workspace_id, target_doc_id, false, true).await;
+        assert_eq!(target_read.document.path, "docs/new-target.md");
+        let backlinks = target_read.backlinks.expect("backlinks should be loaded");
+        assert!(
+            backlinks.iter().any(|entry| entry.path == "docs/source.md"),
+            "expected docs/source.md as backlink source: {backlinks:?}"
+        );
+        assert!(backlinks
+            .iter()
+            .any(|entry| entry.snippet == "docs/new-target.md#section-a|Custom Label"));
+        assert!(backlinks.iter().any(|entry| entry.snippet == "docs/new-target.md"));
+
+        let has_auto_update_origin =
+            observed_updates.lock().expect("observed updates lock should be available").iter().any(
+                |update| {
+                    update.origin_tag.as_ref().is_some_and(|origin| {
+                        origin.author_id == super::BACKLINK_AUTO_UPDATE_AUTHOR_ID
+                            && origin.author_type == AuthorType::Agent
+                    })
+                },
+            );
+        assert!(has_auto_update_origin, "expected backlink auto-update origin tag");
+
+        let mut manager = state.doc_manager_for_test().write().await;
+        let _ = manager.unsubscribe(source_doc_id);
+    }
+
+    #[tokio::test]
+    async fn doc_edit_rename_auto_updates_circular_backlinks_without_looping() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_a_id = Uuid::new_v4();
+        let doc_b_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_a_id, "docs/a.md", "A", "# A\n").await;
+        state.seed_doc(workspace_id, doc_b_id, "docs/b.md", "B", "# B\n").await;
+
+        let seed_a = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_a_id,
+                    "client_update_id": "upd-circular-a-1",
+                    "content_md": "# A\nSee [[docs/b.md]].",
+                })),
+                RequestId::Number(893),
+            ),
+            &state,
+        )
+        .await;
+        assert!(seed_a.error.is_none(), "doc A link seed should succeed: {seed_a:?}");
+
+        let seed_b = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_b_id,
+                    "client_update_id": "upd-circular-b-1",
+                    "content_md": "# B\nSee [[docs/a.md]].",
+                })),
+                RequestId::Number(894),
+            ),
+            &state,
+        )
+        .await;
+        assert!(seed_b.error.is_none(), "doc B link seed should succeed: {seed_b:?}");
+
+        let rename_a = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_a_id,
+                    "client_update_id": "upd-circular-a-rename-1",
+                    "path": "docs/a-renamed.md",
+                    "content_md": "# A\nSee [[docs/b.md]].",
+                })),
+                RequestId::Number(895),
+            ),
+            &state,
+        )
+        .await;
+        assert!(rename_a.error.is_none(), "doc A rename should succeed: {rename_a:?}");
+
+        let doc_b_after = state.read_doc(workspace_id, doc_b_id, true, false).await;
+        let doc_b_content =
+            doc_b_after.content_md.expect("doc B content should be present after rename");
+        assert!(doc_b_content.contains("[[docs/a-renamed.md]]"));
+
+        let doc_a_after = state.read_doc(workspace_id, doc_a_id, true, true).await;
+        assert_eq!(doc_a_after.document.path, "docs/a-renamed.md");
+        assert!(doc_a_after
+            .backlinks
+            .as_ref()
+            .is_some_and(|backlinks| backlinks.iter().any(|entry| entry.path == "docs/b.md")));
     }
 
     #[tokio::test]

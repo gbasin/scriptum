@@ -128,11 +128,26 @@ export function createShareLink(workspaceId: string): string {
   return `${workspaceBase(workspaceId)}/share-links`;
 }
 
+export function listShareLinks(workspaceId: string): string {
+  return `${workspaceBase(workspaceId)}/share-links`;
+}
+
 export function updateShareLink(
   workspaceId: string,
   shareLinkId: string,
 ): string {
   return `${workspaceBase(workspaceId)}/share-links/${segment(shareLinkId)}`;
+}
+
+export function revokeShareLink(
+  workspaceId: string,
+  shareLinkId: string,
+): string {
+  return `${workspaceBase(workspaceId)}/share-links/${segment(shareLinkId)}`;
+}
+
+export function redeemShareLink(): string {
+  return `${API_V1_PREFIX}/share-links/redeem`;
 }
 
 export function createAclOverride(

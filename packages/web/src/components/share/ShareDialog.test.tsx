@@ -21,10 +21,14 @@ function baseProps() {
     documentId: "doc-1",
     generatedShareUrl: "",
     onClose: vi.fn(),
+    onCopyGeneratedUrl: vi.fn(),
     onExpirationOptionChange: vi.fn(),
     onGenerate: vi.fn(),
     onMaxUsesInputChange: vi.fn(),
+    onPasswordInputChange: vi.fn(),
     onPermissionChange: vi.fn(),
+    onRevokeShareLink: vi.fn(),
+    sharePasswordInput: "",
     onTargetTypeChange: vi.fn(),
     shareExpirationOption: "none" as const,
     shareMaxUsesInput: "3",
@@ -68,6 +72,54 @@ describe("ShareDialog", () => {
     });
 
     expect(onGenerate).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("invokes revoke callback for existing links", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const onRevokeShareLink = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <ShareDialog
+          {...baseProps()}
+          existingShareLinks={[
+            {
+              id: "share-1",
+              targetType: "workspace",
+              targetId: "ws-1",
+              permission: "view",
+              expiresAt: null,
+              maxUses: null,
+              useCount: 0,
+              disabled: false,
+              createdAt: "2026-02-09T00:00:00.000Z",
+              revokedAt: null,
+              etag: "etag-1",
+              urlOnce: "",
+            },
+          ]}
+          onRevokeShareLink={onRevokeShareLink}
+        />,
+      );
+    });
+
+    const button = container.querySelector(
+      '[data-testid="share-link-revoke-share-1"]',
+    ) as HTMLButtonElement | null;
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button?.click();
+    });
+
+    expect(onRevokeShareLink).toHaveBeenCalledWith("share-1");
 
     act(() => {
       root.unmount();

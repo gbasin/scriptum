@@ -6,6 +6,7 @@
     "rpc.ping",
     "daemon.shutdown",
     "doc.read",
+    "doc.create",
     "doc.edit",
     "doc.edit_section",
     "doc.bundle",

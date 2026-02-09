@@ -12,6 +12,7 @@ use uuid::Uuid;
 const CONTRACT_METHODS: &[&str] = &[
     "rpc.ping",
     "daemon.shutdown",
+    "doc.create",
     "doc.read",
     "doc.edit",
     "doc.bundle",
@@ -57,10 +58,41 @@ async fn daemon_methods_accept_documented_param_shapes() {
     let doc_id = Uuid::new_v4();
     let workspace_root = unique_temp_path("scriptum-jsonrpc-contract-workspace");
     fs::create_dir_all(&workspace_root).expect("workspace root path should be creatable");
+    let seeded_workspace = call_raw(
+        &state,
+        &Request::new(
+            "workspace.create",
+            Some(json!({
+                "name": "Contract Workspace Seed",
+                "root_path": workspace_root,
+            })),
+            RequestId::String("contract-workspace-seed".to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(seeded_workspace.error, None, "workspace.create should seed contract test");
+    let seeded_workspace_id: Uuid = serde_json::from_value(
+        seeded_workspace
+            .result
+            .as_ref()
+            .and_then(|value| value.get("workspace_id"))
+            .cloned()
+            .expect("workspace.create should return workspace_id"),
+    )
+    .expect("seeded workspace_id should decode as uuid");
 
     let cases: Vec<(&str, Option<Value>)> = vec![
         ("rpc.ping", Some(json!({}))),
         ("daemon.shutdown", Some(json!({}))),
+        (
+            "doc.create",
+            Some(json!({
+                "workspace_id": seeded_workspace_id,
+                "path": "docs/contract.md",
+                "title": "Contract",
+                "initial_content": "# Contract"
+            })),
+        ),
         (
             "doc.read",
             Some(json!({
@@ -178,7 +210,7 @@ async fn daemon_methods_accept_documented_param_shapes() {
             "workspace.create",
             Some(json!({
                 "name": "Contract Workspace",
-                "root_path": workspace_root
+                "root_path": unique_temp_path("scriptum-jsonrpc-contract-workspace-second")
             })),
         ),
         ("git.status", Some(json!({}))),
@@ -219,6 +251,7 @@ async fn parameterized_methods_reject_non_object_params() {
 
     let methods = [
         "doc.read",
+        "doc.create",
         "doc.edit",
         "doc.bundle",
         "doc.edit_section",

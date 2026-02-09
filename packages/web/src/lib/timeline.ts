@@ -30,6 +30,13 @@ export interface TimelinePeer {
   type: "agent" | "human";
 }
 
+export interface TimelineAuthorshipSegment {
+  author_id: string;
+  author_type: "agent" | "human";
+  start_offset: number;
+  end_offset: number;
+}
+
 export const LOCAL_TIMELINE_AUTHOR: TimelineAuthor = {
   color: nameToColor(LOCAL_TIMELINE_AUTHOR_NAME),
   id: LOCAL_TIMELINE_AUTHOR_ID,
@@ -51,6 +58,56 @@ export function timelineAuthorFromPeer(peer: TimelinePeer): TimelineAuthor {
     name: peer.name,
     type: peer.type,
   };
+}
+
+export function timelineAuthorFromHistory(
+  authorId: string,
+  authorType: "agent" | "human",
+): TimelineAuthor {
+  const normalizedId = authorId.trim() || "unknown-author";
+  const normalizedName =
+    normalizedId === LOCAL_TIMELINE_AUTHOR_ID
+      ? LOCAL_TIMELINE_AUTHOR_NAME
+      : normalizedId;
+  return {
+    color: nameToColor(normalizedName),
+    id: normalizedId,
+    name: normalizedName,
+    type: authorType,
+  };
+}
+
+export function timelineSnapshotEntryFromAuthorshipSegments(
+  content: string,
+  segments: TimelineAuthorshipSegment[],
+  fallbackAuthor: TimelineAuthor = LOCAL_TIMELINE_AUTHOR,
+): TimelineSnapshotEntry {
+  const attribution = Array.from(
+    { length: content.length },
+    () => fallbackAuthor,
+  );
+  for (const segment of segments) {
+    const start = Math.max(
+      0,
+      Math.min(content.length, Math.floor(segment.start_offset)),
+    );
+    const end = Math.max(
+      start,
+      Math.min(content.length, Math.floor(segment.end_offset)),
+    );
+    if (end <= start) {
+      continue;
+    }
+
+    const author = timelineAuthorFromHistory(
+      segment.author_id,
+      segment.author_type,
+    );
+    for (let index = start; index < end; index += 1) {
+      attribution[index] = author;
+    }
+  }
+  return { content, attribution };
 }
 
 export function createTimelineSnapshotEntry(

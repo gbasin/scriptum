@@ -136,6 +136,23 @@ impl YDoc {
         text.insert(&mut txn, index, content);
     }
 
+    /// Replace a range of text in a named text type with a structured CRDT origin tag.
+    pub fn replace_text_with_origin(
+        &self,
+        name: &str,
+        index: u32,
+        length: u32,
+        content: &str,
+        origin_tag: &OriginTag,
+    ) -> Result<()> {
+        let origin_bytes = origin_tag.to_bytes().context("failed to encode origin tag")?;
+        let text = self.doc.get_or_insert_text(name);
+        let mut txn = self.doc.transact_mut_with(origin_bytes.as_slice());
+        text.remove_range(&mut txn, index, length);
+        text.insert(&mut txn, index, content);
+        Ok(())
+    }
+
     /// Get the length of a named text type in UTF-8 characters.
     pub fn text_len(&self, name: &str) -> u32 {
         let text = self.doc.get_or_insert_text(name);

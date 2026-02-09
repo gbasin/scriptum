@@ -195,6 +195,98 @@ describe("ScriptumApiClient", () => {
     });
   });
 
+  it("lists share links for a workspace", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        items: [
+          {
+            id: "share-1",
+            target_type: "workspace",
+            target_id: "w-1",
+            permission: "view",
+            expires_at: null,
+            max_uses: null,
+            use_count: 0,
+            disabled: false,
+            created_at: "2026-02-08T00:00:00.000Z",
+            revoked_at: null,
+            etag: "etag-1",
+            url_once: "",
+          },
+        ],
+      }),
+    );
+
+    const client = new ScriptumApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetchImpl,
+      tokenProvider: () => "token-xyz",
+    });
+
+    await client.listShareLinks("w-1");
+
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/w-1/share-links",
+    );
+    expect(init?.method).toBe("GET");
+    expect(readHeader(init, "Authorization")).toBe("Bearer token-xyz");
+  });
+
+  it("revokeShareLink sends DELETE with If-Match", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    const client = new ScriptumApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetchImpl,
+      tokenProvider: () => "token-xyz",
+    });
+
+    await client.revokeShareLink("w-1", "share-1", { ifMatch: '"etag-1"' });
+
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/w-1/share-links/share-1",
+    );
+    expect(init?.method).toBe("DELETE");
+    expect(readHeader(init, "If-Match")).toBe('"etag-1"');
+  });
+
+  it("redeems share link without bearer auth header", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        workspace_id: "w-1",
+        target_type: "document",
+        target_id: "doc-1",
+        permission: "view",
+        remaining_uses: 3,
+      }),
+    );
+
+    const client = new ScriptumApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetchImpl,
+      tokenProvider: () => "token-xyz",
+      idempotencyKeyFactory: () => "idem-redeem",
+    });
+
+    await client.redeemShareLink({
+      token: "share-token",
+      password: "secret-password",
+    });
+
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe("https://relay.scriptum.dev/v1/share-links/redeem");
+    expect(init?.method).toBe("POST");
+    expect(readHeader(init, "Authorization")).toBeNull();
+    expect(readJsonBody(init)).toEqual({
+      token: "share-token",
+      password: "secret-password",
+    });
+  });
+
   it("retries retryable 5xx responses with exponential backoff", async () => {
     vi.useFakeTimers();
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);

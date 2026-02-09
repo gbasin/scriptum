@@ -21,6 +21,10 @@
   margin: 0;
 }
 
+.passwordInput {
+  width: 100%;
+}
+
 .unavailable {
   color: var(--color-warning-text);
   margin-top: var(--space-2);

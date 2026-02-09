@@ -29,10 +29,13 @@ import {
   listComments as listCommentsPath,
   listDocuments as listDocumentsPath,
   listMembers as listMembersPath,
+  listShareLinks as listShareLinksPath,
   listWorkspaces as listWorkspacesPath,
+  redeemShareLink as redeemShareLinkPath,
   removeMember as removeMemberPath,
   reopenComment as reopenCommentPath,
   resolveComment as resolveCommentPath,
+  revokeShareLink as revokeShareLinkPath,
   searchDocuments as searchDocumentsPath,
   updateDocument as updateDocumentPath,
   updateMember as updateMemberPath,
@@ -216,6 +219,19 @@ export interface UpdateShareLinkRequest {
   expires_at?: string | null;
   max_uses?: number | null;
   disabled?: boolean;
+}
+
+export interface RedeemShareLinkRequest {
+  token: string;
+  password?: string;
+}
+
+export interface RedeemShareLinkResponse {
+  workspace_id: string;
+  target_type: "workspace" | "document";
+  target_id: string;
+  permission: "view" | "edit";
+  remaining_uses: number | null;
 }
 
 export interface AclOverride {
@@ -868,6 +884,15 @@ export class ScriptumApiClient {
     });
   }
 
+  listShareLinks(
+    workspaceId: string,
+    options: ApiRequestOptions = {},
+  ): Promise<{ items: ShareLink[] }> {
+    return this.request(listShareLinksPath(workspaceId), {
+      signal: options.signal,
+    });
+  }
+
   updateShareLink(
     workspaceId: string,
     shareLinkId: string,
@@ -878,6 +903,30 @@ export class ScriptumApiClient {
       method: "PATCH",
       body,
       ifMatch: options.ifMatch,
+      signal: options.signal,
+    });
+  }
+
+  async revokeShareLink(
+    workspaceId: string,
+    shareLinkId: string,
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.request<void>(revokeShareLinkPath(workspaceId, shareLinkId), {
+      method: "DELETE",
+      ifMatch: options.ifMatch,
+      signal: options.signal,
+    });
+  }
+
+  redeemShareLink(
+    body: RedeemShareLinkRequest,
+    options: ApiRequestOptions = {},
+  ): Promise<RedeemShareLinkResponse> {
+    return this.request(redeemShareLinkPath(), {
+      method: "POST",
+      body,
+      includeAuth: false,
       signal: options.signal,
     });
   }
