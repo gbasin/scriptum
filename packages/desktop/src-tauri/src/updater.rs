@@ -404,6 +404,7 @@ fn is_crash_regression(baseline: Option<f64>, current: Option<f64>) -> bool {
 mod tests {
     use super::{is_crash_regression, parse_bool, ring_allows_version, UpdateRing};
     use semver::Version;
+    use serde_json::Value;
 
     #[test]
     fn parse_bool_accepts_common_values() {
@@ -435,5 +436,15 @@ mod tests {
         assert!(!is_crash_regression(Some(0.2), Some(0.4)));
         assert!(is_crash_regression(Some(0.2), Some(0.41)));
         assert!(!is_crash_regression(None, Some(0.41)));
+    }
+
+    #[test]
+    fn tauri_config_declares_updater_plugin_config_object() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config should parse");
+        let updater = config["plugins"]["updater"]
+            .as_object()
+            .expect("plugins.updater must be an object to satisfy tauri-plugin-updater config");
+        assert!(updater.contains_key("pubkey"));
     }
 }
