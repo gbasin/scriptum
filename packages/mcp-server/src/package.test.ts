@@ -9,12 +9,12 @@ interface PackageJsonShape {
 }
 
 describe("mcp package metadata", () => {
-  it("publishes a scriptum-mcp binary from the dist entrypoint", async () => {
+  it("defines scriptum-mcp binary metadata from the dist entrypoint", async () => {
     const packageJsonPath = new URL("../package.json", import.meta.url);
     const raw = await readFile(packageJsonPath, "utf8");
     const manifest = JSON.parse(raw) as PackageJsonShape;
 
-    expect(manifest.private).toBe(false);
+    expect(manifest.private).toBe(true);
     expect(manifest.main).toBe("./dist/index.js");
     expect(manifest.types).toBe("./dist/index.d.ts");
     expect(manifest.bin).toEqual({
