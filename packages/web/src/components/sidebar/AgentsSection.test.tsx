@@ -1,7 +1,16 @@
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PeerPresence } from "../../store/presence";
 import { AgentsSection, activityStatusFromLastSeen } from "./AgentsSection";
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+}
 
 const AGENT: PeerPresence = {
   name: "Claude Agent",
@@ -20,6 +29,12 @@ const HUMAN: PeerPresence = {
   lastSeenAt: "2026-02-07T00:00:00.000Z",
   color: "#34d399",
 };
+
+afterEach(() => {
+  document.body.innerHTML = "";
+  globalThis.IS_REACT_ACT_ENVIRONMENT = undefined;
+  vi.useRealTimers();
+});
 
 describe("activityStatusFromLastSeen", () => {
   it("returns active when heartbeat is recent", () => {
@@ -65,5 +80,37 @@ describe("AgentsSection", () => {
   it("renders empty state when no agents are present", () => {
     const html = renderToString(<AgentsSection peers={[HUMAN]} />);
     expect(html).toContain("No active agents.");
+  });
+
+  it("refreshes activity status over time without external rerenders", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-02-07T00:01:00.000Z"));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const tickingAgent: PeerPresence = {
+      ...AGENT,
+      lastSeenAt: "2026-02-07T00:00:10.000Z",
+    };
+
+    act(() => {
+      root.render(<AgentsSection peers={[tickingAgent]} />);
+    });
+
+    const statusNode = container.querySelector(
+      '[data-testid="sidebar-agent-status-Claude Agent"]',
+    );
+    expect(statusNode?.textContent).toContain("active");
+
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+
+    expect(statusNode?.textContent).toContain("idle");
+
+    act(() => {
+      root.unmount();
+    });
   });
 });
