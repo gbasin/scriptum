@@ -8,6 +8,11 @@ export interface SkeletonBlockProps {
   testId?: string;
 }
 
+export interface SkeletonStackProps {
+  className?: string;
+  lineClassNames: readonly string[];
+}
+
 export function SkeletonBlock({
   className,
   style,
@@ -20,5 +25,18 @@ export function SkeletonBlock({
       data-testid={testId}
       style={style}
     />
+  );
+}
+
+export function SkeletonStack({ className, lineClassNames }: SkeletonStackProps) {
+  return (
+    <div aria-hidden="true" className={className}>
+      {lineClassNames.map((lineClassName, index) => (
+        <SkeletonBlock
+          className={lineClassName}
+          key={`${index}-${lineClassName}`}
+        />
+      ))}
+    </div>
   );
 }

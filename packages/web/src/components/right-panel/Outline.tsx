@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useEffect, useState } from "react";
-import { SkeletonBlock } from "../Skeleton";
+import { SkeletonStack } from "../Skeleton";
 import styles from "./Outline.module.css";
 
 const OUTLINE_ACTIVE_OFFSET_PX = 120;
@@ -12,6 +12,12 @@ const LEVEL_CLASSNAME: Record<number, string> = {
   5: styles.level5,
   6: styles.level6,
 };
+const OUTLINE_LOADING_LINE_CLASSNAMES = [
+  clsx(styles.loadingLine, styles.loading78),
+  clsx(styles.loadingLine, styles.loading62),
+  clsx(styles.loadingLine, styles.loading72),
+  clsx(styles.loadingLine, styles.loading52),
+];
 
 export interface OutlineHeading {
   id: string;
@@ -161,20 +167,10 @@ export function Outline({ editorContainer, loading = false }: OutlineProps) {
   if (loading) {
     return (
       <div data-testid="outline-loading">
-        <div aria-hidden="true" className={styles.loadingList}>
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading78)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading62)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading72)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading52)}
-          />
-        </div>
+        <SkeletonStack
+          className={styles.loadingList}
+          lineClassNames={OUTLINE_LOADING_LINE_CLASSNAMES}
+        />
       </div>
     );
   }

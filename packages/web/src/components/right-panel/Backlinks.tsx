@@ -2,11 +2,16 @@ import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
 import { getAccessToken } from "../../lib/auth";
 import controls from "../../styles/Controls.module.css";
-import { SkeletonBlock } from "../Skeleton";
+import { SkeletonStack } from "../Skeleton";
 import styles from "./Backlinks.module.css";
 
 const RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
+const BACKLINK_LOADING_LINE_CLASSNAMES = [
+  clsx(styles.loadingLine, styles.loading74),
+  clsx(styles.loadingLine, styles.loading59),
+  clsx(styles.loadingLine, styles.loading68),
+];
 
 export interface BacklinkEntry {
   docId: string;
@@ -193,17 +198,10 @@ export function Backlinks({
 
       {activeLoading ? (
         <div data-testid="backlinks-loading">
-          <div aria-hidden="true" className={styles.loadingList}>
-            <SkeletonBlock
-              className={clsx(styles.loadingLine, styles.loading74)}
-            />
-            <SkeletonBlock
-              className={clsx(styles.loadingLine, styles.loading59)}
-            />
-            <SkeletonBlock
-              className={clsx(styles.loadingLine, styles.loading68)}
-            />
-          </div>
+          <SkeletonStack
+            className={styles.loadingList}
+            lineClassNames={BACKLINK_LOADING_LINE_CLASSNAMES}
+          />
         </div>
       ) : null}
 

@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import controls from "../../styles/Controls.module.css";
-import { SkeletonBlock } from "../Skeleton";
+import { SkeletonStack } from "../Skeleton";
 import styles from "./DocumentTree.module.css";
 
 // -- Types --------------------------------------------------------------------
@@ -53,6 +53,14 @@ export interface DocumentTreeProps {
   /** Newly-created document id that should enter inline rename mode. */
   pendingRenameDocumentId?: string | null;
 }
+
+const DOCUMENT_TREE_LOADING_LINE_CLASSNAMES = [
+  clsx(styles.loadingLine, styles.loading62),
+  clsx(styles.loadingLine, styles.loading78),
+  clsx(styles.loadingLine, styles.loading54),
+  clsx(styles.loadingLine, styles.loading71),
+  clsx(styles.loadingLine, styles.loading49),
+];
 
 // -- Tree building -------------------------------------------------------------
 
@@ -856,23 +864,10 @@ export function DocumentTree({
   if (loading) {
     return (
       <div data-testid="document-tree-loading">
-        <div aria-hidden="true" className={styles.loadingList}>
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading62)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading78)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading54)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading71)}
-          />
-          <SkeletonBlock
-            className={clsx(styles.loadingLine, styles.loading49)}
-          />
-        </div>
+        <SkeletonStack
+          className={styles.loadingList}
+          lineClassNames={DOCUMENT_TREE_LOADING_LINE_CLASSNAMES}
+        />
       </div>
     );
   }
