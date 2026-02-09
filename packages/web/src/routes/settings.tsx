@@ -1,11 +1,19 @@
-import type { GitSyncPolicy, WorkspaceConfig } from "@scriptum/shared";
+import type {
+  GitSyncPolicy,
+  WorkspaceConfig,
+  WorkspaceMember,
+} from "@scriptum/shared";
 import clsx from "clsx";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import {
   configureGitSyncSettings,
   getGitSyncSettings,
+  inviteToWorkspace,
+  listMembers,
+  removeMember,
+  updateMember,
 } from "../lib/api-client";
 import { useDocumentsStore } from "../store/documents";
 import { defaultWorkspaceConfig, useWorkspaceStore } from "../store/workspace";
@@ -79,6 +87,17 @@ function formatLastSyncAt(lastSyncAt: string | null): string {
   return new Date(timestamp).toLocaleString();
 }
 
+function requestErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return "Request failed.";
+}
+
+function memberStatus(member: WorkspaceMember): string {
+  return member.status?.trim().toLowerCase() || "active";
+}
+
 export function SettingsRoute() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -112,6 +131,19 @@ export function SettingsRoute() {
   const [gitSyncSaving, setGitSyncSaving] = useState(false);
   const [gitSyncError, setGitSyncError] = useState<string | null>(null);
   const [gitSyncNotice, setGitSyncNotice] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"editor" | "viewer">("editor");
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
+  const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [pendingRemoveMemberId, setPendingRemoveMemberId] = useState<
+    string | null
+  >(null);
   const lastGitSyncWorkspaceIdRef = useRef<string | null>(null);
 
   const activeWorkspace = useMemo(
@@ -148,6 +180,15 @@ export function SettingsRoute() {
     });
     setGitSyncError(null);
     setGitSyncNotice(null);
+    setInviteEmail("");
+    setInviteRole("editor");
+    setMembers([]);
+    setMembersError(null);
+    setInviteError(null);
+    setInviteNotice(null);
+    setUpdatingMemberId(null);
+    setRemovingMemberId(null);
+    setPendingRemoveMemberId(null);
   }, [activeWorkspace]);
 
   useEffect(() => {
@@ -198,6 +239,31 @@ export function SettingsRoute() {
       cancelled = true;
     };
   }, [activeTab, activeWorkspace]);
+
+  const loadMembersForActiveWorkspace = useCallback(async () => {
+    if (!activeWorkspace) {
+      setMembers([]);
+      return;
+    }
+
+    setMembersLoading(true);
+    setMembersError(null);
+    try {
+      const response = await listMembers(activeWorkspace.id);
+      setMembers(response.items);
+    } catch (error: unknown) {
+      setMembersError(requestErrorMessage(error));
+    } finally {
+      setMembersLoading(false);
+    }
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (!activeWorkspace || activeTab !== "permissions") {
+      return;
+    }
+    void loadMembersForActiveWorkspace();
+  }, [activeTab, activeWorkspace, loadMembersForActiveWorkspace]);
 
   if (!activeWorkspace) {
     return (
@@ -315,6 +381,67 @@ export function SettingsRoute() {
       );
     } finally {
       setGitSyncSaving(false);
+    }
+  };
+
+  const handleInviteMember = async () => {
+    const email = inviteEmail.trim();
+    if (!email) {
+      setInviteError("Email is required.");
+      return;
+    }
+
+    setInviteBusy(true);
+    setInviteError(null);
+    setInviteNotice(null);
+    try {
+      await inviteToWorkspace(activeWorkspace.id, {
+        email,
+        role: inviteRole,
+      });
+      setInviteEmail("");
+      setInviteNotice("Invitation sent.");
+      await loadMembersForActiveWorkspace();
+    } catch (error: unknown) {
+      setInviteError(requestErrorMessage(error));
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const handleUpdateMemberRole = async (
+    member: WorkspaceMember,
+    nextRole: "editor" | "viewer",
+  ) => {
+    setUpdatingMemberId(member.user_id);
+    setInviteError(null);
+    setInviteNotice(null);
+    try {
+      await updateMember(activeWorkspace.id, member.user_id, { role: nextRole });
+      setInviteNotice("Member role updated.");
+      await loadMembersForActiveWorkspace();
+    } catch (error: unknown) {
+      setInviteError(requestErrorMessage(error));
+    } finally {
+      setUpdatingMemberId(null);
+    }
+  };
+
+  const handleRemoveMember = async (member: WorkspaceMember) => {
+    setRemovingMemberId(member.user_id);
+    setInviteError(null);
+    setInviteNotice(null);
+    try {
+      await removeMember(activeWorkspace.id, member.user_id);
+      setPendingRemoveMemberId(null);
+      setInviteNotice(
+        memberStatus(member) === "invited" ? "Pending invite revoked." : "Member removed.",
+      );
+      await loadMembersForActiveWorkspace();
+    } catch (error: unknown) {
+      setInviteError(requestErrorMessage(error));
+    } finally {
+      setRemovingMemberId(null);
     }
   };
 
@@ -728,63 +855,252 @@ export function SettingsRoute() {
             data-testid="settings-form-permissions"
           >
             <legend className={styles.legend}>Permissions</legend>
-            <label className={controls.field}>
-              Default role
-              <select
-                className={controls.selectInput}
-                data-testid="settings-permissions-default-role"
-                onChange={(event) =>
-                  updateConfig((current) => ({
-                    ...current,
-                    permissions: {
-                      ...current.permissions,
-                      defaultRole:
-                        event.target.value === "viewer" ? "viewer" : "editor",
-                    },
-                  }))
-                }
-                value={config.permissions.defaultRole}
-              >
-                <option value="viewer">Viewer</option>
-                <option value="editor">Editor</option>
-              </select>
-            </label>
-            <label className={controls.checkboxRow}>
-              <input
-                className={controls.checkbox}
-                checked={config.permissions.allowExternalInvites}
-                data-testid="settings-permissions-allow-invites"
-                onChange={(event) =>
-                  updateConfig((current) => ({
-                    ...current,
-                    permissions: {
-                      ...current.permissions,
-                      allowExternalInvites: event.target.checked,
-                    },
-                  }))
-                }
-                type="checkbox"
-              />
-              Allow external invites
-            </label>
-            <label className={controls.checkboxRow}>
-              <input
-                className={controls.checkbox}
-                checked={config.permissions.allowShareLinks}
-                data-testid="settings-permissions-allow-share-links"
-                onChange={(event) =>
-                  updateConfig((current) => ({
-                    ...current,
-                    permissions: {
-                      ...current.permissions,
-                      allowShareLinks: event.target.checked,
-                    },
-                  }))
-                }
-                type="checkbox"
-              />
-              Allow share links
-            </label>
+            <div className={styles.permissionsSection}>
+              <label className={controls.field}>
+                Default role
+                <select
+                  className={controls.selectInput}
+                  data-testid="settings-permissions-default-role"
+                  onChange={(event) =>
+                    updateConfig((current) => ({
+                      ...current,
+                      permissions: {
+                        ...current.permissions,
+                        defaultRole:
+                          event.target.value === "viewer" ? "viewer" : "editor",
+                      },
+                    }))
+                  }
+                  value={config.permissions.defaultRole}
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                </select>
+              </label>
+              <label className={controls.checkboxRow}>
+                <input
+                  className={controls.checkbox}
+                  checked={config.permissions.allowExternalInvites}
+                  data-testid="settings-permissions-allow-invites"
+                  onChange={(event) =>
+                    updateConfig((current) => ({
+                      ...current,
+                      permissions: {
+                        ...current.permissions,
+                        allowExternalInvites: event.target.checked,
+                      },
+                    }))
+                  }
+                  type="checkbox"
+                />
+                Allow external invites
+              </label>
+              <label className={controls.checkboxRow}>
+                <input
+                  className={controls.checkbox}
+                  checked={config.permissions.allowShareLinks}
+                  data-testid="settings-permissions-allow-share-links"
+                  onChange={(event) =>
+                    updateConfig((current) => ({
+                      ...current,
+                      permissions: {
+                        ...current.permissions,
+                        allowShareLinks: event.target.checked,
+                      },
+                    }))
+                  }
+                  type="checkbox"
+                />
+                Allow share links
+              </label>
+            </div>
+
+            <div className={styles.permissionsSection}>
+              <h3 className={styles.subheading}>Invite Member</h3>
+              <label className={controls.field}>
+                Email
+                <input
+                  className={controls.textInput}
+                  data-testid="settings-permissions-invite-email"
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  type="email"
+                  value={inviteEmail}
+                />
+              </label>
+              <label className={controls.field}>
+                Role
+                <select
+                  className={controls.selectInput}
+                  data-testid="settings-permissions-invite-role"
+                  onChange={(event) =>
+                    setInviteRole(event.target.value === "viewer" ? "viewer" : "editor")
+                  }
+                  value={inviteRole}
+                >
+                  <option value="editor">editor</option>
+                  <option value="viewer">viewer</option>
+                </select>
+              </label>
+              <div className={styles.formActions}>
+                <button
+                  className={clsx(controls.buttonBase, controls.buttonPrimary)}
+                  data-testid="settings-permissions-invite-submit"
+                  disabled={inviteBusy}
+                  onClick={() => {
+                    void handleInviteMember();
+                  }}
+                  type="button"
+                >
+                  {inviteBusy ? "Sending…" : "Send Invite"}
+                </button>
+              </div>
+              {inviteError ? (
+                <p
+                  className={styles.errorText}
+                  data-testid="settings-permissions-invite-error"
+                >
+                  {inviteError}
+                </p>
+              ) : null}
+              {inviteNotice ? (
+                <p
+                  className={styles.successText}
+                  data-testid="settings-permissions-invite-notice"
+                >
+                  {inviteNotice}
+                </p>
+              ) : null}
+            </div>
+
+            <div className={styles.permissionsSection}>
+              <h3 className={styles.subheading}>Members</h3>
+              {membersLoading ? (
+                <p
+                  className={styles.helperText}
+                  data-testid="settings-permissions-members-loading"
+                >
+                  Loading members…
+                </p>
+              ) : null}
+              {membersError ? (
+                <p
+                  className={styles.errorText}
+                  data-testid="settings-permissions-members-error"
+                >
+                  {membersError}
+                </p>
+              ) : null}
+              {members.length === 0 && !membersLoading ? (
+                <p
+                  className={styles.helperText}
+                  data-testid="settings-permissions-members-empty"
+                >
+                  No members found.
+                </p>
+              ) : null}
+              {members.length > 0 ? (
+                <ul
+                  className={styles.memberList}
+                  data-testid="settings-permissions-members"
+                >
+                  {members.map((member) => {
+                    const status = memberStatus(member);
+                    const memberId = member.user_id;
+                    const pendingRemoval = pendingRemoveMemberId === memberId;
+                    return (
+                      <li
+                        className={styles.memberItem}
+                        data-testid={`settings-permissions-member-${memberId}`}
+                        key={memberId}
+                      >
+                        <div className={styles.memberIdentity}>
+                          <strong>{member.email}</strong>
+                          <span className={styles.memberMeta}>
+                            {status}
+                          </span>
+                        </div>
+                        <div className={styles.memberControls}>
+                          <label className={controls.field}>
+                            Role
+                            <select
+                              className={controls.selectInput}
+                              data-testid={`settings-permissions-member-role-${memberId}`}
+                              disabled={updatingMemberId === memberId}
+                              onChange={(event) => {
+                                const nextRole =
+                                  event.target.value === "viewer"
+                                    ? "viewer"
+                                    : "editor";
+                                void handleUpdateMemberRole(member, nextRole);
+                              }}
+                              value={member.role === "viewer" ? "viewer" : "editor"}
+                            >
+                              <option value="editor">editor</option>
+                              <option value="viewer">viewer</option>
+                            </select>
+                          </label>
+                          {pendingRemoval ? (
+                            <div
+                              className={styles.confirmActions}
+                              data-testid={`settings-permissions-member-remove-confirm-${memberId}`}
+                            >
+                              <p className={styles.warningText}>
+                                {status === "invited"
+                                  ? "Revoke this pending invite?"
+                                  : "Remove this member from the workspace?"}
+                              </p>
+                              <div className={styles.accountActions}>
+                                <button
+                                  className={clsx(
+                                    controls.buttonBase,
+                                    controls.buttonSecondary,
+                                  )}
+                                  data-testid={`settings-permissions-member-remove-cancel-${memberId}`}
+                                  onClick={() => setPendingRemoveMemberId(null)}
+                                  type="button"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  className={clsx(
+                                    controls.buttonBase,
+                                    controls.buttonDanger,
+                                  )}
+                                  data-testid={`settings-permissions-member-remove-confirm-action-${memberId}`}
+                                  disabled={removingMemberId === memberId}
+                                  onClick={() => {
+                                    void handleRemoveMember(member);
+                                  }}
+                                  type="button"
+                                >
+                                  {removingMemberId === memberId
+                                    ? "Removing…"
+                                    : status === "invited"
+                                      ? "Revoke invite"
+                                      : "Remove member"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              className={clsx(
+                                controls.buttonBase,
+                                controls.buttonDanger,
+                              )}
+                              data-testid={`settings-permissions-member-remove-${memberId}`}
+                              onClick={() => setPendingRemoveMemberId(memberId)}
+                              type="button"
+                            >
+                              {status === "invited" ? "Revoke invite" : "Remove member"}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </div>
           </fieldset>
         ) : null}
 

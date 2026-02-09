@@ -10,6 +10,10 @@ import { useAuth } from "../hooks/useAuth";
 import {
   configureGitSyncSettings,
   getGitSyncSettings,
+  inviteToWorkspace,
+  listMembers,
+  removeMember,
+  updateMember,
 } from "../lib/api-client";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
@@ -35,6 +39,10 @@ vi.mock("../lib/api-client", async (importOriginal) => {
     ...actual,
     getGitSyncSettings: vi.fn(),
     configureGitSyncSettings: vi.fn(),
+    inviteToWorkspace: vi.fn(),
+    listMembers: vi.fn(),
+    updateMember: vi.fn(),
+    removeMember: vi.fn(),
   };
 });
 
@@ -109,6 +117,40 @@ beforeEach(() => {
   vi.mocked(configureGitSyncSettings).mockImplementation(
     async (_workspaceId, settings) => settings,
   );
+  vi.mocked(inviteToWorkspace).mockResolvedValue({
+    invite_id: "invite-1",
+    email: "pending@example.com",
+    role: "viewer",
+    expires_at: null,
+    status: "invited",
+  });
+  vi.mocked(listMembers).mockResolvedValue({
+    items: [
+      {
+        user_id: "member-active",
+        email: "active@example.com",
+        role: "editor",
+        status: "active",
+        etag: "member-active-v1",
+      },
+      {
+        user_id: "member-invited",
+        email: "pending@example.com",
+        role: "viewer",
+        status: "invited",
+        etag: "member-invited-v1",
+      },
+    ],
+    next_cursor: null,
+  });
+  vi.mocked(updateMember).mockResolvedValue({
+    user_id: "member-active",
+    email: "active@example.com",
+    role: "viewer",
+    status: "active",
+    etag: "member-active-v2",
+  });
+  vi.mocked(removeMember).mockResolvedValue(undefined);
   mockNavigate.mockReset();
 });
 
@@ -351,6 +393,93 @@ describe("SettingsRoute", () => {
       '[data-testid="settings-git-sync-error"]',
     );
     expect(errorMessage?.textContent).toContain("Unable to connect to daemon RPC");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("supports inviting, role updates, and removing members in permissions tab", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <SettingsRoute />
+        </MemoryRouter>,
+      );
+    });
+
+    const permissionsTab = container.querySelector(
+      '[data-testid="settings-tab-permissions"]',
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      permissionsTab?.click();
+    });
+
+    expect(listMembers).toHaveBeenCalledWith("ws-alpha");
+    const inviteEmail = container.querySelector(
+      '[data-testid="settings-permissions-invite-email"]',
+    ) as HTMLInputElement | null;
+    const inviteRole = container.querySelector(
+      '[data-testid="settings-permissions-invite-role"]',
+    ) as HTMLSelectElement | null;
+    const inviteSubmit = container.querySelector(
+      '[data-testid="settings-permissions-invite-submit"]',
+    ) as HTMLButtonElement | null;
+
+    act(() => {
+      const setInputValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      if (inviteEmail) {
+        setInputValue?.call(inviteEmail, "new@example.com");
+        inviteEmail.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (inviteRole) {
+        inviteRole.value = "viewer";
+        inviteRole.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+
+    await act(async () => {
+      inviteSubmit?.click();
+    });
+    expect(inviteToWorkspace).toHaveBeenCalledWith("ws-alpha", {
+      email: "new@example.com",
+      role: "viewer",
+    });
+
+    const roleSelect = container.querySelector(
+      '[data-testid="settings-permissions-member-role-member-active"]',
+    ) as HTMLSelectElement | null;
+    act(() => {
+      if (roleSelect) {
+        roleSelect.value = "viewer";
+        roleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    expect(updateMember).toHaveBeenCalledWith("ws-alpha", "member-active", {
+      role: "viewer",
+    });
+
+    const removePending = container.querySelector(
+      '[data-testid="settings-permissions-member-remove-member-invited"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      removePending?.click();
+    });
+    const confirmRemovePending = container.querySelector(
+      '[data-testid="settings-permissions-member-remove-confirm-action-member-invited"]',
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      confirmRemovePending?.click();
+    });
+    expect(removeMember).toHaveBeenCalledWith("ws-alpha", "member-invited");
 
     act(() => {
       root.unmount();
