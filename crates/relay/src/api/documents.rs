@@ -437,9 +437,16 @@ async fn delete_document(
     State(state): State<DocApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(query): Query<DeleteDocumentQuery>,
 ) -> Result<StatusCode, DocApiError> {
     require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+    let if_match = extract_if_match(&headers)?;
+    let current = state.store.get(ws_id, doc_id).await?;
+    if !etag_matches(if_match, &current.etag) {
+        return Err(DocApiError::PreconditionFailed);
+    }
+
     let hard = query.hard_delete.or(query.hard).unwrap_or(false);
     state.store.delete(ws_id, doc_id, hard).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1533,6 +1540,7 @@ mod tests {
             .method("DELETE")
             .uri(uri)
             .header("Authorization", format!("Bearer {token}"))
+            .header("If-Match", "*")
             .body(Body::empty())
             .unwrap()
     }
@@ -1789,6 +1797,45 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::PRECONDITION_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn delete_document_without_if_match_returns_428() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store, jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        // Create.
+        let create_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "delete-without-if-match.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        let create_body = body_json(create_resp).await;
+        let doc_id = create_body["document"]["id"].as_str().unwrap();
+
+        // Delete without If-Match.
+        let delete_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(delete_resp.status(), StatusCode::PRECONDITION_REQUIRED);
     }
 
     #[tokio::test]
@@ -2225,10 +2272,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn soft_deleted_document_can_be_hard_deleted_with_hard_delete_query_param() {
+    async fn hard_delete_query_param_performs_hard_delete() {
         let store = test_store();
         let jwt = test_jwt_service();
-        let app = build_router_with_store(store, jwt.clone());
+        let app = build_router_with_store(store.clone(), jwt.clone());
 
         let ws_id = Uuid::new_v4();
         let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
@@ -2245,14 +2292,7 @@ mod tests {
             .unwrap();
         assert_eq!(create_resp.status(), StatusCode::CREATED);
         let create_body = body_json(create_resp).await;
-        let doc_id = create_body["document"]["id"].as_str().unwrap();
-
-        let soft_delete_resp = app
-            .clone()
-            .oneshot(delete_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &token))
-            .await
-            .unwrap();
-        assert_eq!(soft_delete_resp.status(), StatusCode::NO_CONTENT);
+        let doc_id = Uuid::parse_str(create_body["document"]["id"].as_str().unwrap()).unwrap();
 
         let hard_delete_resp = app
             .oneshot(delete_request(
@@ -2262,6 +2302,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(hard_delete_resp.status(), StatusCode::NO_CONTENT);
+
+        match &store {
+            DocumentStore::Memory(memory) => {
+                let docs = &memory.read().await.documents;
+                assert!(!docs.contains_key(&doc_id));
+            }
+            DocumentStore::Postgres(_) => {
+                panic!("test store should use memory backend");
+            }
+        }
     }
 
     #[tokio::test]
