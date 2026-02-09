@@ -202,8 +202,8 @@ export async function injectTauriMock(page: Page): Promise<void> {
 }
 </script>`;
 
-    // Insert before the first <script> tag in <head>
-    body = body.replace("<head>", `<head>${importMap}`);
+    // Insert import map at the start of <head> (case-insensitive, first match only)
+    body = body.replace(/<head>/i, `<head>${importMap}`);
 
     await route.fulfill({
       response,

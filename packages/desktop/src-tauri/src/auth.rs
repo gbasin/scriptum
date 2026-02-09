@@ -6,9 +6,7 @@ use tauri_plugin_shell::ShellExt;
 use url::Url;
 
 pub const DESKTOP_OAUTH_REDIRECT_URI: &str = "scriptum://auth/callback";
-const DEEP_LINK_EVENT: &str = "scriptum://auth/deep-link";
-/// Re-export for contract validation tests (commands.rs).
-pub const DEEP_LINK_EVENT_FOR_CONTRACT: &str = DEEP_LINK_EVENT;
+pub(crate) const DEEP_LINK_EVENT: &str = "scriptum://auth/deep-link";
 const KEYRING_SERVICE: &str = "com.scriptum.desktop";
 const KEYRING_ACCOUNT: &str = "oauth_tokens";
 

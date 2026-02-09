@@ -149,6 +149,16 @@ mod tests {
 
     use super::*;
 
+    /// Extract the short function name from a function item's unique type.
+    /// `std::any::type_name::<F>()` returns e.g. "scriptum_desktop_lib::commands::auth_redirect_uri"
+    /// — we strip everything before the last `::` to get "auth_redirect_uri".
+    /// IMPORTANT: pass the function item directly (e.g. `auth_redirect_uri`),
+    /// NOT a function pointer cast (e.g. `auth_redirect_uri as fn()`).
+    fn function_name<F>(_: F) -> &'static str {
+        let full = std::any::type_name::<F>();
+        full.rsplit("::").next().unwrap_or(full)
+    }
+
     /// Load the shared contract manifest and validate that Rust command names,
     /// arg shapes, and payload field names match. If the Rust side drifts, this
     /// test fails — and the TS-side contract test (`tauri-commands.test.ts`)
@@ -162,7 +172,7 @@ mod tests {
         // Validate deep_link_event
         assert_eq!(
             manifest["deep_link_event"].as_str().unwrap(),
-            crate::auth::DEEP_LINK_EVENT_FOR_CONTRACT,
+            crate::auth::DEEP_LINK_EVENT,
             "deep_link_event in contract manifest must match Rust DEEP_LINK_EVENT"
         );
 
@@ -173,19 +183,28 @@ mod tests {
             "redirect_uri in contract manifest must match Rust DESKTOP_OAUTH_REDIRECT_URI"
         );
 
-        // Validate command names — every command in the manifest must match a real
-        // #[tauri::command] function name.
+        // Validate command names — bidirectional check:
+        // 1. Every command in the manifest must correspond to a real Rust function
+        // 2. Every auth_* function in this module must appear in the manifest
+        //
+        // We list the actual Rust auth command functions here. If someone adds a
+        // new auth_* command to this file but forgets to add it to the manifest,
+        // this test fails. If someone adds a command to the manifest but not Rust,
+        // this also fails.
         let commands = manifest["commands"]
             .as_array()
             .expect("commands must be an array");
 
-        let expected_auth_commands = [
-            "auth_redirect_uri",
-            "auth_open_browser",
-            "auth_parse_callback",
-            "auth_store_tokens",
-            "auth_load_tokens",
-            "auth_clear_tokens",
+        // Authoritative list of auth command functions defined in this module.
+        // Adding a new auth_* #[tauri::command] here without updating the manifest
+        // (and vice versa) will cause this test to fail.
+        let rust_auth_commands: Vec<&str> = vec![
+            function_name(auth_redirect_uri),
+            function_name(auth_open_browser),
+            function_name(auth_parse_callback),
+            function_name(auth_store_tokens),
+            function_name(auth_load_tokens),
+            function_name(auth_clear_tokens),
         ];
 
         let manifest_names: Vec<&str> = commands
@@ -194,8 +213,8 @@ mod tests {
             .collect();
 
         assert_eq!(
-            manifest_names, expected_auth_commands,
-            "contract manifest command names must match the Rust auth command functions"
+            manifest_names, rust_auth_commands,
+            "contract manifest command names must match the Rust auth command functions (bidirectional)"
         );
 
         // Validate auth_open_browser arg name matches Rust param
