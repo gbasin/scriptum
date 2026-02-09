@@ -21,6 +21,11 @@
   margin: 0;
 }
 
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .link {
   color: var(--color-accent-hex);
   font-weight: 600;
@@ -28,4 +33,19 @@
 
 .link:hover {
   color: var(--color-accent);
+}
+
+.retryButton {
+  background: var(--color-bg-surface-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-1);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  padding: var(--space-1) var(--space-2);
+}
+
+.retryButton:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-strong);
 }
