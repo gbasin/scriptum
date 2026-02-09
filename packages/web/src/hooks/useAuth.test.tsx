@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthService, AuthSession } from "../lib/auth";
 import { type AuthStore, createAuthStore } from "../store/auth";
+import { useRuntimeStore } from "../store/runtime";
 import { type UseAuthOptions, type UseAuthResult, useAuth } from "./useAuth";
 
 declare global {
@@ -102,6 +103,11 @@ function createStore(): AuthStore {
 describe("useAuth", () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    useRuntimeStore.getState().reset();
+    useRuntimeStore.setState({
+      mode: "relay",
+      modeResolved: true,
+    });
   });
 
   afterEach(() => {
@@ -109,6 +115,7 @@ describe("useAuth", () => {
     vi.restoreAllMocks();
     document.body.innerHTML = "";
     globalThis.IS_REACT_ACT_ENVIRONMENT = undefined;
+    useRuntimeStore.getState().reset();
   });
 
   it("hydrates auth store from stored session on mount", () => {
@@ -257,6 +264,68 @@ describe("useAuth", () => {
     expect(assign).toHaveBeenCalledWith("https://app.scriptum.dev/");
     expect(store.getState().status).toBe("unauthenticated");
     expect(store.getState().error).toContain("Session expired");
+
+    harness.unmount();
+  });
+
+  it("hydrates a local identity session when runtime mode is local", () => {
+    const auth = createMockAuth();
+    auth.getStoredSession.mockReturnValue(null);
+
+    useRuntimeStore.setState({
+      localIdentity: {
+        id: "local-gary",
+        displayName: "Gary",
+        email: "gary@scriptum.local",
+      },
+      mode: "local",
+      modeResolved: true,
+    });
+
+    const store = createStore();
+    const harness = renderUseAuth({
+      auth: authOptions(auth),
+      store,
+      location: { assign: vi.fn(), origin: "https://app.scriptum.dev" },
+    });
+
+    expect(store.getState().status).toBe("authenticated");
+    expect(store.getState().user?.id).toBe("local-gary");
+    expect(store.getState().user?.display_name).toBe("Gary");
+    expect(auth.getStoredSession).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("keeps local identity authenticated when logout is invoked in local mode", async () => {
+    const auth = createMockAuth();
+    auth.getStoredSession.mockReturnValue(null);
+    auth.logout.mockResolvedValue(undefined);
+
+    useRuntimeStore.setState({
+      localIdentity: {
+        id: "local-ada",
+        displayName: "Ada",
+        email: "ada@scriptum.local",
+      },
+      mode: "local",
+      modeResolved: true,
+    });
+
+    const store = createStore();
+    const harness = renderUseAuth({
+      auth: authOptions(auth),
+      store,
+      location: { assign: vi.fn(), origin: "https://app.scriptum.dev" },
+    });
+
+    await act(async () => {
+      await harness.latest().logout();
+    });
+
+    expect(auth.logout).not.toHaveBeenCalled();
+    expect(store.getState().status).toBe("authenticated");
+    expect(store.getState().user?.display_name).toBe("Ada");
 
     harness.unmount();
   });

@@ -7,6 +7,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import * as Y from "yjs";
 import { type IdbCrdtStore, openIdbCrdtStore } from "../lib/idb-store";
+import { useRuntimeStore } from "../store/runtime";
 
 const DEFAULT_DAEMON_WS_URL = "ws://127.0.0.1:39091/yjs";
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -86,6 +87,7 @@ function providerUrl(
 }
 
 export function useYjs(options: UseYjsOptions): UseYjsResult {
+  const mode = useRuntimeStore((state) => state.mode);
   const {
     docId,
     workspaceId,
@@ -98,14 +100,15 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
     webrtcSignalingUrl,
     webrtcProviderFactory,
   } = options;
+  const effectiveRuntime: YjsRuntime = mode === "local" ? "desktop" : runtime;
 
   const room = useMemo(
     () => roomFromIds(workspaceId, docId),
     [docId, workspaceId],
   );
   const url = useMemo(
-    () => providerUrl(runtime, daemonWsUrl, relayWsUrl),
-    [daemonWsUrl, relayWsUrl, runtime],
+    () => providerUrl(effectiveRuntime, daemonWsUrl, relayWsUrl),
+    [daemonWsUrl, effectiveRuntime, relayWsUrl],
   );
 
   const [provider, setProvider] = useState<CollaborationProvider | null>(null);
@@ -126,7 +129,7 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let persistenceStore: IdbCrdtStore | null = null;
     let persistenceQueue: Promise<void> = Promise.resolve();
-    const persistenceEnabled = runtime === "web";
+    const persistenceEnabled = effectiveRuntime === "web";
 
     const doc = new Y.Doc();
     const collaboration = createCollaborationProvider({
@@ -289,6 +292,7 @@ export function useYjs(options: UseYjsOptions): UseYjsResult {
     enabled,
     providerFactory,
     runtime,
+    effectiveRuntime,
     reconnectDelayMs,
     room,
     url,

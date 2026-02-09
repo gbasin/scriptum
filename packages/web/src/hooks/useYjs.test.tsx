@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { IdbCrdtStore } from "../lib/idb-store";
+import { useRuntimeStore } from "../store/runtime";
 
 const createCollaborationProviderMock = vi.hoisted(() => vi.fn());
 const openIdbCrdtStoreMock = vi.hoisted(() => vi.fn());
@@ -153,6 +154,11 @@ describe("useYjs", () => {
     createCollaborationProviderMock.mockReset();
     openIdbCrdtStoreMock.mockReset();
     openIdbCrdtStoreMock.mockResolvedValue(createMockIdbStore());
+    useRuntimeStore.getState().reset();
+    useRuntimeStore.setState({
+      mode: "relay",
+      modeResolved: true,
+    });
   });
 
   afterEach(() => {
@@ -301,6 +307,36 @@ describe("useYjs", () => {
       expect.objectContaining({
         room: "ws-web:doc-web",
         url: "wss://relay.scriptum.dev/yjs",
+      }),
+    );
+
+    harness.unmount();
+  });
+
+  it("forces daemon websocket url when local mode is enabled", () => {
+    useRuntimeStore.setState({
+      mode: "local",
+      modeResolved: true,
+    });
+
+    createCollaborationProviderMock.mockImplementation(
+      (input: { doc: Y.Doc }) => {
+        return new FakeCollaborationProvider(input.doc) as unknown as object;
+      },
+    );
+
+    const harness = renderUseYjs({
+      daemonWsUrl: "ws://127.0.0.1:39091/yjs",
+      docId: "doc-local",
+      relayWsUrl: "wss://relay.scriptum.dev/yjs",
+      runtime: "web",
+      workspaceId: "ws-local",
+    });
+
+    expect(createCollaborationProviderMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        room: "ws-local:doc-local",
+        url: "ws://127.0.0.1:39091/yjs",
       }),
     );
 

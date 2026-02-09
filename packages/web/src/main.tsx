@@ -6,6 +6,7 @@ import {
   startGitSyncPollingSync,
   startThemeSync,
 } from "./lib/theme";
+import { initializeRuntimeMode } from "./store/runtime";
 import { useWorkspaceStore } from "./store/workspace";
 import "./styles/tokens.css";
 import "./styles/base.css";
@@ -20,8 +21,18 @@ startGitSyncPollingSync(useWorkspaceStore);
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Missing #root element");
-createRoot(rootElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+const appRootElement: HTMLElement = rootElement;
+
+async function bootstrapAndRender() {
+  try {
+    await initializeRuntimeMode();
+  } finally {
+    createRoot(appRootElement).render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+  }
+}
+
+void bootstrapAndRender();

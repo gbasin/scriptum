@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import type {
   AuthService,
   AuthSession,
@@ -13,10 +13,12 @@ import {
 } from "../lib/auth";
 import { isTauri } from "../lib/tauri-auth";
 import { type AuthStatus, type AuthStore, useAuthStore } from "../store/auth";
+import { type LocalIdentity, useRuntimeStore } from "../store/runtime";
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
 const DEFAULT_LOGIN_PATH = "/";
 const DEFAULT_LOCATION_ORIGIN = "http://localhost";
+const LOCAL_SESSION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
 
 type UseAuthLocation = Pick<Location, "assign" | "origin">;
 
@@ -72,6 +74,21 @@ function setUnauthenticated(
   });
 }
 
+function localSessionFromIdentity(identity: LocalIdentity): AuthSession {
+  const expiresAt = new Date(Date.now() + LOCAL_SESSION_TTL_MS).toISOString();
+  return {
+    accessToken: `local-access-token:${identity.id}`,
+    accessExpiresAt: expiresAt,
+    refreshToken: `local-refresh-token:${identity.id}`,
+    refreshExpiresAt: expiresAt,
+    user: {
+      display_name: identity.displayName,
+      email: identity.email,
+      id: identity.id,
+    },
+  };
+}
+
 function resolveLoginUrl(location: UseAuthLocation, loginPath: string): string {
   if (/^https?:\/\//.test(loginPath)) {
     return loginPath;
@@ -112,9 +129,15 @@ const defaultAuth = {
 export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   const auth = options.auth ?? defaultAuth;
   const store = options.store ?? useAuthStore;
+  const mode = useRuntimeStore((state) => state.mode);
+  const localIdentity = useRuntimeStore((state) => state.localIdentity);
   const refreshBufferMs = options.refreshBufferMs ?? DEFAULT_REFRESH_BUFFER_MS;
   const loginPath = options.loginPath ?? DEFAULT_LOGIN_PATH;
   const locationRef = resolveLocationRef(options.location);
+  const localSession = useMemo(
+    () => localSessionFromIdentity(localIdentity),
+    [localIdentity],
+  );
 
   const status = store((state) => state.status);
   const user = store((state) => state.user);
@@ -127,16 +150,21 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   }, [locationRef, loginPath]);
 
   useEffect(() => {
+    if (mode === "local") {
+      setAuthenticated(store, localSession);
+      return;
+    }
+
     const session = auth.getStoredSession();
     if (session) {
       setAuthenticated(store, session);
       return;
     }
     setUnauthenticated(store);
-  }, [auth, store]);
+  }, [auth, localSession, mode, store]);
 
   useEffect(() => {
-    if (status !== "authenticated" || !accessExpiresAt) {
+    if (mode === "local" || status !== "authenticated" || !accessExpiresAt) {
       return;
     }
 
@@ -171,10 +199,23 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
         clearTimeout(timer);
       }
     };
-  }, [accessExpiresAt, auth, redirectToLogin, refreshBufferMs, status, store]);
+  }, [
+    accessExpiresAt,
+    auth,
+    mode,
+    redirectToLogin,
+    refreshBufferMs,
+    status,
+    store,
+  ]);
 
   const login = useCallback(
     async (startOptions: StartGitHubOAuthOptions = {}) => {
+      if (mode === "local") {
+        setAuthenticated(store, localSession);
+        return;
+      }
+
       try {
         if (isTauri()) {
           const { performTauriLogin } = await import("../lib/tauri-auth");
@@ -196,16 +237,21 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
         });
       }
     },
-    [auth, locationRef.origin, store],
+    [auth, localSession, locationRef.origin, mode, store],
   );
 
   const logout = useCallback(async () => {
+    if (mode === "local") {
+      setAuthenticated(store, localSession);
+      return;
+    }
+
     try {
       await auth.logout();
     } finally {
       setUnauthenticated(store);
     }
-  }, [auth, store]);
+  }, [auth, localSession, mode, store]);
 
   return {
     status,

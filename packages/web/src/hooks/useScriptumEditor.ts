@@ -24,6 +24,8 @@ import {
 } from "@scriptum/editor";
 import type { WorkspaceEditorFontFamily } from "@scriptum/shared";
 import { type MutableRefObject, useEffect, useRef } from "react";
+import { useAuthStore } from "../store/auth";
+import { useRuntimeStore } from "../store/runtime";
 
 export interface ScriptumEditorRuntimeConfig {
   fontFamily: WorkspaceEditorFontFamily;
@@ -187,10 +189,6 @@ export function useScriptumEditor(
           status === "connected" ? "synced" : "reconnecting",
         );
       });
-      if (!fixtureModeEnabled) {
-        provider.connect();
-        callbacksRef.current.onSyncStateChanged("reconnecting");
-      }
       if (realtimeE2eMode) {
         const localAwarenessName = `User ${provider.provider.awareness.clientID}`;
         provider.provider.awareness.setLocalStateField("user", {
@@ -202,6 +200,20 @@ export function useScriptumEditor(
           anchor: 0,
           head: 0,
         });
+      } else {
+        const fallbackIdentity = useRuntimeStore.getState().localIdentity;
+        const authUser = useAuthStore.getState().user;
+        const localAwarenessName =
+          authUser?.display_name?.trim() || fallbackIdentity.displayName;
+        provider.provider.awareness.setLocalStateField("user", {
+          color: nameToColor(localAwarenessName),
+          name: localAwarenessName,
+          type: "human",
+        });
+      }
+      if (!fixtureModeEnabled) {
+        provider.connect();
+        callbacksRef.current.onSyncStateChanged("reconnecting");
       }
 
       view = new EditorView({

@@ -2,16 +2,18 @@
 
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
+import { useRuntimeStore } from "../store/runtime";
 import { isFixtureModeEnabled } from "../test/setup";
 import styles from "./RequireAuth.module.css";
 import { SkeletonBlock } from "./Skeleton";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const status = useAuthStore((s) => s.status);
+  const mode = useRuntimeStore((s) => s.mode);
   const location = useLocation();
   const fixtureModeEnabled = isFixtureModeEnabled();
 
-  if (fixtureModeEnabled) {
+  if (fixtureModeEnabled || mode === "local") {
     return <>{children}</>;
   }
 
