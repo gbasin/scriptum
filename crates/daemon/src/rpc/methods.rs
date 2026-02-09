@@ -314,9 +314,16 @@ struct BacklinkContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CommentThreadContext {
-    thread_id: String,
-    section_id: String,
-    excerpt: String,
+    id: String,
+    workspace_id: String,
+    doc_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    section_id: Option<String>,
+    status: String,
+    version: i64,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -850,6 +857,93 @@ impl RpcServerState {
     ) -> Result<Vec<SearchHit>, String> {
         let search_index = Self::ensure_search_index(conn)?;
         search_index.search(query, limit).map_err(|error| format!("failed to search docs: {error}"))
+    }
+
+    fn load_bundle_backlinks(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        metadata_by_doc_id: &HashMap<String, DocMetadataRecord>,
+    ) -> Result<Vec<BacklinkContext>, String> {
+        self.with_agent_storage(|conn, _| {
+            let backlink_store = BacklinkStore::new(conn);
+            backlink_store
+                .ensure_schema()
+                .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
+
+            let incoming = backlink_store
+                .incoming_for_target(&doc_id.to_string())
+                .map_err(|error| format!("failed to query incoming backlinks for doc {doc_id}: {error}"))?;
+
+            let mut backlinks = incoming
+                .into_iter()
+                .filter_map(|backlink| {
+                    let metadata = metadata_by_doc_id.get(&backlink.source_doc_id)?;
+                    if metadata.workspace_id != workspace_id {
+                        return None;
+                    }
+                    let source_doc_id = Uuid::parse_str(&backlink.source_doc_id).ok()?;
+                    Some(BacklinkContext {
+                        doc_id: source_doc_id,
+                        path: metadata.path.clone(),
+                        snippet: backlink.link_text,
+                    })
+                })
+                .collect::<Vec<_>>();
+            backlinks.sort_by(|left, right| left.path.cmp(&right.path));
+            Ok(backlinks)
+        })
+    }
+
+    fn load_bundle_comments(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        target_section: Option<&Section>,
+        sections_by_id: &HashMap<String, Section>,
+    ) -> Result<Vec<CommentThreadContext>, String> {
+        self.with_agent_storage(|conn, _| {
+            if !sqlite_table_exists(conn, "comment_threads")
+                .map_err(|error| format!("failed to inspect comment_threads schema: {error}"))?
+            {
+                return Ok(Vec::new());
+            }
+
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, doc_id, section_id, status, version, created_at, resolved_at
+                     FROM comment_threads
+                     WHERE workspace_id = ?1 AND doc_id = ?2
+                     ORDER BY created_at DESC",
+                )
+                .map_err(|error| format!("failed to prepare comment thread bundle query: {error}"))?;
+            let rows = stmt
+                .query_map(rusqlite::params![workspace_id.to_string(), doc_id.to_string()], |row| {
+                    Ok(CommentThreadContext {
+                        id: row.get(0)?,
+                        workspace_id: row.get(1)?,
+                        doc_id: row.get(2)?,
+                        section_id: row.get(3)?,
+                        status: row.get(4)?,
+                        version: row.get(5)?,
+                        created_at: row.get(6)?,
+                        resolved_at: row.get(7)?,
+                    })
+                })
+                .map_err(|error| format!("failed to query comment threads for bundle: {error}"))?;
+
+            let mut comments = rows
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to decode comment threads for bundle: {error}"))?;
+            comments.retain(|comment| {
+                comment_matches_target_section(
+                    comment.section_id.as_deref(),
+                    target_section,
+                    sections_by_id,
+                )
+            });
+            Ok(comments)
+        })
     }
 
     fn ensure_active_session(
@@ -1746,6 +1840,15 @@ impl RpcServerState {
             manager.subscribe_or_create(params.doc_id)
         };
         let doc_id = params.doc_id;
+        let metadata_by_doc_id = {
+            let metadata = self.doc_metadata.read().await;
+            metadata
+                .values()
+                .filter(|record| record.workspace_id == params.workspace_id)
+                .cloned()
+                .map(|record| (record.doc_id.to_string(), record))
+                .collect::<HashMap<_, _>>()
+        };
 
         let bundle_result = (|| -> Result<DocBundleResult, String> {
             let content_md = doc.get_text_string("content");
@@ -1785,11 +1888,20 @@ impl RpcServerState {
             }
 
             if include.contains(&DocBundleInclude::Backlinks) {
-                context.backlinks = Vec::new();
+                context.backlinks = self.load_bundle_backlinks(
+                    params.workspace_id,
+                    params.doc_id,
+                    &metadata_by_doc_id,
+                )?;
             }
 
             if include.contains(&DocBundleInclude::Comments) {
-                context.comments = Vec::new();
+                context.comments = self.load_bundle_comments(
+                    params.workspace_id,
+                    params.doc_id,
+                    target_section.as_ref(),
+                    &sections_by_id,
+                )?;
             }
 
             let section_content = extract_section_content(&content_md, target_section.as_ref());
@@ -2416,6 +2528,43 @@ fn section_is_descendant_of(
     false
 }
 
+fn comment_matches_target_section(
+    comment_section_id: Option<&str>,
+    target_section: Option<&Section>,
+    sections_by_id: &HashMap<String, Section>,
+) -> bool {
+    let Some(target_section) = target_section else {
+        return true;
+    };
+    let Some(comment_section_id) = comment_section_id else {
+        // Document-level comments are relevant to all section bundles.
+        return true;
+    };
+
+    if comment_section_id == target_section.id {
+        return true;
+    }
+    if let Some(comment_section) = sections_by_id.get(comment_section_id) {
+        return section_is_descendant_of(comment_section, &target_section.id, sections_by_id);
+    }
+
+    // Fall back to string prefix matching when comment section metadata is unavailable.
+    comment_section_id.starts_with(&format!("{}/", target_section.id))
+}
+
+fn sqlite_table_exists(conn: &rusqlite::Connection, table_name: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = ?1
+        )",
+        rusqlite::params![table_name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|exists| exists != 0)
+}
+
 fn apply_bundle_token_budget(
     section_content: &str,
     context: &mut DocBundleContext,
@@ -2927,6 +3076,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use base64::Engine;
+    use chrono::Utc;
     use scriptum_common::protocol::jsonrpc::{Request, RequestId, INTERNAL_ERROR, INVALID_PARAMS};
     use scriptum_common::types::Section;
     use serde_json::json;
@@ -2934,6 +3084,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::engine::ydoc::YDoc;
+    use crate::search::{BacklinkStore, ResolvedBacklink};
 
     use super::{
         apply_bundle_token_budget_with, dispatch_request, BacklinkContext, CommentThreadContext,
@@ -3359,15 +3510,76 @@ mod tests {
     async fn doc_bundle_returns_section_content_and_context() {
         let state = RpcServerState::default();
         let workspace_id = Uuid::new_v4();
-        let doc_id = Uuid::new_v4();
+        let target_doc_id = Uuid::new_v4();
+        let source_doc_id = Uuid::new_v4();
         let markdown = "# Root\nroot body\n\n## Child\nchild body\n\n### Grandchild\ndeep body\n";
-        state.seed_doc(workspace_id, doc_id, "docs/readme.md", "Readme", markdown).await;
+        state
+            .seed_doc(workspace_id, target_doc_id, "docs/readme.md", "Readme", markdown)
+            .await;
+        state
+            .seed_doc(
+                workspace_id,
+                source_doc_id,
+                "docs/reference.md",
+                "Reference",
+                "# Reference\nSee [[Readme]].\n",
+            )
+            .await;
+        state
+            .with_agent_storage(|conn, _| {
+                let backlink_store = BacklinkStore::new(conn);
+                backlink_store
+                    .ensure_schema()
+                    .map_err(|error| format!("failed to ensure backlink schema: {error}"))?;
+                backlink_store
+                    .replace_for_source(
+                        &source_doc_id.to_string(),
+                        &[ResolvedBacklink {
+                            source_doc_id: source_doc_id.to_string(),
+                            target_doc_id: target_doc_id.to_string(),
+                            link_text: "Readme".to_string(),
+                        }],
+                    )
+                    .map_err(|error| format!("failed to insert test backlink: {error}"))?;
+
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS comment_threads (
+                        id TEXT PRIMARY KEY,
+                        workspace_id TEXT NOT NULL,
+                        doc_id TEXT NOT NULL,
+                        section_id TEXT NULL,
+                        status TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        created_at TEXT NOT NULL,
+                        resolved_at TEXT NULL
+                    );",
+                )
+                .map_err(|error| format!("failed to ensure comment_threads schema: {error}"))?;
+                conn.execute(
+                    "INSERT INTO comment_threads
+                        (id, workspace_id, doc_id, section_id, status, version, created_at, resolved_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        "thread-1",
+                        workspace_id.to_string(),
+                        target_doc_id.to_string(),
+                        "root/child",
+                        "open",
+                        1,
+                        Utc::now().to_rfc3339(),
+                        Option::<String>::None,
+                    ],
+                )
+                .map_err(|error| format!("failed to insert test comment thread: {error}"))?;
+                Ok(())
+            })
+            .expect("test bundle context data should be seeded");
 
         let request = Request::new(
             "doc.bundle",
             Some(json!({
                 "workspace_id": workspace_id,
-                "doc_id": doc_id,
+                "doc_id": target_doc_id,
                 "section_id": "root/child",
                 "include": ["parents", "children", "backlinks", "comments"],
                 "token_budget": 8000
@@ -3381,8 +3593,10 @@ mod tests {
         assert_eq!(result["section_content"], json!("## Child\nchild body\n"));
         assert_eq!(result["context"]["parents"][0]["id"], json!("root"));
         assert_eq!(result["context"]["children"][0]["id"], json!("root/child/grandchild"));
-        assert_eq!(result["context"]["backlinks"], json!([]));
-        assert_eq!(result["context"]["comments"], json!([]));
+        assert_eq!(result["context"]["backlinks"][0]["doc_id"], json!(source_doc_id));
+        assert_eq!(result["context"]["backlinks"][0]["path"], json!("docs/reference.md"));
+        assert_eq!(result["context"]["comments"][0]["id"], json!("thread-1"));
+        assert_eq!(result["context"]["comments"][0]["section_id"], json!("root/child"));
         assert!(result["tokens_used"].as_u64().expect("tokens_used should be numeric") > 0);
     }
 
@@ -3444,9 +3658,14 @@ mod tests {
                 snippet: "B".repeat(120),
             }],
             comments: vec![CommentThreadContext {
-                thread_id: "thread-1".to_string(),
-                section_id: "root/child".to_string(),
-                excerpt: "M".repeat(120),
+                id: "thread-1".to_string(),
+                workspace_id: Uuid::new_v4().to_string(),
+                doc_id: Uuid::new_v4().to_string(),
+                section_id: Some("root/child".to_string()),
+                status: "open".to_string(),
+                version: 1,
+                created_at: "2026-02-09T00:00:00Z".to_string(),
+                resolved_at: None,
             }],
         };
         let section_content = "core section body";
