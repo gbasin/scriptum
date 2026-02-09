@@ -218,9 +218,16 @@ cargo install cargo-llvm-cov
 ### Relay (Docker)
 
 ```bash
+cp docker/.env.example docker/.env
 docker compose -f docker/compose.yml up --build
 curl http://localhost:8080/healthz
 ```
+
+### Relay OAuth Setup
+
+For full GitHub OAuth app setup (including callback URL, required env vars, Docker `.env`, and direct `cargo run` flow), see:
+
+- `docs/relay-setup.md`
 
 ## MCP Server
 
