@@ -418,4 +418,48 @@ describe("api-client", () => {
       details: { path: "docs/auth.md" },
     } satisfies Partial<ApiClientError>);
   });
+
+  it("uses default relay base URL when baseUrl is not provided", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, { items: [], next_cursor: null }),
+    );
+
+    const client = createApiClient({
+      fetch: fetchMock,
+      getAccessToken: async () => null,
+    });
+
+    await client.listWorkspaces();
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:8080/v1/workspaces");
+  });
+
+  it("omits Authorization header when access token is unavailable", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, { items: [], next_cursor: null }),
+    );
+
+    const client = createApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetch: fetchMock,
+      getAccessToken: async () => null,
+    });
+
+    await client.listWorkspaces();
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(headerValue(init, "Authorization")).toBeNull();
+  });
+
+  it("propagates AbortError from cancelled requests", async () => {
+    const abortError = new DOMException("The operation was aborted", "AbortError");
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(abortError);
+
+    const client = createApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetch: fetchMock,
+      getAccessToken: async () => "token-1",
+    });
+
+    await expect(client.listWorkspaces()).rejects.toBe(abortError);
+  });
 });
