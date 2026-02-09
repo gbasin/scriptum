@@ -99,14 +99,60 @@ export interface ApiClientOptions {
   maxRetries?: number;
 }
 
+type SharedMethodArgs<K extends keyof ScriptumApiClient> = Parameters<
+  ScriptumApiClient[K]
+>;
+type SharedMethodResult<K extends keyof ScriptumApiClient> = ReturnType<
+  ScriptumApiClient[K]
+>;
+
 interface ApiClient {
+  authOAuthStart: (
+    ...args: SharedMethodArgs<"authOAuthStart">
+  ) => SharedMethodResult<"authOAuthStart">;
+  authOAuthCallback: (
+    ...args: SharedMethodArgs<"authOAuthCallback">
+  ) => SharedMethodResult<"authOAuthCallback">;
+  authTokenRefresh: (
+    ...args: SharedMethodArgs<"authTokenRefresh">
+  ) => SharedMethodResult<"authTokenRefresh">;
+  authLogout: (
+    ...args: SharedMethodArgs<"authLogout">
+  ) => SharedMethodResult<"authLogout">;
   listWorkspaces: (
     options?: ListWorkspacesOptions,
   ) => Promise<PagedResult<Workspace>>;
+  createWorkspace: (
+    ...args: SharedMethodArgs<"createWorkspace">
+  ) => SharedMethodResult<"createWorkspace">;
+  getWorkspace: (
+    ...args: SharedMethodArgs<"getWorkspace">
+  ) => SharedMethodResult<"getWorkspace">;
+  updateWorkspace: (
+    ...args: SharedMethodArgs<"updateWorkspace">
+  ) => SharedMethodResult<"updateWorkspace">;
+  inviteToWorkspace: (
+    ...args: SharedMethodArgs<"inviteToWorkspace">
+  ) => SharedMethodResult<"inviteToWorkspace">;
+  acceptInvite: (
+    ...args: SharedMethodArgs<"acceptInvite">
+  ) => SharedMethodResult<"acceptInvite">;
+  listMembers: (
+    ...args: SharedMethodArgs<"listMembers">
+  ) => SharedMethodResult<"listMembers">;
+  updateMember: (
+    ...args: SharedMethodArgs<"updateMember">
+  ) => SharedMethodResult<"updateMember">;
+  removeMember: (
+    ...args: SharedMethodArgs<"removeMember">
+  ) => SharedMethodResult<"removeMember">;
   listDocuments: (
     workspaceId: string,
     options?: ListDocumentsOptions,
   ) => Promise<PagedResult<Document>>;
+  createDocument: (
+    ...args: SharedMethodArgs<"createDocument">
+  ) => SharedMethodResult<"createDocument">;
   getDocument: (
     workspaceId: string,
     documentId: string,
@@ -118,6 +164,16 @@ interface ApiClient {
     input: UpdateDocumentInput,
     options: UpdateDocumentOptions,
   ) => Promise<Document>;
+  deleteDocument: (
+    ...args: SharedMethodArgs<"deleteDocument">
+  ) => SharedMethodResult<"deleteDocument">;
+  addTags: (...args: SharedMethodArgs<"addTags">) => SharedMethodResult<"addTags">;
+  searchDocuments: (
+    ...args: SharedMethodArgs<"searchDocuments">
+  ) => SharedMethodResult<"searchDocuments">;
+  listComments: (
+    ...args: SharedMethodArgs<"listComments">
+  ) => SharedMethodResult<"listComments">;
   createComment: (
     workspaceId: string,
     documentId: string,
@@ -142,6 +198,21 @@ interface ApiClient {
     ifVersion: number,
     requestOptions?: ApiRequestOptions,
   ) => Promise<CommentThread>;
+  createShareLink: (
+    ...args: SharedMethodArgs<"createShareLink">
+  ) => SharedMethodResult<"createShareLink">;
+  updateShareLink: (
+    ...args: SharedMethodArgs<"updateShareLink">
+  ) => SharedMethodResult<"updateShareLink">;
+  createAclOverride: (
+    ...args: SharedMethodArgs<"createAclOverride">
+  ) => SharedMethodResult<"createAclOverride">;
+  deleteAclOverride: (
+    ...args: SharedMethodArgs<"deleteAclOverride">
+  ) => SharedMethodResult<"deleteAclOverride">;
+  createSyncSession: (
+    ...args: SharedMethodArgs<"createSyncSession">
+  ) => SharedMethodResult<"createSyncSession">;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -418,6 +489,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   });
 
   return {
+    authOAuthStart: (...args) =>
+      runWithApiError(() => sharedClient.authOAuthStart(...args)),
+    authOAuthCallback: (...args) =>
+      runWithApiError(() => sharedClient.authOAuthCallback(...args)),
+    authTokenRefresh: (...args) =>
+      runWithApiError(() => sharedClient.authTokenRefresh(...args)),
+    authLogout: (...args) =>
+      runWithApiError(() => sharedClient.authLogout(...args)),
+
     listWorkspaces: async (listOptions = {}) => {
       const payload = await runWithApiError(() =>
         sharedClient.listWorkspaces({
@@ -425,12 +505,27 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             ? { limit: listOptions.limit }
             : {}),
           ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
-        }, {
-          signal: listOptions.signal,
-        }),
+        }, { signal: listOptions.signal }),
       );
       return mapPaged(payload, mapWorkspace);
     },
+
+    createWorkspace: (...args) =>
+      runWithApiError(() => sharedClient.createWorkspace(...args)),
+    getWorkspace: (...args) =>
+      runWithApiError(() => sharedClient.getWorkspace(...args)),
+    updateWorkspace: (...args) =>
+      runWithApiError(() => sharedClient.updateWorkspace(...args)),
+    inviteToWorkspace: (...args) =>
+      runWithApiError(() => sharedClient.inviteToWorkspace(...args)),
+    acceptInvite: (...args) =>
+      runWithApiError(() => sharedClient.acceptInvite(...args)),
+    listMembers: (...args) =>
+      runWithApiError(() => sharedClient.listMembers(...args)),
+    updateMember: (...args) =>
+      runWithApiError(() => sharedClient.updateMember(...args)),
+    removeMember: (...args) =>
+      runWithApiError(() => sharedClient.removeMember(...args)),
 
     listDocuments: async (workspaceId, listOptions = {}) => {
       const payload = await runWithApiError(() =>
@@ -446,12 +541,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           ...(listOptions.includeArchived !== undefined
             ? { include_archived: listOptions.includeArchived }
             : {}),
-        }, {
-          signal: listOptions.signal,
-        }),
+        }, { signal: listOptions.signal }),
       );
       return mapPaged(payload, mapDocument);
     },
+
+    createDocument: (...args) =>
+      runWithApiError(() => sharedClient.createDocument(...args)),
 
     getDocument: async (workspaceId, documentId, getOptions = {}) => {
       const payload = await runWithApiError(() =>
@@ -462,9 +558,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           ...(getOptions.includeSections !== undefined
             ? { include_sections: getOptions.includeSections }
             : {}),
-        }, {
-          signal: getOptions.signal,
-        }),
+        }, { signal: getOptions.signal }),
       );
 
       const record = asRecord(payload);
@@ -492,6 +586,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       return mapDocument(record?.document);
     },
 
+    deleteDocument: (...args) =>
+      runWithApiError(() => sharedClient.deleteDocument(...args)),
+    addTags: (...args) => runWithApiError(() => sharedClient.addTags(...args)),
+    searchDocuments: (...args) =>
+      runWithApiError(() => sharedClient.searchDocuments(...args)),
+    listComments: (...args) =>
+      runWithApiError(() => sharedClient.listComments(...args)),
+
     createComment: async (workspaceId, documentId, input, requestOptions = {}) => {
       const payload = await runWithApiError(() =>
         sharedClient.createComment(workspaceId, documentId, {
@@ -502,9 +604,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             head_seq: input.anchor.headSeq,
           },
           message: input.message,
-        }, {
-          signal: requestOptions.signal,
-        }),
+        }, { signal: requestOptions.signal }),
       );
 
       const record = asRecord(payload);
@@ -523,9 +623,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       const payload = await runWithApiError(() =>
         sharedClient.addCommentMessage(workspaceId, threadId, {
           body_md: bodyMd,
-        }, {
-          signal: requestOptions.signal,
-        }),
+        }, { signal: requestOptions.signal }),
       );
 
       const record = asRecord(payload);
@@ -541,9 +639,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       const payload = await runWithApiError(() =>
         sharedClient.resolveComment(workspaceId, threadId, {
           if_version: ifVersion,
-        }, {
-          signal: requestOptions.signal,
-        }),
+        }, { signal: requestOptions.signal }),
       );
 
       const record = asRecord(payload);
@@ -559,14 +655,22 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       const payload = await runWithApiError(() =>
         sharedClient.reopenComment(workspaceId, threadId, {
           if_version: ifVersion,
-        }, {
-          signal: requestOptions.signal,
-        }),
+        }, { signal: requestOptions.signal }),
       );
 
       const record = asRecord(payload);
       return mapCommentThread(record?.thread);
     },
+    createShareLink: (...args) =>
+      runWithApiError(() => sharedClient.createShareLink(...args)),
+    updateShareLink: (...args) =>
+      runWithApiError(() => sharedClient.updateShareLink(...args)),
+    createAclOverride: (...args) =>
+      runWithApiError(() => sharedClient.createAclOverride(...args)),
+    deleteAclOverride: (...args) =>
+      runWithApiError(() => sharedClient.deleteAclOverride(...args)),
+    createSyncSession: (...args) =>
+      runWithApiError(() => sharedClient.createSyncSession(...args)),
   };
 }
 
@@ -583,10 +687,82 @@ export function resetApiClientForTests(): void {
   defaultClient = null;
 }
 
+export function authOAuthStart(
+  ...args: SharedMethodArgs<"authOAuthStart">
+): SharedMethodResult<"authOAuthStart"> {
+  return getDefaultClient().authOAuthStart(...args);
+}
+
+export function authOAuthCallback(
+  ...args: SharedMethodArgs<"authOAuthCallback">
+): SharedMethodResult<"authOAuthCallback"> {
+  return getDefaultClient().authOAuthCallback(...args);
+}
+
+export function authTokenRefresh(
+  ...args: SharedMethodArgs<"authTokenRefresh">
+): SharedMethodResult<"authTokenRefresh"> {
+  return getDefaultClient().authTokenRefresh(...args);
+}
+
+export function authLogout(
+  ...args: SharedMethodArgs<"authLogout">
+): SharedMethodResult<"authLogout"> {
+  return getDefaultClient().authLogout(...args);
+}
+
 export async function listWorkspaces(
   options?: ListWorkspacesOptions,
 ): Promise<PagedResult<Workspace>> {
   return getDefaultClient().listWorkspaces(options);
+}
+
+export function createWorkspace(
+  ...args: SharedMethodArgs<"createWorkspace">
+): SharedMethodResult<"createWorkspace"> {
+  return getDefaultClient().createWorkspace(...args);
+}
+
+export function getWorkspace(
+  ...args: SharedMethodArgs<"getWorkspace">
+): SharedMethodResult<"getWorkspace"> {
+  return getDefaultClient().getWorkspace(...args);
+}
+
+export function updateWorkspace(
+  ...args: SharedMethodArgs<"updateWorkspace">
+): SharedMethodResult<"updateWorkspace"> {
+  return getDefaultClient().updateWorkspace(...args);
+}
+
+export function inviteToWorkspace(
+  ...args: SharedMethodArgs<"inviteToWorkspace">
+): SharedMethodResult<"inviteToWorkspace"> {
+  return getDefaultClient().inviteToWorkspace(...args);
+}
+
+export function acceptInvite(
+  ...args: SharedMethodArgs<"acceptInvite">
+): SharedMethodResult<"acceptInvite"> {
+  return getDefaultClient().acceptInvite(...args);
+}
+
+export function listMembers(
+  ...args: SharedMethodArgs<"listMembers">
+): SharedMethodResult<"listMembers"> {
+  return getDefaultClient().listMembers(...args);
+}
+
+export function updateMember(
+  ...args: SharedMethodArgs<"updateMember">
+): SharedMethodResult<"updateMember"> {
+  return getDefaultClient().updateMember(...args);
+}
+
+export function removeMember(
+  ...args: SharedMethodArgs<"removeMember">
+): SharedMethodResult<"removeMember"> {
+  return getDefaultClient().removeMember(...args);
 }
 
 export async function listDocuments(
@@ -616,6 +792,36 @@ export async function updateDocument(
     input,
     options,
   );
+}
+
+export function createDocument(
+  ...args: SharedMethodArgs<"createDocument">
+): SharedMethodResult<"createDocument"> {
+  return getDefaultClient().createDocument(...args);
+}
+
+export function deleteDocument(
+  ...args: SharedMethodArgs<"deleteDocument">
+): SharedMethodResult<"deleteDocument"> {
+  return getDefaultClient().deleteDocument(...args);
+}
+
+export function addTags(
+  ...args: SharedMethodArgs<"addTags">
+): SharedMethodResult<"addTags"> {
+  return getDefaultClient().addTags(...args);
+}
+
+export function searchDocuments(
+  ...args: SharedMethodArgs<"searchDocuments">
+): SharedMethodResult<"searchDocuments"> {
+  return getDefaultClient().searchDocuments(...args);
+}
+
+export function listComments(
+  ...args: SharedMethodArgs<"listComments">
+): SharedMethodResult<"listComments"> {
+  return getDefaultClient().listComments(...args);
 }
 
 export async function createComment(
@@ -672,4 +878,34 @@ export async function reopenCommentThread(
     ifVersion,
     requestOptions,
   );
+}
+
+export function createShareLink(
+  ...args: SharedMethodArgs<"createShareLink">
+): SharedMethodResult<"createShareLink"> {
+  return getDefaultClient().createShareLink(...args);
+}
+
+export function updateShareLink(
+  ...args: SharedMethodArgs<"updateShareLink">
+): SharedMethodResult<"updateShareLink"> {
+  return getDefaultClient().updateShareLink(...args);
+}
+
+export function createAclOverride(
+  ...args: SharedMethodArgs<"createAclOverride">
+): SharedMethodResult<"createAclOverride"> {
+  return getDefaultClient().createAclOverride(...args);
+}
+
+export function deleteAclOverride(
+  ...args: SharedMethodArgs<"deleteAclOverride">
+): SharedMethodResult<"deleteAclOverride"> {
+  return getDefaultClient().deleteAclOverride(...args);
+}
+
+export function createSyncSession(
+  ...args: SharedMethodArgs<"createSyncSession">
+): SharedMethodResult<"createSyncSession"> {
+  return getDefaultClient().createSyncSession(...args);
 }

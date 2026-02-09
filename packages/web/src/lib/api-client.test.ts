@@ -203,6 +203,98 @@ describe("api-client", () => {
     expect(headerValue(init, "Idempotency-Key")).toBeNull();
   });
 
+  it("exposes createWorkspace parity method from shared client", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(201, {
+        workspace: {
+          id: "w-new",
+          slug: "alpha",
+          name: "Alpha",
+          role: "owner",
+          createdAt: "2026-02-09T00:00:00.000Z",
+          updatedAt: "2026-02-09T00:00:00.000Z",
+          etag: "etag-w-new",
+        },
+      }),
+    );
+
+    const client = createApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetch: fetchMock,
+      getAccessToken: async () => "token-1",
+      createIdempotencyKey: () => "idem-workspace",
+    });
+
+    const payload = await client.createWorkspace({
+      name: "Alpha",
+      slug: "alpha",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://relay.scriptum.dev/v1/workspaces");
+    expect(init?.method).toBe("POST");
+    expect(headerValue(init, "Idempotency-Key")).toBe("idem-workspace");
+    expect(init?.body).toBe(JSON.stringify({ name: "Alpha", slug: "alpha" }));
+    expect(payload).toEqual({
+      workspace: {
+        id: "w-new",
+        slug: "alpha",
+        name: "Alpha",
+        role: "owner",
+        createdAt: "2026-02-09T00:00:00.000Z",
+        updatedAt: "2026-02-09T00:00:00.000Z",
+        etag: "etag-w-new",
+      },
+    });
+  });
+
+  it("exposes searchDocuments parity method from shared client", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        items: [
+          {
+            doc_id: "doc-1",
+            path: "docs/alpha.md",
+            title: "Alpha",
+            snippet: "alpha snippet",
+            score: 0.98,
+          },
+        ],
+        next_cursor: null,
+      }),
+    );
+
+    const client = createApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetch: fetchMock,
+      getAccessToken: async () => "token-1",
+    });
+
+    const payload = await client.searchDocuments("workspace-1", {
+      q: "alpha",
+      limit: 5,
+      cursor: "cursor-1",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/workspace-1/search?q=alpha&limit=5&cursor=cursor-1",
+    );
+    expect(init?.method).toBe("GET");
+    expect(payload).toEqual({
+      items: [
+        {
+          doc_id: "doc-1",
+          path: "docs/alpha.md",
+          title: "Alpha",
+          snippet: "alpha snippet",
+          score: 0.98,
+        },
+      ],
+      next_cursor: null,
+    });
+  });
+
   it("posts threaded comment replies with body_md payload", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(201, {
