@@ -19,6 +19,7 @@ pub const DAEMON_NOT_RUNNING_EXIT_CODE: i32 = 10;
 
 const SOCKET_RELATIVE_PATH: &str = ".scriptum/daemon.sock";
 const DEFAULT_TIMEOUT_SECS: u64 = 3;
+const RPC_PROTOCOL_VERSION: &str = "scriptum-rpc.v1";
 
 #[derive(Debug)]
 pub struct DaemonUnavailable {
@@ -56,6 +57,7 @@ impl std::error::Error for DaemonUnavailable {
 #[derive(Debug, Serialize)]
 struct JsonRpcRequest<'a, P> {
     jsonrpc: &'static str,
+    protocol_version: &'static str,
     id: u64,
     method: &'a str,
     params: P,
@@ -132,7 +134,13 @@ impl DaemonClient {
     {
         #[cfg(unix)]
         {
-            let request = JsonRpcRequest { jsonrpc: "2.0", id, method, params };
+            let request = JsonRpcRequest {
+                jsonrpc: "2.0",
+                protocol_version: RPC_PROTOCOL_VERSION,
+                id,
+                method,
+                params,
+            };
             let mut payload =
                 serde_json::to_vec(&request).context("failed to serialize json-rpc request")?;
             payload.push(b'\n');

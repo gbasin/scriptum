@@ -3,12 +3,27 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub const CURRENT_PROTOCOL_VERSION: &str = "scriptum-sync.v1";
+pub const PREVIOUS_PROTOCOL_VERSION: &str = "scriptum-sync.v0";
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION];
+
+#[must_use]
+pub fn is_supported_protocol_version(version: &str) -> bool {
+    SUPPORTED_PROTOCOL_VERSIONS.contains(&version)
+}
+
+fn default_protocol_version() -> String {
+    CURRENT_PROTOCOL_VERSION.to_string()
+}
+
 /// All message types in the scriptum-sync.v1 WebSocket protocol.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsMessage {
     /// Client -> Server: initial handshake.
     Hello {
+        #[serde(default = "default_protocol_version")]
+        protocol_version: String,
         session_token: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         resume_token: Option<String>,
@@ -59,7 +74,7 @@ pub enum WsMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::WsMessage;
+    use super::{CURRENT_PROTOCOL_VERSION, WsMessage};
     use serde_json::Value;
     use uuid::Uuid;
 
@@ -77,6 +92,7 @@ mod tests {
     #[test]
     fn hello_message_matches_contract_shape() {
         let message = WsMessage::Hello {
+            protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
             session_token: "session-123".to_string(),
             resume_token: Some("resume-456".to_string()),
         };
@@ -84,9 +100,15 @@ mod tests {
         let value = serde_json::to_value(message).expect("hello message should serialize");
         assert_eq!(
             object_keys(&value),
-            vec!["resume_token".to_string(), "session_token".to_string(), "type".to_string()]
+            vec![
+                "protocol_version".to_string(),
+                "resume_token".to_string(),
+                "session_token".to_string(),
+                "type".to_string()
+            ]
         );
         assert_eq!(value["type"], "hello");
+        assert_eq!(value["protocol_version"], CURRENT_PROTOCOL_VERSION);
     }
 
     #[test]

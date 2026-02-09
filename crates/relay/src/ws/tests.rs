@@ -19,7 +19,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{Duration, Utc};
 use futures_util::{SinkExt, StreamExt};
 use scriptum_common::crdt::origin::{AuthorType, OriginTag};
-use scriptum_common::protocol::ws::WsMessage;
+use scriptum_common::protocol::ws::{
+    CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION, WsMessage,
+};
 use std::{env, fs, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::time::{sleep, timeout, Instant as TokioInstant};
@@ -558,7 +560,11 @@ async fn websocket_integration_ack_and_broadcast_to_other_subscriber() {
 
     ws_send(
         &mut socket_a,
-        &WsMessage::Hello { session_token: session_a.session_token.clone(), resume_token: None },
+        &WsMessage::Hello {
+            protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
+            session_token: session_a.session_token.clone(),
+            resume_token: None,
+        },
     )
     .await;
     match ws_recv(&mut socket_a).await {
@@ -568,7 +574,11 @@ async fn websocket_integration_ack_and_broadcast_to_other_subscriber() {
 
     ws_send(
         &mut socket_b,
-        &WsMessage::Hello { session_token: session_b.session_token.clone(), resume_token: None },
+        &WsMessage::Hello {
+            protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
+            session_token: session_b.session_token.clone(),
+            resume_token: None,
+        },
     )
     .await;
     match ws_recv(&mut socket_b).await {
@@ -760,7 +770,11 @@ async fn run_websocket_load_stress_profile(profile: LoadStressProfile) {
             connect_async(session.ws_url.as_str()).await.expect("websocket should connect");
         ws_send(
             &mut socket,
-            &WsMessage::Hello { session_token: session.session_token.clone(), resume_token: None },
+            &WsMessage::Hello {
+                protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
+                session_token: session.session_token.clone(),
+                resume_token: None,
+            },
         )
         .await;
         match ws_recv(&mut socket).await {
@@ -1015,6 +1029,7 @@ async fn run_websocket_reconnect_storm_profile(profile: ReconnectStormProfile) {
     ws_send(
         &mut writer_socket,
         &WsMessage::Hello {
+            protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
             session_token: writer_session.session_token.clone(),
             resume_token: None,
         },
@@ -1032,7 +1047,11 @@ async fn run_websocket_reconnect_storm_profile(profile: ReconnectStormProfile) {
             connect_async(session.ws_url.as_str()).await.expect("storm websocket should connect");
         ws_send(
             &mut socket,
-            &WsMessage::Hello { session_token: session.session_token.clone(), resume_token: None },
+            &WsMessage::Hello {
+                protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
+                session_token: session.session_token.clone(),
+                resume_token: None,
+            },
         )
         .await;
         match ws_recv(&mut socket).await {
@@ -1117,6 +1136,7 @@ async fn run_websocket_reconnect_storm_profile(profile: ReconnectStormProfile) {
                 ws_send(
                     &mut socket,
                     &WsMessage::Hello {
+                        protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
                         session_token,
                         resume_token: None,
                     },
@@ -1244,7 +1264,14 @@ async fn hello_ack_is_returned_for_valid_session_token() {
         )
         .await;
 
-    let result = handle_hello_message(&store, session_id, session_token, Some(resume_token)).await;
+    let result = handle_hello_message(
+        &store,
+        session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        session_token,
+        Some(resume_token),
+    )
+    .await;
 
     match result {
         Ok(WsMessage::HelloAck { resume_accepted, resume_token, resume_expires_at, .. }) => {
@@ -1280,6 +1307,7 @@ async fn hello_ack_sets_resume_accepted_false_for_invalid_resume_token() {
     let result = handle_hello_message(
         &store,
         session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
         session_token,
         Some("different-resume-token".to_string()),
     )
@@ -1288,6 +1316,76 @@ async fn hello_ack_sets_resume_accepted_false_for_invalid_resume_token() {
     match result {
         Ok(WsMessage::HelloAck { resume_accepted, .. }) => assert!(!resume_accepted),
         other => panic!("expected hello ack, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn hello_accepts_previous_protocol_version_for_n_minus_one_compatibility() {
+    let store = SyncSessionStore::default();
+    let session_id = Uuid::new_v4();
+    let session_token = Uuid::new_v4().to_string();
+    let resume_token = Uuid::new_v4().to_string();
+    store
+        .create_session(
+            session_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            session_token.clone(),
+            resume_token.clone(),
+            Utc::now() + Duration::minutes(15),
+            Utc::now() + Duration::minutes(10),
+        )
+        .await;
+
+    let result = handle_hello_message(
+        &store,
+        session_id,
+        PREVIOUS_PROTOCOL_VERSION.to_string(),
+        session_token,
+        Some(resume_token),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Ok(WsMessage::HelloAck { .. })),
+        "expected hello ack for N-1 protocol, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn hello_rejects_unsupported_protocol_version() {
+    let store = SyncSessionStore::default();
+    let session_id = Uuid::new_v4();
+    let session_token = Uuid::new_v4().to_string();
+    store
+        .create_session(
+            session_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            session_token.clone(),
+            Uuid::new_v4().to_string(),
+            Utc::now() + Duration::minutes(15),
+            Utc::now() + Duration::minutes(10),
+        )
+        .await;
+
+    let result = handle_hello_message(
+        &store,
+        session_id,
+        "scriptum-sync.v999".to_string(),
+        session_token,
+        None,
+    )
+    .await;
+
+    match result {
+        Err(WsMessage::Error { code, message, .. }) => {
+            assert_eq!(code, "SYNC_PROTOCOL_UNSUPPORTED");
+            assert!(message.contains("supported versions"));
+        }
+        other => panic!("expected protocol unsupported error, got {other:?}"),
     }
 }
 
@@ -1313,6 +1411,7 @@ async fn hello_ack_rotates_resume_token_and_enforces_single_use() {
     let first = handle_hello_message(
         &store,
         session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
         session_token.clone(),
         Some(initial_resume_token.clone()),
     )
@@ -1330,6 +1429,7 @@ async fn hello_ack_rotates_resume_token_and_enforces_single_use() {
     let second = handle_hello_message(
         &store,
         session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
         session_token.clone(),
         Some(first_resume_token.clone()),
     )
@@ -1343,9 +1443,15 @@ async fn hello_ack_rotates_resume_token_and_enforces_single_use() {
         other => panic!("expected hello ack, got {other:?}"),
     }
 
-    let reused = handle_hello_message(&store, session_id, session_token, Some(first_resume_token))
-        .await
-        .expect("reused token hello should still succeed");
+    let reused = handle_hello_message(
+        &store,
+        session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        session_token,
+        Some(first_resume_token),
+    )
+    .await
+    .expect("reused token hello should still succeed");
     match reused {
         WsMessage::HelloAck { resume_accepted, .. } => assert!(!resume_accepted),
         other => panic!("expected hello ack, got {other:?}"),
@@ -1394,14 +1500,26 @@ async fn resume_token_is_bound_to_session_context() {
         .await;
 
     let result =
-        handle_hello_message(&store, session_b, session_b_token, Some(session_a_resume_token))
-            .await;
+        handle_hello_message(
+            &store,
+            session_b,
+            CURRENT_PROTOCOL_VERSION.to_string(),
+            session_b_token,
+            Some(session_a_resume_token),
+        )
+        .await;
     match result {
         Ok(WsMessage::HelloAck { resume_accepted, .. }) => assert!(!resume_accepted),
         other => panic!("expected hello ack, got {other:?}"),
     }
 
-    let valid = handle_hello_message(&store, session_a, session_a_token, None)
+    let valid = handle_hello_message(
+        &store,
+        session_a,
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        session_a_token,
+        None,
+    )
         .await
         .expect("session A should still validate");
     match valid {
@@ -1427,7 +1545,14 @@ async fn hello_rejects_invalid_session_token() {
         )
         .await;
 
-    let result = handle_hello_message(&store, session_id, "wrong-token".to_string(), None).await;
+    let result = handle_hello_message(
+        &store,
+        session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        "wrong-token".to_string(),
+        None,
+    )
+    .await;
 
     match result {
         Err(WsMessage::Error { code, .. }) => assert_eq!(code, "SYNC_TOKEN_INVALID"),
@@ -1456,7 +1581,14 @@ async fn hello_rejects_expired_session_token() {
     let validation = store.validate_session_token(session_id, &session_token, None).await;
     assert_eq!(validation, SessionTokenValidation::Expired);
 
-    let result = handle_hello_message(&store, session_id, session_token, None).await;
+    let result = handle_hello_message(
+        &store,
+        session_id,
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        session_token,
+        None,
+    )
+    .await;
     match result {
         Err(WsMessage::Error { code, .. }) => assert_eq!(code, "SYNC_TOKEN_EXPIRED"),
         other => panic!("expected token expired error, got {other:?}"),

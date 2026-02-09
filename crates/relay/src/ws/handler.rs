@@ -216,9 +216,14 @@ async fn handle_socket(
             }
 
             match ws_protocol::decode_message(&raw_message) {
-                Ok(WsMessage::Hello { session_token, resume_token }) => match handle_hello_message(
+                Ok(WsMessage::Hello {
+                    protocol_version,
+                    session_token,
+                    resume_token,
+                }) => match handle_hello_message(
                     &session_store,
                     session_id,
+                    protocol_version,
                     session_token,
                     resume_token,
                 )
@@ -556,9 +561,22 @@ async fn handle_socket(
 pub(crate) async fn handle_hello_message(
     session_store: &SyncSessionStore,
     session_id: Uuid,
+    protocol_version: String,
     session_token: String,
     resume_token: Option<String>,
 ) -> Result<WsMessage, WsMessage> {
+    if protocol::require_supported(&protocol_version).is_err() {
+        return Err(WsMessage::Error {
+            code: "SYNC_PROTOCOL_UNSUPPORTED".to_string(),
+            message: format!(
+                "unsupported protocol version `{protocol_version}`; supported versions: {}",
+                protocol::supported_versions().join(", ")
+            ),
+            retryable: false,
+            doc_id: None,
+        });
+    }
+
     match session_store
         .validate_session_token(session_id, &session_token, resume_token.as_deref())
         .await

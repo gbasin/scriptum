@@ -14,6 +14,7 @@ describe("createDaemonClient", () => {
     const socketPath = uniqueSocketPath("json-rpc");
     await cleanupSocketFile(socketPath);
     let receivedMethod = "";
+    let receivedProtocolVersion = "";
     let receivedParams: unknown = null;
 
     const server = createServer((socket) => {
@@ -27,9 +28,11 @@ describe("createDaemonClient", () => {
 
         const line = requestBuffer.slice(0, newlineIndex);
         const request = JSON.parse(line) as {
+          protocol_version: string;
           method: string;
           params?: unknown;
         };
+        receivedProtocolVersion = request.protocol_version;
         receivedMethod = request.method;
         receivedParams = request.params ?? null;
 
@@ -61,6 +64,7 @@ describe("createDaemonClient", () => {
 
       expect(result.agent_id).toBe("claude-1");
       expect(receivedMethod).toBe("agent.whoami");
+      expect(receivedProtocolVersion).toBe("scriptum-rpc.v1");
       expect(receivedParams).toEqual({});
     } finally {
       await closeServer(server);

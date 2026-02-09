@@ -24,8 +24,10 @@ use regex::Regex;
 use scriptum_common::backlink::parse_wiki_links;
 use scriptum_common::path::normalize_path;
 use scriptum_common::protocol::jsonrpc::{
-    Request, RequestId, Response, RpcError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
-    METHOD_NOT_FOUND, PARSE_ERROR,
+    is_supported_protocol_version, Request, RequestId, Response, RpcError,
+    CURRENT_PROTOCOL_VERSION as RPC_CURRENT_PROTOCOL_VERSION, INTERNAL_ERROR, INVALID_PARAMS,
+    INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
+    SUPPORTED_PROTOCOL_VERSIONS as RPC_SUPPORTED_PROTOCOL_VERSIONS,
 };
 use scriptum_common::section::{parser::parse_sections, slug::slugify};
 use scriptum_common::types::{
@@ -2037,6 +2039,23 @@ pub async fn handle_raw_request(raw: &[u8], state: &RpcServerState) -> Response 
                     code: INVALID_REQUEST,
                     message: "Invalid Request".to_string(),
                     data: None,
+                },
+            );
+        }
+
+        let protocol_version =
+            request.protocol_version.as_deref().unwrap_or(RPC_CURRENT_PROTOCOL_VERSION);
+        if !is_supported_protocol_version(protocol_version) {
+            return Response::error(
+                request.id,
+                RpcError {
+                    code: INVALID_REQUEST,
+                    message: "Unsupported protocol version".to_string(),
+                    data: Some(json!({
+                        "requested_version": protocol_version,
+                        "supported_versions": RPC_SUPPORTED_PROTOCOL_VERSIONS,
+                        "current_version": RPC_CURRENT_PROTOCOL_VERSION,
+                    })),
                 },
             );
         }

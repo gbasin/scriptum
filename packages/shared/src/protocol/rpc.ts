@@ -1,4 +1,10 @@
 export type JsonRpcVersion = "2.0";
+export const CURRENT_RPC_PROTOCOL_VERSION = "scriptum-rpc.v1";
+export const PREVIOUS_RPC_PROTOCOL_VERSION = "scriptum-rpc.v0";
+export const SUPPORTED_RPC_PROTOCOL_VERSIONS = [
+  CURRENT_RPC_PROTOCOL_VERSION,
+  PREVIOUS_RPC_PROTOCOL_VERSION,
+] as const;
 
 export type JsonRpcId = string | number | null;
 
@@ -399,6 +405,7 @@ export type RpcMethod = keyof RpcParamsMap;
 
 export interface JsonRpcRequest<M extends RpcMethod = RpcMethod> {
   jsonrpc: JsonRpcVersion;
+  protocol_version: string;
   id: JsonRpcId;
   method: M;
   params: RpcParamsMap[M];

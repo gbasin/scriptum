@@ -5,9 +5,11 @@ import { join } from "node:path";
 const DEFAULT_TIMEOUT_MS = 3_000;
 const UNIX_SOCKET_RELATIVE_PATH = ".scriptum/daemon.sock";
 const WINDOWS_NAMED_PIPE_PATH = "\\\\.\\pipe\\scriptum-daemon";
+const RPC_PROTOCOL_VERSION = "scriptum-rpc.v1";
 
 interface JsonRpcRequest {
   readonly jsonrpc: "2.0";
+  readonly protocol_version: string;
   readonly id: number;
   readonly method: string;
   readonly params?: unknown;
@@ -61,6 +63,7 @@ class DefaultDaemonClient implements DaemonClient {
 
     const payload: JsonRpcRequest = {
       jsonrpc: "2.0",
+      protocol_version: RPC_PROTOCOL_VERSION,
       id,
       method,
       ...(params === undefined ? {} : { params }),

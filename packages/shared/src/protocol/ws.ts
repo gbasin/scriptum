@@ -8,8 +8,16 @@ export type WsMessageType =
   | "awareness_update"
   | "error";
 
+export const CURRENT_WS_PROTOCOL_VERSION = "scriptum-sync.v1";
+export const PREVIOUS_WS_PROTOCOL_VERSION = "scriptum-sync.v0";
+export const SUPPORTED_WS_PROTOCOL_VERSIONS = [
+  CURRENT_WS_PROTOCOL_VERSION,
+  PREVIOUS_WS_PROTOCOL_VERSION,
+] as const;
+
 export interface HelloMessage {
   type: "hello";
+  protocol_version: string;
   session_token: string;
   resume_token?: string;
 }

@@ -18,7 +18,7 @@ use tracing::info;
 use url::Url;
 use uuid::Uuid;
 
-use scriptum_common::protocol::ws::WsMessage;
+use scriptum_common::protocol::ws::{WsMessage, CURRENT_PROTOCOL_VERSION as WS_PROTOCOL_VERSION};
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -211,6 +211,7 @@ impl<T: RelayTransport> RelayConnectionManager<T> {
         // Step 3: Send Hello frame.
         self.state = ConnectionState::Authenticating;
         let hello = WsMessage::Hello {
+            protocol_version: WS_PROTOCOL_VERSION.to_string(),
             session_token: session.session_token.clone(),
             resume_token: self.resume_token.clone(),
         };

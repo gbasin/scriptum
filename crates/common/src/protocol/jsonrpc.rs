@@ -3,10 +3,21 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub const CURRENT_PROTOCOL_VERSION: &str = "scriptum-rpc.v1";
+pub const PREVIOUS_PROTOCOL_VERSION: &str = "scriptum-rpc.v0";
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION];
+
+#[must_use]
+pub fn is_supported_protocol_version(version: &str) -> bool {
+    SUPPORTED_PROTOCOL_VERSIONS.contains(&version)
+}
+
 /// A JSON-RPC 2.0 request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Request {
     pub jsonrpc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     pub method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
@@ -51,7 +62,13 @@ pub const INTERNAL_ERROR: i32 = -32603;
 
 impl Request {
     pub fn new(method: impl Into<String>, params: Option<Value>, id: RequestId) -> Self {
-        Self { jsonrpc: "2.0".to_string(), method: method.into(), params, id }
+        Self {
+            jsonrpc: "2.0".to_string(),
+            protocol_version: Some(CURRENT_PROTOCOL_VERSION.to_string()),
+            method: method.into(),
+            params,
+            id,
+        }
     }
 }
 

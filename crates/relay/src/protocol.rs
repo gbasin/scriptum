@@ -16,8 +16,8 @@ pub const CURRENT_VERSION: &str = "scriptum-sync.v1";
 /// (the N-1 slot) and the new version takes index 0.
 const SUPPORTED_VERSIONS: &[&str] = &[
     CURRENT_VERSION,
-    // N-1 slot: add the previous version here when v2 is released.
-    // e.g. "scriptum-sync.v1",
+    // N-1 compatibility window.
+    "scriptum-sync.v0",
 ];
 
 /// Returns true if the given protocol version string is supported.
@@ -68,6 +68,12 @@ mod tests {
     }
 
     #[test]
+    fn previous_version_is_supported_for_n_minus_one_compatibility() {
+        assert!(is_supported("scriptum-sync.v0"));
+        assert!(require_supported("scriptum-sync.v0").is_ok());
+    }
+
+    #[test]
     fn supported_versions_contains_current() {
         let versions = supported_versions();
         assert!(!versions.is_empty());
@@ -88,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn upgrade_required_error_includes_supported_versions_in_details() {
-        let err = require_supported("scriptum-sync.v0").unwrap_err();
+        let err = require_supported("scriptum-sync.v99").unwrap_err();
         let response = axum::response::IntoResponse::into_response(err);
         assert_eq!(response.status(), axum::http::StatusCode::UPGRADE_REQUIRED);
 
@@ -100,7 +106,7 @@ mod tests {
 
         assert_eq!(parsed["error"]["code"], "UPGRADE_REQUIRED");
         assert_eq!(parsed["error"]["retryable"], false);
-        assert_eq!(parsed["error"]["details"]["requested_version"], "scriptum-sync.v0");
+        assert_eq!(parsed["error"]["details"]["requested_version"], "scriptum-sync.v99");
         assert_eq!(parsed["error"]["details"]["current_version"], CURRENT_VERSION);
 
         let supported = parsed["error"]["details"]["supported_versions"]

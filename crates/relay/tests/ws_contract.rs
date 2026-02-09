@@ -1,4 +1,4 @@
-use scriptum_common::protocol::ws::WsMessage;
+use scriptum_common::protocol::ws::{CURRENT_PROTOCOL_VERSION, WsMessage};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -27,6 +27,7 @@ fn websocket_contract_protocol_version_is_scriptum_sync_v1() {
     );
     assert!(RELAY_PROTOCOL_SOURCE.contains("const SUPPORTED_VERSIONS"));
     assert!(RELAY_PROTOCOL_SOURCE.contains("CURRENT_VERSION"));
+    assert!(RELAY_PROTOCOL_SOURCE.contains("\"scriptum-sync.v0\""));
 }
 
 #[test]
@@ -38,11 +39,12 @@ fn websocket_contract_message_shapes_match_spec() {
     let samples = [
         (
             WsMessage::Hello {
+                protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
                 session_token: "session-token".to_string(),
                 resume_token: Some("resume-token".to_string()),
             },
             "hello",
-            &["type", "session_token", "resume_token"][..],
+            &["type", "protocol_version", "session_token", "resume_token"][..],
         ),
         (
             WsMessage::HelloAck {
@@ -116,7 +118,11 @@ fn websocket_contract_message_shapes_match_spec() {
 #[test]
 fn websocket_contract_optional_fields_are_omitted_when_absent() {
     let hello_without_resume =
-        WsMessage::Hello { session_token: "session-token".to_string(), resume_token: None };
+        WsMessage::Hello {
+            protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
+            session_token: "session-token".to_string(),
+            resume_token: None,
+        };
     let error_without_doc = WsMessage::Error {
         code: "AUTH_INVALID_TOKEN".to_string(),
         message: "invalid token".to_string(),
@@ -127,6 +133,7 @@ fn websocket_contract_optional_fields_are_omitted_when_absent() {
     let hello_json = serde_json::to_value(hello_without_resume).expect("hello should serialize");
     let error_json = serde_json::to_value(error_without_doc).expect("error should serialize");
 
+    assert!(object_keys(&hello_json).contains(&"protocol_version".to_string()));
     assert!(!object_keys(&hello_json).contains(&"resume_token".to_string()));
     assert!(!object_keys(&error_json).contains(&"doc_id".to_string()));
 }
