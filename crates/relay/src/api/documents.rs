@@ -1106,7 +1106,9 @@ async fn acl_override_role_for_user_pg(
 
     role.map(|value| {
         WorkspaceRole::from_db_value(&value).ok_or_else(|| {
-            DocApiError::internal(anyhow::anyhow!("invalid ACL override role '{value}' in database"))
+            DocApiError::internal(anyhow::anyhow!(
+                "invalid ACL override role '{value}' in database"
+            ))
         })
     })
     .transpose()
@@ -1408,8 +1410,11 @@ async fn acl_override_role_for_user_mem(
         .map(|override_entry| override_entry.role.clone());
 
     role.map(|value| {
-        WorkspaceRole::from_db_value(&value)
-            .ok_or_else(|| DocApiError::internal(anyhow::anyhow!("invalid ACL override role '{value}' in memory store")))
+        WorkspaceRole::from_db_value(&value).ok_or_else(|| {
+            DocApiError::internal(anyhow::anyhow!(
+                "invalid ACL override role '{value}' in memory store"
+            ))
+        })
     })
     .transpose()
 }
@@ -2598,6 +2603,142 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(acl_forbidden.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn acl_override_grants_editor_access_to_workspace_viewer() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store.clone(), jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let viewer_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let viewer_token = auth_token(&jwt, viewer_id, ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "override-grant.md"}),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_doc_resp.status(), StatusCode::CREATED);
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        store.grant_workspace_role_for_tests(ws_id, viewer_id, WorkspaceRole::Viewer).await;
+
+        let before_override = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": ["before-override"]}),
+                &viewer_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(before_override.status(), StatusCode::FORBIDDEN);
+
+        let override_create = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "user",
+                    "subject_id": viewer_id.to_string(),
+                    "role": "editor"
+                }),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(override_create.status(), StatusCode::CREATED);
+
+        let after_override = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": ["after-override"]}),
+                &viewer_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(after_override.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn acl_override_downgrades_editor_access_to_viewer() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store.clone(), jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let editor_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let editor_token = auth_token(&jwt, editor_id, ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "override-deny.md"}),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_doc_resp.status(), StatusCode::CREATED);
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        store.grant_workspace_role_for_tests(ws_id, editor_id, WorkspaceRole::Editor).await;
+
+        let before_override = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": ["editor-before-override"]}),
+                &editor_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(before_override.status(), StatusCode::OK);
+
+        let override_create = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "user",
+                    "subject_id": editor_id.to_string(),
+                    "role": "viewer"
+                }),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(override_create.status(), StatusCode::CREATED);
+
+        let after_override = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": ["editor-after-override"]}),
+                &editor_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(after_override.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
