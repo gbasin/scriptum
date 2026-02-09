@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { WorkspaceDensity, WorkspaceTheme } from "@scriptum/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -27,6 +30,111 @@ describe("resolveThemePreference", () => {
     expect(resolveThemePreference(undefined, false)).toBe("light");
   });
 });
+
+interface LinearRgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+interface OklchColor {
+  l: number;
+  c: number;
+  h: number;
+}
+
+const TOKENS_CSS = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), "../styles/tokens.css"),
+  "utf8",
+);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cssBlock(selector: string): string {
+  const matcher = new RegExp(`${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\n\\}`);
+  const match = TOKENS_CSS.match(matcher);
+  if (!match) {
+    throw new Error(`Missing CSS block: ${selector}`);
+  }
+  return match[1];
+}
+
+function tokenFromBlock(block: string, token: string): string {
+  const matcher = new RegExp(`--${escapeRegExp(token)}:\\s*([^;]+);`);
+  const match = block.match(matcher);
+  if (!match) {
+    throw new Error(`Missing token: ${token}`);
+  }
+  return match[1].trim();
+}
+
+function parseHexColor(value: string): LinearRgb {
+  const normalized = value.trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(normalized)) {
+    throw new Error(`Expected #RRGGBB color, got ${value}`);
+  }
+  const toLinearChannel = (hex: string): number => {
+    const srgb = Number.parseInt(hex, 16) / 255;
+    return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  return {
+    b: toLinearChannel(normalized.slice(5, 7)),
+    g: toLinearChannel(normalized.slice(3, 5)),
+    r: toLinearChannel(normalized.slice(1, 3)),
+  };
+}
+
+function parseOklchColor(value: string): OklchColor {
+  const match = value
+    .trim()
+    .match(/^oklch\(([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\)$/);
+  if (!match) {
+    throw new Error(`Expected oklch() color, got ${value}`);
+  }
+  return {
+    c: Number.parseFloat(match[2]),
+    h: Number.parseFloat(match[3]),
+    l: Number.parseFloat(match[1]),
+  };
+}
+
+function clamp(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function oklchToLinearRgb(color: OklchColor): LinearRgb {
+  const hueRadians = (color.h * Math.PI) / 180;
+  const a = color.c * Math.cos(hueRadians);
+  const b = color.c * Math.sin(hueRadians);
+
+  const lPrime = color.l + 0.3963377774 * a + 0.2158037573 * b;
+  const mPrime = color.l - 0.1055613458 * a - 0.0638541728 * b;
+  const sPrime = color.l - 0.0894841775 * a - 1.291485548 * b;
+
+  const l = lPrime ** 3;
+  const m = mPrime ** 3;
+  const s = sPrime ** 3;
+
+  return {
+    b: clamp(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+    g: clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    r: clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+  };
+}
+
+function relativeLuminance(color: LinearRgb): number {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+}
+
+function contrastRatio(first: LinearRgb, second: LinearRgb): number {
+  const firstLum = relativeLuminance(first);
+  const secondLum = relativeLuminance(second);
+  const lighter = Math.max(firstLum, secondLum);
+  const darker = Math.min(firstLum, secondLum);
+  return (lighter + 0.05) / (darker + 0.05);
+}
 
 describe("applyResolvedTheme", () => {
   it("applies class and data-theme attribute on html element", () => {
@@ -358,5 +466,36 @@ describe("startGitSyncPollingSync", () => {
         };
       }
     ).__SCRIPTUM_DAEMON__;
+  });
+});
+
+describe("light theme accent tokens", () => {
+  it("override accent tokens instead of inheriting dark defaults", () => {
+    const rootBlock = cssBlock(":root");
+    const lightBlock = cssBlock('[data-theme="light"]');
+
+    expect(tokenFromBlock(lightBlock, "color-accent-hex")).not.toBe(
+      tokenFromBlock(rootBlock, "color-accent-hex"),
+    );
+    expect(tokenFromBlock(lightBlock, "color-accent")).not.toBe(
+      tokenFromBlock(rootBlock, "color-accent"),
+    );
+    expect(tokenFromBlock(lightBlock, "color-accent-soft")).not.toBe(
+      tokenFromBlock(rootBlock, "color-accent-soft"),
+    );
+  });
+
+  it("meet WCAG AA contrast against the light canvas", () => {
+    const lightBlock = cssBlock('[data-theme="light"]');
+    const canvas = oklchToLinearRgb(
+      parseOklchColor(tokenFromBlock(lightBlock, "color-bg-canvas")),
+    );
+    const accentHex = parseHexColor(tokenFromBlock(lightBlock, "color-accent-hex"));
+    const accentSoft = oklchToLinearRgb(
+      parseOklchColor(tokenFromBlock(lightBlock, "color-accent-soft")),
+    );
+
+    expect(contrastRatio(accentHex, canvas)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(accentSoft, canvas)).toBeGreaterThanOrEqual(4.5);
   });
 });
