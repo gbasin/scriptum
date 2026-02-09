@@ -189,7 +189,9 @@ describe("IdbCrdtStore", () => {
 
     try {
       await storeA.saveSnapshot("doc-a", new Uint8Array([9, 9]));
-      expect(await storeB.loadSnapshot("doc-a")).toEqual(new Uint8Array([9, 9]));
+      expect(await storeB.loadSnapshot("doc-a")).toEqual(
+        new Uint8Array([9, 9]),
+      );
 
       await Promise.all([
         storeA.queueUpdate("doc-a", new Uint8Array([1])),

@@ -210,7 +210,9 @@ describe("lib/auth", () => {
     });
 
     await expect(
-      auth.handleOAuthCallback({ searchParams: new URLSearchParams("state=s") }),
+      auth.handleOAuthCallback({
+        searchParams: new URLSearchParams("state=s"),
+      }),
     ).rejects.toMatchObject({
       code: "OAUTH_CALLBACK_PARAMS_MISSING",
     } satisfies Partial<AuthFlowError>);

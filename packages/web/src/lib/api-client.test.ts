@@ -420,9 +420,9 @@ describe("api-client", () => {
   });
 
   it("uses default relay base URL when baseUrl is not provided", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse(200, { items: [], next_cursor: null }),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(200, { items: [], next_cursor: null }));
 
     const client = createApiClient({
       fetch: fetchMock,
@@ -435,9 +435,9 @@ describe("api-client", () => {
   });
 
   it("omits Authorization header when access token is unavailable", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse(200, { items: [], next_cursor: null }),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(200, { items: [], next_cursor: null }));
 
     const client = createApiClient({
       baseUrl: "https://relay.scriptum.dev",
@@ -451,7 +451,10 @@ describe("api-client", () => {
   });
 
   it("propagates AbortError from cancelled requests", async () => {
-    const abortError = new DOMException("The operation was aborted", "AbortError");
+    const abortError = new DOMException(
+      "The operation was aborted",
+      "AbortError",
+    );
     const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(abortError);
 
     const client = createApiClient({

@@ -195,9 +195,7 @@ export function SettingsRoute() {
             className={styles.confirmActions}
             data-testid="settings-delete-workspace-confirm"
           >
-            <p className={styles.warningText}>
-              This action cannot be undone.
-            </p>
+            <p className={styles.warningText}>This action cannot be undone.</p>
             <div className={styles.accountActions}>
               <button
                 className={clsx(controls.buttonBase, controls.buttonSecondary)}

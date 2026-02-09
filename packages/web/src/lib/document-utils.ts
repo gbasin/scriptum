@@ -8,7 +8,9 @@ export function titleFromPath(path: string): string {
     .filter((segment) => segment.length > 0);
   const fileName = segments[segments.length - 1] ?? path;
   const fileNameWithoutExtension = fileName.replace(/\.md$/i, "");
-  return fileNameWithoutExtension.length > 0 ? fileNameWithoutExtension : fileName;
+  return fileNameWithoutExtension.length > 0
+    ? fileNameWithoutExtension
+    : fileName;
 }
 
 export function buildUntitledPath(existingPaths: ReadonlySet<string>): string {

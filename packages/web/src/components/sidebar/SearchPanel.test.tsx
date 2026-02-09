@@ -173,11 +173,9 @@ describe("buildSearchPanelResults", () => {
       } as Document,
     ];
 
-    expect(buildSearchPanelResults(documents).map((result) => result.author)).toEqual([
-      "Editor",
-      "Creator",
-      "Nested Author",
-    ]);
+    expect(
+      buildSearchPanelResults(documents).map((result) => result.author),
+    ).toEqual(["Editor", "Creator", "Nested Author"]);
   });
 });
 

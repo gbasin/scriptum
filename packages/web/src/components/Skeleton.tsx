@@ -28,7 +28,10 @@ export function SkeletonBlock({
   );
 }
 
-export function SkeletonStack({ className, lineClassNames }: SkeletonStackProps) {
+export function SkeletonStack({
+  className,
+  lineClassNames,
+}: SkeletonStackProps) {
   return (
     <div aria-hidden="true" className={className}>
       {lineClassNames.map((lineClassName, index) => (

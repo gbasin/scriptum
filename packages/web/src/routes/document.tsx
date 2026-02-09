@@ -1,6 +1,6 @@
 export {
-  buildUntitledPath,
   buildOpenDocumentTabs,
+  buildUntitledPath,
   nextDocumentIdAfterClose,
   titleFromPath,
 } from "../lib/document-utils";

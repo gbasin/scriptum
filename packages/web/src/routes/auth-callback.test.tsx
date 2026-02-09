@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { AuthClient } from "../auth/client";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthClient } from "../auth/client";
 import { AUTH_CALLBACK_TIMEOUT_MS, AuthCallbackRoute } from "./auth-callback";
 
 const mockNavigate = vi.fn();
@@ -74,7 +74,9 @@ afterEach(() => {
 
 describe("AuthCallbackRoute", () => {
   it("passes OAuth callback params to auth store handler", () => {
-    const { root } = renderRoute("/auth-callback?code=gh-code&state=csrf-token");
+    const { root } = renderRoute(
+      "/auth-callback?code=gh-code&state=csrf-token",
+    );
 
     expect(authStoreState.handleCallback).toHaveBeenCalledTimes(1);
     const [client, code, state] = authStoreState.handleCallback.mock.calls[0]!;

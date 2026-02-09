@@ -53,7 +53,9 @@ function escapeRegExp(value: string): string {
 }
 
 function cssBlock(selector: string): string {
-  const matcher = new RegExp(`${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\n\\}`);
+  const matcher = new RegExp(
+    `${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\n\\}`,
+  );
   const match = TOKENS_CSS.match(matcher);
   if (!match) {
     throw new Error(`Missing CSS block: ${selector}`);
@@ -490,7 +492,9 @@ describe("light theme accent tokens", () => {
     const canvas = oklchToLinearRgb(
       parseOklchColor(tokenFromBlock(lightBlock, "color-bg-canvas")),
     );
-    const accentHex = parseHexColor(tokenFromBlock(lightBlock, "color-accent-hex"));
+    const accentHex = parseHexColor(
+      tokenFromBlock(lightBlock, "color-accent-hex"),
+    );
     const accentSoft = oklchToLinearRgb(
       parseOklchColor(tokenFromBlock(lightBlock, "color-accent-soft")),
     );
