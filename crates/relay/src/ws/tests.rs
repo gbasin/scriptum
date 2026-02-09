@@ -409,6 +409,77 @@ async fn create_sync_session_returns_expected_contract() {
 }
 
 #[tokio::test]
+async fn websocket_rejects_oversized_frames_with_message_too_big_close() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener should bind");
+    let addr = listener.local_addr().expect("listener should expose local address");
+    let jwt_service =
+        Arc::new(JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"));
+    let session_store = Arc::new(SyncSessionStore::default());
+    let membership_store = WorkspaceMembershipStore::for_tests();
+    let workspace_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    membership_store.grant_for_tests(workspace_id, user_id, WorkspaceRole::Editor).await;
+    let app = router(
+        jwt_service.clone(),
+        session_store,
+        Arc::new(DocSyncStore::default()),
+        Arc::new(AwarenessStore::default()),
+        membership_store,
+        format!("ws://{addr}"),
+    );
+    let access_token = jwt_service
+        .issue_workspace_token(user_id, workspace_id)
+        .expect("access token should be created");
+    let session = create_sync_session_for_test(&app, workspace_id, &access_token).await;
+
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("relay websocket server should run for oversized-frame test");
+    });
+
+    let (mut socket, _) =
+        connect_async(session.ws_url.as_str()).await.expect("websocket should connect");
+    let oversized_payload = "x".repeat(MAX_FRAME_BYTES as usize + 1);
+    socket
+        .send(WsFrame::Text(oversized_payload.into()))
+        .await
+        .expect("oversized frame should write to socket");
+
+    let received = timeout(std::time::Duration::from_secs(2), socket.next())
+        .await
+        .expect("server should reject oversized frame within timeout")
+        .expect("websocket stream should yield a rejection frame or error");
+
+    match received {
+        Ok(WsFrame::Close(Some(close))) => {
+            assert_eq!(
+                close.code,
+                tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Size
+            );
+            assert!(
+                close.reason.as_str().contains(&MAX_FRAME_BYTES.to_string()),
+                "close reason should mention frame size limit, got `{}`",
+                close.reason
+            );
+        }
+        Err(error) => {
+            let message = error.to_string().to_ascii_lowercase();
+            assert!(
+                message.contains("too large")
+                    || message.contains("too long")
+                    || message.contains("size"),
+                "error should indicate size rejection, got `{message}`"
+            );
+        }
+        Ok(other) => panic!("expected close-or-error on oversized frame, got {other:?}"),
+    }
+
+    let _ = socket.close(None).await;
+    server_task.abort();
+}
+
+#[tokio::test]
 async fn websocket_integration_ack_and_broadcast_to_other_subscriber() {
     let Some(database_url) = std::env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
         eprintln!("skipping websocket integration test: set SCRIPTUM_RELAY_TEST_DATABASE_URL");

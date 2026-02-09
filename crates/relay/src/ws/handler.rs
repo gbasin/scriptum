@@ -17,7 +17,7 @@ use crate::metrics;
 use crate::protocol;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{close_code, CloseFrame, Message, WebSocket, WebSocketUpgrade},
         Extension, Path, State,
     },
     http::{HeaderMap, StatusCode},
@@ -164,6 +164,28 @@ pub async fn ws_upgrade(
     })
 }
 
+fn frame_size_exceeded_reason() -> String {
+    format!("websocket frame exceeds maximum size of {MAX_FRAME_BYTES} bytes")
+}
+
+fn is_frame_size_violation(error: &axum::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("message too long")
+        || message.contains("frame too long")
+        || message.contains("too large")
+        || message.contains("too big")
+        || message.contains("size limit")
+}
+
+async fn close_frame_too_large(socket: &mut WebSocket) {
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: close_code::SIZE,
+            reason: frame_size_exceeded_reason().into(),
+        })))
+        .await;
+}
+
 async fn handle_socket(
     session_store: Arc<SyncSessionStore>,
     doc_store: Arc<DocSyncStore>,
@@ -180,10 +202,26 @@ async fn handle_socket(
 
     let hello_started_at = Instant::now();
     let hello = match socket.recv().await {
-        Some(Ok(Message::Text(raw_message))) => match ws_protocol::decode_message(&raw_message) {
-            Ok(WsMessage::Hello { session_token, resume_token }) => {
-                match handle_hello_message(&session_store, session_id, session_token, resume_token)
-                    .await
+        Some(Ok(Message::Text(raw_message))) => {
+            if raw_message.len() > MAX_FRAME_BYTES as usize {
+                metrics::record_ws_request(
+                    "hello",
+                    true,
+                    hello_started_at.elapsed().as_millis() as u64,
+                );
+                close_frame_too_large(&mut socket).await;
+                session_store.mark_disconnected(session_id).await;
+                return;
+            }
+
+            match ws_protocol::decode_message(&raw_message) {
+                Ok(WsMessage::Hello { session_token, resume_token }) => match handle_hello_message(
+                    &session_store,
+                    session_id,
+                    session_token,
+                    resume_token,
+                )
+                .await
                 {
                     Ok(hello_ack) => hello_ack,
                     Err(error_message) => {
@@ -197,29 +235,39 @@ async fn handle_socket(
                         session_store.mark_disconnected(session_id).await;
                         return;
                     }
+                },
+                _ => {
+                    metrics::record_ws_request(
+                        "hello",
+                        true,
+                        hello_started_at.elapsed().as_millis() as u64,
+                    );
+                    let _ = ws_protocol::send_ws_message(
+                        &mut socket,
+                        &WsMessage::Error {
+                            code: "SYNC_HELLO_REQUIRED".to_string(),
+                            message: "first WebSocket message must be a hello frame".to_string(),
+                            retryable: false,
+                            doc_id: None,
+                        },
+                    )
+                    .await;
+                    let _ = socket.send(Message::Close(None)).await;
+                    session_store.mark_disconnected(session_id).await;
+                    return;
                 }
             }
-            _ => {
-                metrics::record_ws_request(
-                    "hello",
-                    true,
-                    hello_started_at.elapsed().as_millis() as u64,
-                );
-                let _ = ws_protocol::send_ws_message(
-                    &mut socket,
-                    &WsMessage::Error {
-                        code: "SYNC_HELLO_REQUIRED".to_string(),
-                        message: "first WebSocket message must be a hello frame".to_string(),
-                        retryable: false,
-                        doc_id: None,
-                    },
-                )
-                .await;
-                let _ = socket.send(Message::Close(None)).await;
-                session_store.mark_disconnected(session_id).await;
-                return;
-            }
-        },
+        }
+        Some(Err(error)) if is_frame_size_violation(&error) => {
+            metrics::record_ws_request(
+                "hello",
+                true,
+                hello_started_at.elapsed().as_millis() as u64,
+            );
+            close_frame_too_large(&mut socket).await;
+            session_store.mark_disconnected(session_id).await;
+            return;
+        }
         _ => {
             metrics::record_ws_request(
                 "hello",
@@ -284,6 +332,11 @@ async fn handle_socket(
 
                 match message {
                     Ok(Message::Text(raw_message)) => {
+                        if raw_message.len() > MAX_FRAME_BYTES as usize {
+                            close_frame_too_large(&mut socket).await;
+                            break;
+                        }
+
                         let inbound = match ws_protocol::decode_message(&raw_message) {
                             Ok(message) => message,
                             Err(_) => {
@@ -467,7 +520,12 @@ async fn handle_socket(
                     }
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {}
-                    Err(_) => break,
+                    Err(error) => {
+                        if is_frame_size_violation(&error) {
+                            close_frame_too_large(&mut socket).await;
+                        }
+                        break;
+                    }
                 }
             }
         }
