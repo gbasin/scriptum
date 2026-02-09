@@ -365,6 +365,7 @@ function TreeNodeItem({
             {fileIcon(node.name)}
           </span>
           <input
+            aria-label="Rename document"
             className={clsx(controls.textInput, styles.renameInput)}
             data-testid={`tree-rename-input-${node.document.id}`}
             onBlur={() => {

@@ -84,6 +84,7 @@ describe("DocumentTree workspace actions", () => {
       '[data-testid="tree-rename-input-doc-1"]',
     ) as HTMLInputElement | null;
     expect(renameInput).not.toBeNull();
+    expect(renameInput?.getAttribute("aria-label")).toBe("Rename document");
 
     act(() => {
       const valueSetter = Object.getOwnPropertyDescriptor(
