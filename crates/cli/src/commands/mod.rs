@@ -10,6 +10,7 @@ pub mod claim;
 pub mod conflicts;
 pub mod diff;
 pub mod edit;
+pub mod init;
 pub mod ls;
 pub mod peek;
 pub mod read;
@@ -24,6 +25,8 @@ pub mod whoami;
 pub enum Command {
     /// Read a document or section
     Read(read::ReadArgs),
+    /// Initialize a Scriptum workspace
+    Init(init::InitArgs),
     /// Edit a document or section
     Edit(edit::EditArgs),
     /// Show section tree structure with IDs
@@ -61,6 +64,7 @@ pub enum Command {
 pub fn run(cmd: Command) -> anyhow::Result<()> {
     match cmd {
         Command::Read(args) => read::run(args),
+        Command::Init(args) => init::run(args),
         Command::Edit(args) => edit::run(args),
         Command::Tree(args) => tree::run(args),
         Command::Sections(args) => sections::run(args),
