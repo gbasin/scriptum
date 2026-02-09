@@ -104,6 +104,7 @@ pub struct UpdateDocumentRequest {
 #[derive(Deserialize)]
 pub struct ListDocumentsQuery {
     pub path_prefix: Option<String>,
+    pub include_archived: Option<bool>,
     pub archived: Option<bool>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
@@ -111,6 +112,7 @@ pub struct ListDocumentsQuery {
 
 #[derive(Deserialize)]
 pub struct DeleteDocumentQuery {
+    pub hard_delete: Option<bool>,
     pub hard: Option<bool>,
 }
 
@@ -389,6 +391,7 @@ async fn list_documents(
 ) -> Result<Json<DocumentsPageEnvelope>, DocApiError> {
     require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Viewer).await?;
     let limit = normalize_limit(query.limit);
+    let archived = normalize_archived_filter(&query);
     let cursor = match query.cursor {
         Some(raw) => Some(parse_cursor(&raw)?),
         None => None,
@@ -396,7 +399,7 @@ async fn list_documents(
 
     let (items, next_cursor) = state
         .store
-        .list(ws_id, query.path_prefix.as_deref(), query.archived, limit, cursor)
+        .list(ws_id, query.path_prefix.as_deref(), archived, limit, cursor)
         .await?;
 
     Ok(Json(DocumentsPageEnvelope { items, next_cursor }))
@@ -437,7 +440,7 @@ async fn delete_document(
     Query(query): Query<DeleteDocumentQuery>,
 ) -> Result<StatusCode, DocApiError> {
     require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
-    let hard = query.hard.unwrap_or(false);
+    let hard = query.hard_delete.or(query.hard).unwrap_or(false);
     state.store.delete(ws_id, doc_id, hard).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1334,6 +1337,18 @@ fn normalize_limit(limit: Option<usize>) -> usize {
     }
 }
 
+fn normalize_archived_filter(query: &ListDocumentsQuery) -> Option<bool> {
+    if let Some(include_archived) = query.include_archived {
+        // TS client uses include_archived; true means include both active and archived.
+        return if include_archived { None } else { Some(false) };
+    }
+    if let Some(archived) = query.archived {
+        // Legacy filter shape retained for backward compatibility.
+        return Some(archived);
+    }
+    Some(false)
+}
+
 fn parse_cursor(value: &str) -> Result<DocCursor, DocApiError> {
     let (ts, id) = value
         .split_once('|')
@@ -1459,6 +1474,8 @@ fn map_sqlx_error(error: sqlx::Error) -> DocApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -2115,6 +2132,136 @@ mod tests {
             .unwrap();
         let body = body_json(resp).await;
         assert_eq!(body["items"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_documents_respects_include_archived_query_param() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store, jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let active_create = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "active.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(active_create.status(), StatusCode::CREATED);
+
+        let archived_create = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "archived.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(archived_create.status(), StatusCode::CREATED);
+        let archived_body = body_json(archived_create).await;
+        let archived_doc_id = archived_body["document"]["id"].as_str().unwrap();
+        let archived_etag = archived_body["document"]["etag"].as_str().unwrap();
+
+        let archive_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(&format!("/v1/workspaces/{ws_id}/documents/{archived_doc_id}"))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("If-Match", archived_etag)
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({"archived": true})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(archive_resp.status(), StatusCode::OK);
+
+        let default_list_resp = app
+            .clone()
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents"), &token))
+            .await
+            .unwrap();
+        assert_eq!(default_list_resp.status(), StatusCode::OK);
+        let default_list_body = body_json(default_list_resp).await;
+        let default_paths: BTreeSet<String> = default_list_body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["path"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(default_paths, BTreeSet::from(["active.md".to_string()]));
+
+        let include_archived_resp = app
+            .oneshot(get_request(
+                &format!("/v1/workspaces/{ws_id}/documents?include_archived=true"),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(include_archived_resp.status(), StatusCode::OK);
+        let include_archived_body = body_json(include_archived_resp).await;
+        let include_archived_paths: BTreeSet<String> = include_archived_body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["path"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            include_archived_paths,
+            BTreeSet::from(["active.md".to_string(), "archived.md".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn soft_deleted_document_can_be_hard_deleted_with_hard_delete_query_param() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store, jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+
+        let create_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "hard-delete.md"}),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_resp.status(), StatusCode::CREATED);
+        let create_body = body_json(create_resp).await;
+        let doc_id = create_body["document"]["id"].as_str().unwrap();
+
+        let soft_delete_resp = app
+            .clone()
+            .oneshot(delete_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &token))
+            .await
+            .unwrap();
+        assert_eq!(soft_delete_resp.status(), StatusCode::NO_CONTENT);
+
+        let hard_delete_resp = app
+            .oneshot(delete_request(
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}?hard_delete=true"),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(hard_delete_resp.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
