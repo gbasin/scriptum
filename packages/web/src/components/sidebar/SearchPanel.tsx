@@ -45,6 +45,29 @@ export interface SearchPanelProps {
 
 const UNKNOWN_AUTHOR = "Unknown";
 const MAX_SNIPPET_LENGTH = 160;
+const AUTHOR_METADATA_KEYS = [
+  "lastEditedBy",
+  "last_edited_by",
+  "lastEditedByName",
+  "last_edited_by_name",
+  "updatedBy",
+  "updated_by",
+  "createdBy",
+  "created_by",
+  "createdByName",
+  "created_by_name",
+  "author",
+  "authorName",
+  "author_name",
+  "authorId",
+  "author_id",
+] as const;
+const NESTED_AUTHOR_SOURCES = [
+  "metadata",
+  "meta",
+  "attribution",
+  "crdt",
+] as const;
 
 function normalizeSnippetText(value: string): string {
   const trimmed = value.replace(/\s+/g, " ").trim();
@@ -62,6 +85,52 @@ function normalizeDate(value: string): string | null {
   return parsed.toISOString().slice(0, 10);
 }
 
+function asNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function authorFromRecord(record: Record<string, unknown>): string | null {
+  for (const key of AUTHOR_METADATA_KEYS) {
+    const author = asNonEmptyString(record[key]);
+    if (author) {
+      return author;
+    }
+  }
+  return null;
+}
+
+function authorFromDocument(document: Document): string {
+  const record = document as unknown as Record<string, unknown>;
+  const directAuthor = authorFromRecord(record);
+  if (directAuthor) {
+    return directAuthor;
+  }
+
+  for (const sourceKey of NESTED_AUTHOR_SOURCES) {
+    const nestedRecord = asRecord(record[sourceKey]);
+    if (!nestedRecord) {
+      continue;
+    }
+    const nestedAuthor = authorFromRecord(nestedRecord);
+    if (nestedAuthor) {
+      return nestedAuthor;
+    }
+  }
+
+  return UNKNOWN_AUTHOR;
+}
+
 export function isSearchPanelShortcut(event: SearchShortcutEventLike): boolean {
   if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) {
     return false;
@@ -75,6 +144,7 @@ export function buildSearchPanelResults(
   const results: SearchPanelResult[] = [];
 
   for (const document of documents) {
+    const author = authorFromDocument(document);
     const bodyMarkdown =
       typeof document.bodyMd === "string" ? document.bodyMd : "";
     const lines = bodyMarkdown.split(/\r?\n/);
@@ -89,7 +159,7 @@ export function buildSearchPanelResults(
 
       appendedLineMatch = true;
       results.push({
-        author: UNKNOWN_AUTHOR,
+        author,
         documentId: document.id,
         documentPath: document.path,
         documentTitle: document.title,
@@ -106,7 +176,7 @@ export function buildSearchPanelResults(
     }
 
     results.push({
-      author: UNKNOWN_AUTHOR,
+      author,
       documentId: document.id,
       documentPath: document.path,
       documentTitle: document.title,

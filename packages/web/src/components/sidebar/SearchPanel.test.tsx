@@ -140,6 +140,45 @@ describe("buildSearchPanelResults", () => {
       },
     ]);
   });
+
+  it("derives authors from document metadata with priority order", () => {
+    const documents = [
+      {
+        ...makeDocument({
+          bodyMd: "First line",
+          id: "doc-edited",
+          path: "docs/edited.md",
+          title: "Edited",
+        }),
+        createdBy: "Creator",
+        lastEditedBy: "Editor",
+      } as Document,
+      {
+        ...makeDocument({
+          bodyMd: "Second line",
+          id: "doc-created",
+          path: "docs/created.md",
+          title: "Created",
+        }),
+        createdBy: "Creator",
+      } as Document,
+      {
+        ...makeDocument({
+          bodyMd: "Third line",
+          id: "doc-nested",
+          path: "docs/nested.md",
+          title: "Nested",
+        }),
+        metadata: { author_name: "Nested Author" },
+      } as Document,
+    ];
+
+    expect(buildSearchPanelResults(documents).map((result) => result.author)).toEqual([
+      "Editor",
+      "Creator",
+      "Nested Author",
+    ]);
+  });
 });
 
 describe("filterSearchResults", () => {
