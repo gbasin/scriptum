@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::{
     auth::{
         jwt::JwtAccessTokenService,
-        middleware::{require_bearer_auth, AuthenticatedUser},
+        middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
     },
     error::{ErrorCode, RelayError},
 };
@@ -71,6 +71,7 @@ enum SearchStore {
 #[derive(Default)]
 struct MemorySearchStore {
     documents: HashMap<Uuid, MemoryDocument>,
+    workspace_members: HashMap<(Uuid, Uuid), WorkspaceRole>,
 }
 
 #[derive(Clone)]
@@ -95,6 +96,7 @@ struct SearchRow {
 #[derive(Debug)]
 enum SearchApiError {
     BadRequest { message: String },
+    Forbidden,
     Internal(anyhow::Error),
 }
 
@@ -113,6 +115,10 @@ impl IntoResponse for SearchApiError {
         match self {
             Self::BadRequest { message } => {
                 RelayError::new(ErrorCode::ValidationFailed, message).into_response()
+            }
+            Self::Forbidden => {
+                RelayError::new(ErrorCode::AuthForbidden, "caller lacks required role")
+                    .into_response()
             }
             Self::Internal(error) => {
                 tracing::error!(error = ?error, "search api internal error");
@@ -137,10 +143,12 @@ fn build_router_with_store(store: SearchStore, jwt_service: Arc<JwtAccessTokenSe
 
 async fn search_documents(
     State(state): State<SearchApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path(workspace_id): Path<Uuid>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, SearchApiError> {
+    require_workspace_role(&state.store, &user, workspace_id, WorkspaceRole::Viewer).await?;
+
     let raw_query =
         query.q.ok_or_else(|| SearchApiError::bad_request("missing query parameter: q"))?;
     let q = validate_query(&raw_query)?;
@@ -165,6 +173,17 @@ impl SearchStore {
         match self {
             Self::Postgres(pool) => search_pg(pool, workspace_id, q, limit, offset).await,
             Self::Memory(store) => search_mem(store, workspace_id, q, limit, offset).await,
+        }
+    }
+
+    async fn workspace_role_for_user(
+        &self,
+        user_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<WorkspaceRole>, SearchApiError> {
+        match self {
+            Self::Postgres(pool) => workspace_role_for_user_pg(pool, user_id, workspace_id).await,
+            Self::Memory(store) => workspace_role_for_user_mem(store, user_id, workspace_id).await,
         }
     }
 }
@@ -290,6 +309,67 @@ async fn search_mem(
     Ok((items, next_cursor))
 }
 
+async fn workspace_role_for_user_pg(
+    pool: &PgPool,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, SearchApiError> {
+    let role = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT role
+        FROM workspace_members
+        WHERE workspace_id = $1
+          AND user_id = $2
+          AND status = 'active'
+        LIMIT 1
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    role.map(|value| {
+        WorkspaceRole::from_db_value(&value).ok_or_else(|| {
+            SearchApiError::internal(anyhow::anyhow!(
+                "invalid workspace role '{value}' in database"
+            ))
+        })
+    })
+    .transpose()
+}
+
+async fn workspace_role_for_user_mem(
+    store: &RwLock<MemorySearchStore>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, SearchApiError> {
+    let store = store.read().await;
+    Ok(store.workspace_members.get(&(workspace_id, user_id)).copied())
+}
+
+async fn require_workspace_role(
+    store: &SearchStore,
+    user: &AuthenticatedUser,
+    workspace_id: Uuid,
+    required_role: WorkspaceRole,
+) -> Result<(), SearchApiError> {
+    if user.workspace_id != workspace_id {
+        return Err(SearchApiError::Forbidden);
+    }
+
+    let role = store.workspace_role_for_user(user.user_id, workspace_id).await?;
+    let Some(role) = role else {
+        return Err(SearchApiError::Forbidden);
+    };
+    if !role.allows(required_role) {
+        return Err(SearchApiError::Forbidden);
+    }
+
+    Ok(())
+}
+
 fn normalize_limit(limit: Option<usize>) -> usize {
     match limit {
         Some(0) => DEFAULT_PAGE_SIZE,
@@ -372,6 +452,15 @@ mod tests {
         jwt.issue_workspace_token(user_id, workspace_id).expect("token")
     }
 
+    fn grant_workspace_role(
+        store: &mut MemorySearchStore,
+        workspace_id: Uuid,
+        user_id: Uuid,
+        role: WorkspaceRole,
+    ) {
+        store.workspace_members.insert((workspace_id, user_id), role);
+    }
+
     fn test_router(store: SearchStore) -> Router {
         build_router_with_store(store, test_jwt_service())
     }
@@ -394,6 +483,7 @@ mod tests {
     async fn search_returns_paginated_matches() {
         let ws_id = Uuid::new_v4();
         let now = Utc::now();
+        let user_id = Uuid::new_v4();
 
         let mut mem = MemorySearchStore::default();
         let first_doc_id = Uuid::new_v4();
@@ -420,10 +510,11 @@ mod tests {
                 deleted_at: None,
             },
         );
+        grant_workspace_role(&mut mem, ws_id, user_id, WorkspaceRole::Viewer);
 
         let app = test_router(SearchStore::Memory(Arc::new(RwLock::new(mem))));
         let jwt = test_jwt_service();
-        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+        let token = auth_token(&jwt, user_id, ws_id);
 
         let first_page = app
             .clone()
@@ -452,11 +543,13 @@ mod tests {
 
     #[tokio::test]
     async fn search_rejects_empty_query() {
-        let app =
-            test_router(SearchStore::Memory(Arc::new(RwLock::new(MemorySearchStore::default()))));
-        let jwt = test_jwt_service();
         let ws_id = Uuid::new_v4();
-        let token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+        let user_id = Uuid::new_v4();
+        let mut mem = MemorySearchStore::default();
+        grant_workspace_role(&mut mem, ws_id, user_id, WorkspaceRole::Viewer);
+        let app = test_router(SearchStore::Memory(Arc::new(RwLock::new(mem))));
+        let jwt = test_jwt_service();
+        let token = auth_token(&jwt, user_id, ws_id);
 
         let response = app
             .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/search?q=%20%20%20"), &token))
@@ -464,6 +557,42 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn search_forbids_cross_workspace_token() {
+        let ws_id = Uuid::new_v4();
+        let other_ws_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let mut mem = MemorySearchStore::default();
+        grant_workspace_role(&mut mem, ws_id, user_id, WorkspaceRole::Viewer);
+        let app = test_router(SearchStore::Memory(Arc::new(RwLock::new(mem))));
+        let jwt = test_jwt_service();
+        let token = auth_token(&jwt, user_id, other_ws_id);
+
+        let response = app
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/search?q=auth"), &token))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn search_forbids_non_members() {
+        let ws_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let app =
+            test_router(SearchStore::Memory(Arc::new(RwLock::new(MemorySearchStore::default()))));
+        let jwt = test_jwt_service();
+        let token = auth_token(&jwt, user_id, ws_id);
+
+        let response = app
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/search?q=auth"), &token))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
