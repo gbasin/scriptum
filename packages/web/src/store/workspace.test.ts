@@ -115,4 +115,52 @@ describe("workspace store", () => {
     expect(restored.getState().activeWorkspaceId).toBe(WORKSPACE_BETA.id);
     expect(restored.getState().activeWorkspace?.id).toBe(WORKSPACE_BETA.id);
   });
+
+  it("updates existing workspaces via upsert without changing active workspace", () => {
+    const store = createWorkspaceStore({
+      workspaces: [WORKSPACE_ALPHA, WORKSPACE_BETA],
+      activeWorkspaceId: WORKSPACE_ALPHA.id,
+    });
+
+    store.getState().upsertWorkspace({
+      ...WORKSPACE_BETA,
+      etag: "workspace-beta-v2",
+      name: "Beta Renamed",
+    });
+
+    expect(
+      store
+        .getState()
+        .workspaces.find((workspace) => workspace.id === WORKSPACE_BETA.id),
+    ).toEqual({
+      ...WORKSPACE_BETA,
+      etag: "workspace-beta-v2",
+      name: "Beta Renamed",
+    });
+    expect(store.getState().activeWorkspaceId).toBe(WORKSPACE_ALPHA.id);
+    expect(store.getState().activeWorkspace?.id).toBe(WORKSPACE_ALPHA.id);
+  });
+
+  it("falls back to the first workspace when active workspace id becomes invalid", () => {
+    const store = createWorkspaceStore({
+      workspaces: [WORKSPACE_ALPHA, WORKSPACE_BETA],
+      activeWorkspaceId: WORKSPACE_BETA.id,
+    });
+
+    store.getState().setActiveWorkspaceId("missing-workspace");
+    expect(store.getState().activeWorkspaceId).toBe(WORKSPACE_ALPHA.id);
+    expect(store.getState().activeWorkspace?.id).toBe(WORKSPACE_ALPHA.id);
+  });
+
+  it("clears active workspace when the last workspace is removed", () => {
+    const store = createWorkspaceStore({
+      workspaces: [WORKSPACE_ALPHA],
+      activeWorkspaceId: WORKSPACE_ALPHA.id,
+    });
+
+    store.getState().removeWorkspace(WORKSPACE_ALPHA.id);
+    expect(store.getState().workspaces).toEqual([]);
+    expect(store.getState().activeWorkspaceId).toBeNull();
+    expect(store.getState().activeWorkspace).toBeNull();
+  });
 });
