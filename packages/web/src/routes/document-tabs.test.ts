@@ -1,6 +1,11 @@
 import type { Document } from "@scriptum/shared";
 import { describe, expect, it } from "vitest";
-import { buildOpenDocumentTabs, nextDocumentIdAfterClose } from "./document";
+import {
+  buildOpenDocumentTabs,
+  buildUntitledPath,
+  nextDocumentIdAfterClose,
+  titleFromPath,
+} from "./document";
 
 function makeDocument(
   overrides: Partial<Document> & {
@@ -68,7 +73,7 @@ describe("document tab helpers", () => {
       {
         id: "doc-active",
         path: "docs/new-note.md",
-        title: "new-note.md",
+        title: "new-note",
       },
     ]);
   });
@@ -92,5 +97,20 @@ describe("document tab helpers", () => {
       "doc-1",
     );
     expect(next).toBeNull();
+  });
+
+  it("builds untitled paths by incrementing numeric suffixes", () => {
+    const nextPath = buildUntitledPath(
+      new Set(["untitled-1.md", "untitled-2.md", "notes/untitled-1.md"]),
+    );
+    expect(nextPath).toBe("untitled-3.md");
+  });
+
+  it("derives display titles from markdown file paths", () => {
+    expect(titleFromPath("docs/intro/getting-started.md")).toBe(
+      "getting-started",
+    );
+    expect(titleFromPath("README.MD")).toBe("README");
+    expect(titleFromPath("plain-name")).toBe("plain-name");
   });
 });

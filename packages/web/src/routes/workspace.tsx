@@ -2,6 +2,7 @@ import type { Document } from "@scriptum/shared";
 import { useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { cn } from "../lib/cn";
+import { buildUntitledPath, titleFromPath } from "../lib/document-utils";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
 import styles from "./workspace.module.css";
@@ -11,25 +12,6 @@ const MAX_RECENT_FILES = 5;
 function parseTimestamp(iso: string): number {
   const timestamp = Date.parse(iso);
   return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function titleFromPath(path: string): string {
-  const segments = path.split("/");
-  const lastSegment = segments[segments.length - 1] ?? "";
-  const nameWithoutExtension = lastSegment.replace(/\.md$/i, "");
-  return nameWithoutExtension.length > 0 ? nameWithoutExtension : path;
-}
-
-function buildUntitledPath(existingPaths: Set<string>): string {
-  let suffix = 1;
-  let candidatePath = "untitled-1.md";
-
-  while (existingPaths.has(candidatePath)) {
-    suffix += 1;
-    candidatePath = `untitled-${suffix}.md`;
-  }
-
-  return candidatePath;
 }
 
 export function WorkspaceRoute() {

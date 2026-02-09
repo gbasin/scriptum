@@ -1,12 +1,26 @@
 import type { Document as ScriptumDocument } from "@scriptum/shared";
 import type { OpenDocumentTab } from "../components/editor/TabBar";
 
-function documentTitleFromPath(path: string): string {
+export function titleFromPath(path: string): string {
   const segments = path
     .split("/")
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
-  return segments[segments.length - 1] ?? path;
+  const fileName = segments[segments.length - 1] ?? path;
+  const fileNameWithoutExtension = fileName.replace(/\.md$/i, "");
+  return fileNameWithoutExtension.length > 0 ? fileNameWithoutExtension : fileName;
+}
+
+export function buildUntitledPath(existingPaths: ReadonlySet<string>): string {
+  let suffix = 1;
+  let candidatePath = `untitled-${suffix}.md`;
+
+  while (existingPaths.has(candidatePath)) {
+    suffix += 1;
+    candidatePath = `untitled-${suffix}.md`;
+  }
+
+  return candidatePath;
 }
 
 export function buildOpenDocumentTabs(
@@ -28,7 +42,7 @@ export function buildOpenDocumentTabs(
     tabs.unshift({
       id: activeDocumentId,
       path: activeDocumentPath,
-      title: documentTitleFromPath(activeDocumentPath),
+      title: titleFromPath(activeDocumentPath),
     });
   }
 

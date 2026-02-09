@@ -1,6 +1,7 @@
 import type { Document } from "@scriptum/shared";
 import type { NavigateFunction } from "react-router-dom";
 import type { ContextMenuAction } from "../components/sidebar/DocumentTree";
+import { buildUntitledPath, titleFromPath } from "../lib/document-utils";
 import { rewriteWikiReferencesForRename } from "../lib/wiki-links";
 
 interface ToastApi {
@@ -26,7 +27,6 @@ export interface UseDocumentCrudOptions {
   ) => void;
   setPendingDeleteDocument: (document: Document | null) => void;
   setPendingRenameDocumentId: (documentId: string | null) => void;
-  titleFromPath: (path: string) => string;
   toast: ToastApi;
   upsertDocument: (document: Document) => void;
   workspaceDocuments: readonly Document[];
@@ -62,7 +62,6 @@ export function useDocumentCrud(
     setActiveDocumentForWorkspace,
     setPendingDeleteDocument,
     setPendingRenameDocumentId,
-    titleFromPath,
     toast,
     upsertDocument,
     workspaceDocuments,
@@ -113,15 +112,9 @@ export function useDocumentCrud(
     const existingPaths = new Set(
       workspaceDocuments.map((document) => document.path),
     );
-    let suffix = 1;
-    let candidatePath = "untitled-1.md";
-
-    while (existingPaths.has(candidatePath)) {
-      suffix += 1;
-      candidatePath = `untitled-${suffix}.md`;
-    }
-
-    createDocumentInActiveWorkspace(candidatePath, { inlineRename: true });
+    createDocumentInActiveWorkspace(buildUntitledPath(existingPaths), {
+      inlineRename: true,
+    });
   };
 
   const handleRenameDocument = (documentId: string, nextPath: string) => {

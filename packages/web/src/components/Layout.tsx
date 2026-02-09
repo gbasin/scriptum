@@ -39,11 +39,6 @@ export function isNewDocumentShortcut(event: KeyboardEvent): boolean {
   );
 }
 
-function titleFromPath(path: string): string {
-  const segments = path.split("/").filter(Boolean);
-  return segments[segments.length - 1] ?? path;
-}
-
 export function formatRenameBacklinkToast(
   updatedLinks: number,
   updatedDocuments: number,
@@ -165,7 +160,6 @@ export function Layout() {
     setActiveDocumentForWorkspace,
     setPendingDeleteDocument,
     setPendingRenameDocumentId,
-    titleFromPath,
     toast,
     upsertDocument,
     workspaceDocuments,

@@ -1,6 +1,8 @@
 export {
+  buildUntitledPath,
   buildOpenDocumentTabs,
   nextDocumentIdAfterClose,
+  titleFromPath,
 } from "../lib/document-utils";
 export {
   appendReplyToThread,
