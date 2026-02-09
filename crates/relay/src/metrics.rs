@@ -409,6 +409,11 @@ mod tests {
 
     use super::RelayMetrics;
 
+    const RELAY_ALERT_RULES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../ops/alerting/relay-alerts.yml"
+    ));
+
     #[test]
     fn render_prometheus_includes_red_and_custom_metrics() {
         let metrics = RelayMetrics::default();
@@ -451,5 +456,51 @@ mod tests {
         assert!(rendered.contains("git_sync_jobs_total{state=\"unknown\"} 1"));
         assert!(rendered.contains("sequence_gap_count 2"));
         assert!(rendered.contains("endpoint=\"/v1/workspaces/{number}\""));
+    }
+
+    #[test]
+    fn alert_rules_reference_metrics_exported_by_instrumentation() {
+        let alert_metrics = [
+            "relay_request_errors_total",
+            "relay_ws_errors_total",
+            "relay_request_rate_total",
+            "relay_ws_rate_total",
+            "sync_ack_latency_ms",
+            "outbox_depth",
+        ];
+
+        for metric in alert_metrics {
+            assert!(
+                RELAY_ALERT_RULES.contains(metric),
+                "relay alert rules should reference `{metric}`"
+            );
+        }
+
+        let metrics = RelayMetrics::default();
+        metrics.record_http_request("GET", "/v1/workspaces/123", 200, 20);
+        metrics.record_http_request("GET", "/v1/workspaces/123", 500, 40);
+        metrics.record_ws_request("yjs_update", false, 15);
+        metrics.record_ws_request("yjs_update", true, 25);
+        metrics.observe_sync_ack_latency_ms(250);
+        metrics.set_outbox_depth_for_workspace(
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("uuid should parse"),
+            8,
+        );
+
+        let rendered = metrics.render_prometheus();
+        for metric in alert_metrics {
+            assert!(
+                rendered.contains(metric),
+                "rendered metrics should export `{metric}`"
+            );
+        }
+        assert!(
+            rendered.contains("relay_ws_rate_total{endpoint=\"yjs_update\"}"),
+            "yjs_update endpoint label should be exported for ws rate metrics"
+        );
+        assert!(
+            rendered.contains("relay_ws_errors_total{endpoint=\"yjs_update\"}"),
+            "yjs_update endpoint label should be exported for ws error metrics"
+        );
     }
 }

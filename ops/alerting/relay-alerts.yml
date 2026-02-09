@@ -58,6 +58,8 @@ groups:
           runbook: ops/runbooks/outbox-growth.md
 
       - alert: ScriptumRelayLatencyBreach
+        # sync_ack_latency_ms is currently exported as a gauge (last observed value),
+        # so this alert evaluates sustained p95 via quantile_over_time.
         expr: |
           quantile_over_time(0.95, sync_ack_latency_ms[3h]) > 500
         labels:
