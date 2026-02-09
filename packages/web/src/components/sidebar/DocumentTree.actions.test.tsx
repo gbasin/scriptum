@@ -271,6 +271,42 @@ describe("DocumentTree workspace actions", () => {
     });
   });
 
+  it("reports folder selection in destination picker mode", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const onFolderSelect = vi.fn<(folderPath: string) => void>();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <DocumentTree
+          activeDocumentId={null}
+          documents={[
+            makeDocument({ id: "doc-1", path: "docs/readme.md" }),
+            makeDocument({ id: "doc-2", path: "docs/api.md" }),
+          ]}
+          onFolderSelect={onFolderSelect}
+        />,
+      );
+    });
+
+    const folderButton = container.querySelector(
+      '[data-testid="tree-node-docs"] button',
+    ) as HTMLButtonElement | null;
+    expect(folderButton).not.toBeNull();
+
+    act(() => {
+      folderButton?.click();
+    });
+
+    expect(onFolderSelect).toHaveBeenCalledWith("docs");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("supports keyboard arrow navigation with roving tabindex", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const onDocumentSelect = vi.fn();

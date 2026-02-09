@@ -44,6 +44,10 @@
   background: color-mix(in oklab, var(--color-accent-hex) 34%, transparent);
 }
 
+.treeNodeButtonSelected {
+  background: color-mix(in oklab, var(--color-accent-hex) 16%, transparent);
+}
+
 .treeNodeButtonArchived {
   color: var(--color-text-muted);
 }

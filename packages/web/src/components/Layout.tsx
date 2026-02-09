@@ -14,6 +14,7 @@ import { CommandPalette } from "./CommandPalette";
 import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
 import { ErrorBoundary } from "./ErrorBoundary";
 import styles from "./Layout.module.css";
+import { MoveDocumentDialog } from "./MoveDocumentDialog";
 import { Backlinks } from "./right-panel/Backlinks";
 import { Outline } from "./right-panel/Outline";
 import { AgentsSection } from "./sidebar/AgentsSection";
@@ -50,6 +51,19 @@ export function formatRenameBacklinkToast(
 
 function normalizeTag(tag: string): string {
   return tag.trim().replace(/^#+/, "");
+}
+
+function parentFolderPath(path: string): string {
+  const lastSlashIndex = path.lastIndexOf("/");
+  if (lastSlashIndex < 0) {
+    return "";
+  }
+  return path.slice(0, lastSlashIndex);
+}
+
+function baseName(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
 }
 
 const COMPACT_LAYOUT_BREAKPOINT_PX = 1024;
@@ -99,6 +113,11 @@ export function Layout() {
   >(null);
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
+  const [pendingMoveDocument, setPendingMoveDocument] =
+    useState<Document | null>(null);
+  const [pendingMoveDestination, setPendingMoveDestination] = useState<
+    string | null
+  >(null);
   const [pendingTagDocument, setPendingTagDocument] = useState<Document | null>(
     null,
   );
@@ -187,6 +206,10 @@ export function Layout() {
     formatRenameBacklinkToast,
     navigate,
     openDocument,
+    openMoveDialog: (document) => {
+      setPendingMoveDocument(document);
+      setPendingMoveDestination(parentFolderPath(document.path));
+    },
     openTagDialog: (document) => {
       setPendingTagDocument(document);
       setPendingTagValue("");
@@ -204,6 +227,8 @@ export function Layout() {
   useEffect(() => {
     setActiveTag(null);
     setShowArchivedDocuments(false);
+    setPendingMoveDocument(null);
+    setPendingMoveDestination(null);
     setPendingTagDocument(null);
     setPendingTagValue("");
   }, [activeWorkspaceId]);
@@ -320,6 +345,36 @@ export function Layout() {
   const handleCancelAddTag = () => {
     setPendingTagDocument(null);
     setPendingTagValue("");
+  };
+  const handleCancelMoveDocument = () => {
+    setPendingMoveDocument(null);
+    setPendingMoveDestination(null);
+  };
+  const handleConfirmMoveDocument = () => {
+    const moveDocument = pendingMoveDocument;
+    if (!moveDocument || pendingMoveDestination === null) {
+      return;
+    }
+
+    const currentDocument = documents.find(
+      (document) => document.id === moveDocument.id,
+    );
+    if (!currentDocument) {
+      handleCancelMoveDocument();
+      return;
+    }
+
+    const fileName = baseName(currentDocument.path);
+    const nextPath =
+      pendingMoveDestination.length > 0
+        ? `${pendingMoveDestination}/${fileName}`
+        : fileName;
+
+    if (nextPath !== currentDocument.path) {
+      handleRenameDocument(currentDocument.id, nextPath);
+    }
+
+    handleCancelMoveDocument();
   };
   const handleConfirmAddTag = () => {
     const targetDocument = pendingTagDocument;
@@ -653,6 +708,15 @@ export function Layout() {
         onCancel={handleCancelDeleteDocument}
         onConfirm={handleConfirmDeleteDocument}
         open={Boolean(pendingDeleteDocument)}
+      />
+      <MoveDocumentDialog
+        destinationFolderPath={pendingMoveDestination}
+        documentPath={pendingMoveDocument?.path ?? null}
+        onCancel={handleCancelMoveDocument}
+        onConfirm={handleConfirmMoveDocument}
+        onDestinationFolderChange={setPendingMoveDestination}
+        open={Boolean(pendingMoveDocument)}
+        workspaceDocuments={workspaceDocuments}
       />
       <AddTagDialog
         documentPath={pendingTagDocument?.path ?? null}

@@ -19,6 +19,7 @@ export interface UseDocumentCrudOptions {
   ) => string;
   navigate: NavigateFunction;
   openDocument: (documentId: string) => void;
+  openMoveDialog: (document: Document) => void;
   openTagDialog: (document: Document) => void;
   pendingDeleteDocument: Document | null;
   removeDocument: (documentId: string) => void;
@@ -58,6 +59,7 @@ export function useDocumentCrud(
     formatRenameBacklinkToast,
     navigate,
     openDocument,
+    openMoveDialog,
     openTagDialog,
     pendingDeleteDocument,
     removeDocument,
@@ -217,8 +219,7 @@ export function useDocumentCrud(
     }
 
     if (action === "move") {
-      const fileName = titleFromPath(document.path);
-      handleRenameDocument(document.id, `moved/${fileName}`);
+      openMoveDialog(document);
       return;
     }
 

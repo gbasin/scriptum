@@ -227,6 +227,84 @@ describe("Layout search panel integration", () => {
     });
   });
 
+  it("opens move picker dialog and moves document to selected folder", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const documentButton = container.querySelector(
+      '[data-testid="tree-node-docs/search.md"] button',
+    ) as HTMLButtonElement | null;
+    expect(documentButton).not.toBeNull();
+
+    act(() => {
+      documentButton?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 36,
+        }),
+      );
+    });
+
+    const moveAction = document.querySelector(
+      '[data-testid="context-action-move"]',
+    ) as HTMLButtonElement | null;
+    expect(moveAction).not.toBeNull();
+
+    act(() => {
+      moveAction?.click();
+    });
+
+    expect(
+      document.querySelector('[data-testid="move-document-dialog"]'),
+    ).not.toBeNull();
+
+    const rootDestinationButton = document.querySelector(
+      '[data-testid="move-destination-root"]',
+    ) as HTMLButtonElement | null;
+    expect(rootDestinationButton).not.toBeNull();
+
+    act(() => {
+      rootDestinationButton?.click();
+    });
+
+    const moveConfirmButton = document.querySelector(
+      '[data-testid="move-document-confirm"]',
+    ) as HTMLButtonElement | null;
+    expect(moveConfirmButton).not.toBeNull();
+
+    act(() => {
+      moveConfirmButton?.click();
+    });
+
+    expect(
+      document.querySelector('[data-testid="move-document-dialog"]'),
+    ).toBeNull();
+    const movedDocument = useDocumentsStore
+      .getState()
+      .documents.find((document) => document.id === "doc-b");
+    expect(movedDocument?.path).toBe("search.md");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("toggles archived document view and supports unarchive from context menu", () => {
     useDocumentsStore
       .getState()

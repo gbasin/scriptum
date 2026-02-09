@@ -145,6 +145,19 @@ describe("DocumentTree", () => {
     expect(html).toContain("Archived");
   });
 
+  it("marks selected folders for folder picker mode", () => {
+    const html = renderToString(
+      <DocumentTree
+        activeDocumentId={null}
+        documents={DOCUMENTS}
+        onDocumentSelect={() => undefined}
+        selectedFolderPath="docs"
+      />,
+    );
+
+    expect(html).toContain('data-folder-selected="true"');
+  });
+
   it("shows empty state when no documents", () => {
     const html = renderToString(
       <DocumentTree

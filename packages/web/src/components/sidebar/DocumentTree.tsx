@@ -47,12 +47,16 @@ export interface DocumentTreeProps {
   activeDocumentId: string | null;
   /** Called when user clicks a document node. */
   onDocumentSelect?: (documentId: string) => void;
+  /** Called when a folder is selected. */
+  onFolderSelect?: (folderPath: string) => void;
   /** Called when user picks a context menu action. */
   onContextMenuAction?: (action: ContextMenuAction, document: Document) => void;
   /** Called when user commits an inline rename. */
   onRenameDocument?: (documentId: string, nextPath: string) => void;
   /** Newly-created document id that should enter inline rename mode. */
   pendingRenameDocumentId?: string | null;
+  /** Selected folder path for folder picker mode. */
+  selectedFolderPath?: string | null;
 }
 
 const DOCUMENT_TREE_LOADING_LINE_CLASSNAMES = [
@@ -271,6 +275,7 @@ function TreeNodeItem({
   onDragEnterTarget,
   onDragStartDocument,
   onDocumentSelect,
+  onFolderSelect,
   onDropOnFile,
   onDropOnFolder,
   onFocusPath,
@@ -278,6 +283,7 @@ function TreeNodeItem({
   onRenameChange,
   onRenameCommit,
   onToggle,
+  selectedFolderPath,
 }: {
   activeDocumentId: string | null;
   draggingDocumentPath: string | null;
@@ -292,6 +298,7 @@ function TreeNodeItem({
   onDragEnterTarget: (path: string) => void;
   onDragStartDocument: (node: TreeNode) => void;
   onDocumentSelect?: (documentId: string) => void;
+  onFolderSelect?: (folderPath: string) => void;
   onDropOnFile: (node: TreeNode) => void;
   onDropOnFolder: (node: TreeNode) => void;
   onFocusPath: (path: string) => void;
@@ -299,6 +306,7 @@ function TreeNodeItem({
   onRenameChange: (value: string) => void;
   onRenameCommit: (documentId: string) => void;
   onToggle: (path: string) => void;
+  selectedFolderPath: string | null;
 }) {
   const isFolder = node.children.length > 0;
   const isExpanded = expanded.has(node.fullPath);
@@ -307,10 +315,12 @@ function TreeNodeItem({
   const isDropTarget = dropTargetPath === node.fullPath;
   const isFocused = focusedPath === node.fullPath;
   const isArchived = Boolean(node.document?.archivedAt);
+  const isSelectedFolder = isFolder && selectedFolderPath === node.fullPath;
 
   const handleClick = () => {
     onFocusPath(node.fullPath);
     if (isFolder) {
+      onFolderSelect?.(node.fullPath);
       onToggle(node.fullPath);
     } else if (node.document && onDocumentSelect) {
       onDocumentSelect(node.document.id);
@@ -411,6 +421,7 @@ function TreeNodeItem({
         isActive && styles.treeNodeButtonActive,
         isDropTarget && styles.treeNodeButtonDropTarget,
         isArchived && styles.treeNodeButtonArchived,
+        isSelectedFolder && styles.treeNodeButtonSelected,
       )}
       draggable={Boolean(node.document)}
       onClick={handleClick}
@@ -443,6 +454,7 @@ function TreeNodeItem({
         data-active={isActive || undefined}
         data-archived={isArchived || undefined}
         data-drop-target={isDropTarget || undefined}
+        data-folder-selected={isSelectedFolder || undefined}
         data-testid={`tree-node-${node.fullPath}`}
         data-tree-path={node.fullPath}
         onFocus={() => onFocusPath(node.fullPath)}
@@ -501,6 +513,7 @@ function TreeNodeItem({
                 onDragEnterTarget={onDragEnterTarget}
                 onDragStartDocument={onDragStartDocument}
                 onDocumentSelect={onDocumentSelect}
+                onFolderSelect={onFolderSelect}
                 onDropOnFile={onDropOnFile}
                 onDropOnFolder={onDropOnFolder}
                 onFocusPath={onFocusPath}
@@ -508,6 +521,7 @@ function TreeNodeItem({
                 onRenameChange={onRenameChange}
                 onRenameCommit={onRenameCommit}
                 onToggle={onToggle}
+                selectedFolderPath={selectedFolderPath}
               />
             ))}
           </ul>
@@ -524,9 +538,11 @@ export function DocumentTree({
   loading = false,
   activeDocumentId,
   onDocumentSelect,
+  onFolderSelect,
   onContextMenuAction,
   onRenameDocument,
   pendingRenameDocumentId = null,
+  selectedFolderPath = null,
 }: DocumentTreeProps) {
   const tree = useMemo(() => buildTree(documents), [documents]);
   const [preferredOrderByParent, setPreferredOrderByParent] = useState<
@@ -926,6 +942,7 @@ export function DocumentTree({
               setDraggingDocumentPath(dragNode.fullPath)
             }
             onDocumentSelect={onDocumentSelect}
+            onFolderSelect={onFolderSelect}
             onDropOnFile={handleDropOnFile}
             onDropOnFolder={handleDropOnFolder}
             onFocusPath={setFocusedPath}
@@ -933,6 +950,7 @@ export function DocumentTree({
             onRenameChange={setEditingPath}
             onRenameCommit={commitRenameDocument}
             onToggle={handleToggle}
+            selectedFolderPath={selectedFolderPath}
           />
         ))}
       </ul>
