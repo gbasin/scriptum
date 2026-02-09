@@ -27,6 +27,7 @@ export type ToastStore = UseBoundStore<StoreApi<ToastStoreState>>;
 
 const DEFAULT_DURATION_MS = 3200;
 const DEFAULT_VARIANT: ToastVariant = "info";
+const MAX_VISIBLE_TOASTS = 5;
 const INITIAL_SNAPSHOT: ToastSnapshot = { toasts: [] };
 
 function createToastId(): string {
@@ -64,7 +65,9 @@ export function createToastStore(
         variant: normalizeVariant(options?.variant),
         durationMs: normalizeDurationMs(options?.durationMs),
       };
-      set((state) => ({ toasts: [...state.toasts, toast] }));
+      set((state) => ({
+        toasts: [...state.toasts, toast].slice(-MAX_VISIBLE_TOASTS),
+      }));
       return toast.id;
     },
     dismissToast: (toastId) => {
