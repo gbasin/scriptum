@@ -28,11 +28,16 @@ export function AddTagDialog({
   }
 
   return (
-    <div className={styles.deleteOverlay} data-testid="add-tag-overlay">
+    <div
+      className={styles.deleteOverlay}
+      data-motion="enter"
+      data-testid="add-tag-overlay"
+    >
       <div
         aria-label="Add tag dialog"
         aria-modal="true"
         className={styles.deleteDialog}
+        data-motion="enter"
         data-testid="add-tag-dialog"
         role="dialog"
       >

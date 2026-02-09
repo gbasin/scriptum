@@ -69,6 +69,7 @@ export function LayoutRightPanel({
     <aside
       aria-label="Document outline panel"
       className={styles.outlinePanel}
+      data-motion="enter"
       data-testid="outline-panel"
     >
       <div className={styles.panelHeader}>

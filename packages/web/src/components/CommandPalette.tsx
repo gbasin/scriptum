@@ -410,71 +410,61 @@ export function CommandPalette({
           </span>
         </Menu.Trigger>
 
-        {isOpen ? (
-          <Menu.Portal>
-            <Menu.Backdrop
-              aria-label="Command palette"
-              className={styles.overlay}
-              data-testid="command-palette"
-              onMouseDown={closePalette}
-            >
-              <Menu.Positioner>
-                <Menu.Popup
-                  className={styles.panel}
-                  onMouseDown={(event) => event.stopPropagation()}
-                >
-                  <label
-                    className={styles.panelLabel}
-                    htmlFor="command-palette-input"
-                  >
-                    Command Palette
-                  </label>
-                  <input
-                    className={styles.panelInput}
-                    data-testid="command-palette-input"
-                    id="command-palette-input"
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Type to search"
-                    type="text"
-                    value={query}
-                  />
-                  <ul
-                    className={styles.results}
-                    data-testid="command-palette-results"
-                  >
-                    {filteredItems.length === 0 ? (
-                      <li
-                        className={styles.empty}
-                        data-testid="command-palette-empty"
+        <Menu.Portal>
+          <Menu.Backdrop
+            aria-label="Command palette"
+            className={styles.overlay}
+            data-motion={isOpen ? "enter" : "exit"}
+            data-testid={isOpen ? "command-palette" : undefined}
+            onMouseDown={closePalette}
+          >
+            <Menu.Positioner>
+              <Menu.Popup
+                className={styles.panel}
+                data-motion={isOpen ? "enter" : "exit"}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <label className={styles.panelLabel} htmlFor="command-palette-input">
+                  Command Palette
+                </label>
+                <input
+                  className={styles.panelInput}
+                  data-testid="command-palette-input"
+                  id="command-palette-input"
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Type to search"
+                  type="text"
+                  value={query}
+                />
+                <ul className={styles.results} data-testid="command-palette-results">
+                  {filteredItems.length === 0 ? (
+                    <li className={styles.empty} data-testid="command-palette-empty">
+                      No matches found.
+                    </li>
+                  ) : null}
+                  {filteredItems.map((item, index) => (
+                    <li key={item.id}>
+                      <Menu.Item
+                        aria-selected={index === highlightedIndex}
+                        className={clsx(
+                          styles.itemButton,
+                          index === highlightedIndex && styles.itemButtonActive,
+                        )}
+                        data-testid={`command-palette-item-${item.id}`}
+                        onClick={() => runItem(item)}
                       >
-                        No matches found.
-                      </li>
-                    ) : null}
-                    {filteredItems.map((item, index) => (
-                      <li key={item.id}>
-                        <Menu.Item
-                          aria-selected={index === highlightedIndex}
-                          className={clsx(
-                            styles.itemButton,
-                            index === highlightedIndex &&
-                              styles.itemButtonActive,
-                          )}
-                          data-testid={`command-palette-item-${item.id}`}
-                          onClick={() => runItem(item)}
-                        >
-                          <div className={styles.itemTitle}>{item.title}</div>
-                          <div className={styles.itemSubtitle}>
-                            {kindLabel(item.kind)} | {item.subtitle}
-                          </div>
-                        </Menu.Item>
-                      </li>
-                    ))}
-                  </ul>
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Backdrop>
-          </Menu.Portal>
-        ) : null}
+                        <div className={styles.itemTitle}>{item.title}</div>
+                        <div className={styles.itemSubtitle}>
+                          {kindLabel(item.kind)} | {item.subtitle}
+                        </div>
+                      </Menu.Item>
+                    </li>
+                  ))}
+                </ul>
+              </Menu.Popup>
+            </Menu.Positioner>
+          </Menu.Backdrop>
+        </Menu.Portal>
       </Menu.Root>
     </section>
   );

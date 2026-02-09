@@ -51,6 +51,7 @@ export function ToastViewport() {
       {toasts.map((toast) => (
         <article
           className={styles.toast}
+          data-motion="enter"
           data-testid="toast-item"
           key={toast.id}
           role={toast.variant === "error" ? "alert" : "status"}

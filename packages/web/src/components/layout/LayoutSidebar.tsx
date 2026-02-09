@@ -94,7 +94,12 @@ export function LayoutSidebar({
   }
 
   return (
-    <aside aria-label="Sidebar" className={styles.sidebar} data-testid="app-sidebar">
+    <aside
+      aria-label="Sidebar"
+      className={styles.sidebar}
+      data-motion="enter"
+      data-testid="app-sidebar"
+    >
       <div className={styles.sidebarHeader}>
         <h2 className={styles.sidebarTitle}>Workspace</h2>
         <button

@@ -197,21 +197,30 @@
 
 .compactPanelBackdrop {
   appearance: none;
+  animation: layoutOverlayFadeIn var(--duration-normal) var(--ease-standard);
   background: oklch(0.05 0.01 270 / 0.5);
   border: 0;
   cursor: pointer;
   inset: 0;
+  opacity: 1;
   padding: 0;
   position: fixed;
   z-index: var(--z-overlay);
 }
 
+.compactPanelBackdrop[data-motion="exit"] {
+  animation: layoutOverlayFadeOut var(--duration-fast) var(--ease-standard)
+    forwards;
+}
+
 .deleteOverlay {
   align-items: center;
+  animation: layoutOverlayFadeIn var(--duration-normal) var(--ease-standard);
   background: oklch(0.16 0.01 270 / 0.62);
   display: flex;
   inset: 0;
   justify-content: center;
+  opacity: 1;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-3));
   padding-left: calc(env(safe-area-inset-left, 0px) + var(--space-3));
   padding-right: calc(env(safe-area-inset-right, 0px) + var(--space-3));
@@ -220,14 +229,28 @@
   z-index: var(--z-modal);
 }
 
+.deleteOverlay[data-motion="exit"],
+.deleteOverlay[data-state="closed"] {
+  animation: layoutOverlayFadeOut var(--duration-fast) var(--ease-standard)
+    forwards;
+}
+
 .deleteDialog {
+  animation: layoutDialogSlideIn var(--duration-normal) var(--ease-standard);
   background: var(--color-bg-surface-1);
   border: 1px solid var(--color-border-muted);
   border-radius: var(--radius-3);
   box-shadow: var(--shadow-3);
   max-width: 28rem;
   padding: var(--space-4);
+  transform: translateY(0);
   width: calc(100% - 2rem);
+}
+
+.deleteDialog[data-motion="exit"],
+.deleteDialog[data-state="closed"] {
+  animation: layoutDialogSlideOut var(--duration-fast) var(--ease-standard)
+    forwards;
 }
 
 .deleteDialogTitle {
@@ -313,6 +336,25 @@
     inset: 0 0 0 auto;
   }
 
+  .sidebar[data-motion="enter"] {
+    animation: layoutDrawerSlideInLeft var(--duration-normal) var(--ease-standard);
+  }
+
+  .sidebar[data-motion="exit"] {
+    animation: layoutDrawerSlideOutLeft var(--duration-fast) var(--ease-standard)
+      forwards;
+  }
+
+  .outlinePanel[data-motion="enter"] {
+    animation: layoutDrawerSlideInRight var(--duration-normal)
+      var(--ease-standard);
+  }
+
+  .outlinePanel[data-motion="exit"] {
+    animation: layoutDrawerSlideOutRight var(--duration-fast)
+      var(--ease-standard) forwards;
+  }
+
   .showSidebarButton,
   .showOutlineButton {
     margin: 0;
@@ -367,7 +409,105 @@
   .primaryButton,
   .showSidebarButton,
   .showOutlineButton,
-  .dangerButton {
+  .dangerButton,
+  .compactPanelBackdrop,
+  .deleteOverlay,
+  .deleteDialog,
+  .sidebar,
+  .outlinePanel {
+    animation: none;
     transition: none;
+  }
+}
+
+@keyframes layoutOverlayFadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes layoutOverlayFadeOut {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes layoutDialogSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes layoutDialogSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(0.35rem);
+  }
+}
+
+@keyframes layoutDrawerSlideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-1rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes layoutDrawerSlideOutLeft {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+  }
+}
+
+@keyframes layoutDrawerSlideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes layoutDrawerSlideOutRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(0.75rem);
   }
 }

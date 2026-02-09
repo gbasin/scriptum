@@ -26,11 +26,13 @@ export function DeleteDocumentDialog({
       <AlertDialog.Portal>
         <AlertDialog.Backdrop
           className={styles.deleteOverlay}
+          data-motion={open ? "enter" : "exit"}
           data-testid="delete-document-overlay"
         />
         <AlertDialog.Popup
           aria-label="Delete document confirmation"
           className={styles.deleteDialog}
+          data-motion={open ? "enter" : "exit"}
           data-testid="delete-document-dialog"
         >
           <AlertDialog.Title className={styles.deleteDialogTitle}>

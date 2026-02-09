@@ -9,6 +9,7 @@
 }
 
 .toast {
+  animation: toastEnter var(--duration-normal) var(--ease-standard);
   align-items: center;
   background: var(--color-bg-surface-1);
   border: 1px solid var(--color-border-muted);
@@ -20,6 +21,10 @@
   grid-template-columns: auto 1fr auto;
   padding: var(--space-2) var(--space-3);
   pointer-events: auto;
+}
+
+.toast[data-motion="exit"] {
+  animation: toastExit var(--duration-fast) var(--ease-standard) forwards;
 }
 
 .marker {
@@ -71,5 +76,37 @@
   .viewport {
     inset: auto var(--space-2) var(--space-2) var(--space-2);
     max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .dismissButton {
+    animation: none;
+    transition: none;
+  }
+}
+
+@keyframes toastEnter {
+  from {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toastExit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(0.35rem);
   }
 }

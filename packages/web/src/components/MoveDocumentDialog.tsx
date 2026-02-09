@@ -27,11 +27,16 @@ export function MoveDocumentDialog({
   }
 
   return (
-    <div className={styles.deleteOverlay} data-testid="move-document-overlay">
+    <div
+      className={styles.deleteOverlay}
+      data-motion="enter"
+      data-testid="move-document-overlay"
+    >
       <div
         aria-label="Move document dialog"
         aria-modal="true"
         className={styles.deleteDialog}
+        data-motion="enter"
         data-testid="move-document-dialog"
         role="dialog"
       >

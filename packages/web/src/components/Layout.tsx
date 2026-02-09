@@ -28,6 +28,7 @@ export function Layout() {
         <button
           aria-label="Close panels"
           className={styles.compactPanelBackdrop}
+          data-motion="enter"
           data-testid="compact-panel-backdrop"
           onClick={handleCompactPanelBackdropClick}
           type="button"
