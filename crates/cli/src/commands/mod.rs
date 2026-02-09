@@ -5,6 +5,7 @@ use clap::Subcommand;
 pub mod agents;
 pub mod blame;
 pub mod bundle;
+pub mod checkpoint;
 pub mod claim;
 pub mod conflicts;
 pub mod diff;
@@ -41,6 +42,8 @@ pub enum Command {
     Claim(claim::ClaimArgs),
     /// Context bundling with token budget
     Bundle(bundle::BundleArgs),
+    /// Trigger an explicit git checkpoint commit
+    Checkpoint(checkpoint::CheckpointArgs),
     /// Show agent identity and workspace state
     Whoami(whoami::WhoamiArgs),
     /// Show agent's active sections and overlaps
@@ -67,6 +70,7 @@ pub fn run(cmd: Command) -> anyhow::Result<()> {
         Command::Blame(args) => blame::run(args),
         Command::Claim(args) => claim::run(args),
         Command::Bundle(args) => bundle::run(args),
+        Command::Checkpoint(args) => checkpoint::run(args),
         Command::Whoami(args) => whoami::run(args),
         Command::Status(args) => status::run(args),
         Command::Conflicts(args) => conflicts::run(args),
