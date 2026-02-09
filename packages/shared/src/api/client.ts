@@ -430,15 +430,23 @@ export class ScriptumApiClient {
           method,
           headers,
           body:
-            options.body === undefined ? undefined : JSON.stringify(options.body),
+            options.body === undefined
+              ? undefined
+              : JSON.stringify(options.body),
         });
 
         if (response.ok) {
           return (await parseJsonMaybe(response)) as T;
         }
 
-        const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
-        const apiError = await this.parseError(response, method, url.toString());
+        const retryAfterMs = parseRetryAfterMs(
+          response.headers.get("Retry-After"),
+        );
+        const apiError = await this.parseError(
+          response,
+          method,
+          url.toString(),
+        );
         if (
           attempt < this.maxRetries &&
           apiError.retryable &&
@@ -475,7 +483,9 @@ export class ScriptumApiClient {
     );
     const jitter = Math.floor(Math.random() * (RETRY_JITTER_MS + 1));
     const computedDelay = exponentialDelay + jitter;
-    return retryAfterMs === null ? computedDelay : Math.max(computedDelay, retryAfterMs);
+    return retryAfterMs === null
+      ? computedDelay
+      : Math.max(computedDelay, retryAfterMs);
   }
 
   private async sleep(delayMs: number): Promise<void> {

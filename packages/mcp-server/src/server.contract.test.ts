@@ -275,11 +275,13 @@ describe("mcp tool contract", () => {
         arguments: { workspace_id: "ws", last_change_token: "tok-1" },
       });
 
-      const unchangedPayload = readToolResultPayload(unchanged).structuredContent as {
+      const unchangedPayload = readToolResultPayload(unchanged)
+        .structuredContent as {
         changed: boolean;
         change_token: string | null;
       };
-      const changedPayload = readToolResultPayload(changed).structuredContent as {
+      const changedPayload = readToolResultPayload(changed)
+        .structuredContent as {
         changed: boolean;
         change_token: string | null;
       };

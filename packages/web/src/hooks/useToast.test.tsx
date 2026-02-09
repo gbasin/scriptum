@@ -137,13 +137,9 @@ describe("useToast", () => {
       }
     });
 
-    expect(useToastStore.getState().toasts.map((entry) => entry.message)).toEqual([
-      "Toast 3",
-      "Toast 4",
-      "Toast 5",
-      "Toast 6",
-      "Toast 7",
-    ]);
+    expect(
+      useToastStore.getState().toasts.map((entry) => entry.message),
+    ).toEqual(["Toast 3", "Toast 4", "Toast 5", "Toast 6", "Toast 7"]);
 
     harness.unmount();
   });

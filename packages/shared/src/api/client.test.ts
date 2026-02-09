@@ -162,7 +162,9 @@ describe("ScriptumApiClient", () => {
     });
 
     const [url, init] = fetchImpl.mock.calls[0]!;
-    expect(url).toBe("https://relay.scriptum.dev/v1/workspaces/w-1/share-links");
+    expect(url).toBe(
+      "https://relay.scriptum.dev/v1/workspaces/w-1/share-links",
+    );
     expect(init?.method).toBe("POST");
     expect(readJsonBody(init)).toMatchObject({
       target_type: "workspace",
@@ -181,12 +183,20 @@ describe("ScriptumApiClient", () => {
         .fn<typeof fetch>()
         .mockResolvedValueOnce(
           jsonResponse(503, {
-            error: { code: "TEMP", message: "temporary outage", retryable: true },
+            error: {
+              code: "TEMP",
+              message: "temporary outage",
+              retryable: true,
+            },
           }),
         )
         .mockResolvedValueOnce(
           jsonResponse(502, {
-            error: { code: "TEMP", message: "temporary outage", retryable: true },
+            error: {
+              code: "TEMP",
+              message: "temporary outage",
+              retryable: true,
+            },
           }),
         )
         .mockResolvedValueOnce(
@@ -262,13 +272,11 @@ describe("ScriptumApiClient", () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
 
     try {
-      const fetchImpl = vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          jsonResponse(503, {
-            error: { code: "TEMP", message: "temporary outage", retryable: true },
-          }),
-        );
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(503, {
+          error: { code: "TEMP", message: "temporary outage", retryable: true },
+        }),
+      );
 
       const client = new ScriptumApiClient({
         baseUrl: "https://relay.scriptum.dev",

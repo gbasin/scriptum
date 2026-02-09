@@ -506,7 +506,9 @@ describe("Layout responsive panels", () => {
       showOutlineButton?.click();
     });
 
-    expect(container.querySelector('[data-testid="outline-panel"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="outline-panel"]'),
+    ).not.toBeNull();
     expect(
       container.querySelector('[data-testid="compact-panel-backdrop"]'),
     ).not.toBeNull();

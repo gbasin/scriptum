@@ -403,7 +403,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     ...(options.createIdempotencyKey
       ? { idempotencyKeyFactory: options.createIdempotencyKey }
       : {}),
-    ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+    ...(options.maxRetries !== undefined
+      ? { maxRetries: options.maxRetries }
+      : {}),
   });
 
   return {

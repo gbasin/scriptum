@@ -871,9 +871,10 @@ impl RpcServerState {
                 .ensure_schema()
                 .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
 
-            let incoming = backlink_store
-                .incoming_for_target(&doc_id.to_string())
-                .map_err(|error| format!("failed to query incoming backlinks for doc {doc_id}: {error}"))?;
+            let incoming =
+                backlink_store.incoming_for_target(&doc_id.to_string()).map_err(|error| {
+                    format!("failed to query incoming backlinks for doc {doc_id}: {error}")
+                })?;
 
             let mut backlinks = incoming
                 .into_iter()
@@ -3329,7 +3330,8 @@ mod tests {
         .await;
         assert!(edit_response.error.is_none(), "doc.edit should succeed: {edit_response:?}");
 
-        let wal_path = crdt_store_dir.join("wal").join(workspace_id.to_string()).join(format!("{doc_id}.wal"));
+        let wal_path =
+            crdt_store_dir.join("wal").join(workspace_id.to_string()).join(format!("{doc_id}.wal"));
         assert!(wal_path.exists(), "doc.edit should create a WAL file");
 
         // Simulate daemon crash/restart by creating a fresh state and recovering from the same store.
@@ -3513,9 +3515,7 @@ mod tests {
         let target_doc_id = Uuid::new_v4();
         let source_doc_id = Uuid::new_v4();
         let markdown = "# Root\nroot body\n\n## Child\nchild body\n\n### Grandchild\ndeep body\n";
-        state
-            .seed_doc(workspace_id, target_doc_id, "docs/readme.md", "Readme", markdown)
-            .await;
+        state.seed_doc(workspace_id, target_doc_id, "docs/readme.md", "Readme", markdown).await;
         state
             .seed_doc(
                 workspace_id,
