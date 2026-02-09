@@ -43,10 +43,12 @@ describe("api-client", () => {
       fetch: fetchMock,
       getAccessToken: async () => "token-abc",
     });
+    const controller = new AbortController();
 
     const response = await client.listWorkspaces({
       limit: 10,
       cursor: "cur-1",
+      signal: controller.signal,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -56,6 +58,7 @@ describe("api-client", () => {
       "https://relay.scriptum.dev/v1/workspaces?limit=10&cursor=cur-1",
     );
     expect(init?.method).toBe("GET");
+    expect(init?.signal).toBe(controller.signal);
     expect(headerValue(init, "Authorization")).toBe("Bearer token-abc");
     expect(response).toEqual({
       items: [
@@ -115,11 +118,15 @@ describe("api-client", () => {
       },
       message: "Looks good",
     };
+    const controller = new AbortController();
 
-    const response = await client.createComment("workspace-1", "doc-1", input);
+    const response = await client.createComment("workspace-1", "doc-1", input, {
+      signal: controller.signal,
+    });
 
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init?.method).toBe("POST");
+    expect(init?.signal).toBe(controller.signal);
     expect(headerValue(init, "Authorization")).toBe("Bearer token-xyz");
     expect(headerValue(init, "Idempotency-Key")).toBe("idem-123");
     expect(headerValue(init, "Content-Type")).toBe("application/json");

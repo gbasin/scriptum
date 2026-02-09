@@ -46,6 +46,27 @@ describe("ScriptumApiClient", () => {
     expect(readHeader(init, "Authorization")).toBe("Bearer token-123");
   });
 
+  it("forwards AbortSignal to fetch when provided", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        items: [],
+        next_cursor: null,
+      }),
+    );
+
+    const client = new ScriptumApiClient({
+      baseUrl: "https://relay.scriptum.dev",
+      fetchImpl,
+      tokenProvider: () => "token-123",
+    });
+    const controller = new AbortController();
+
+    await client.listWorkspaces({ limit: 5 }, { signal: controller.signal });
+
+    const [, init] = fetchImpl.mock.calls[0]!;
+    expect(init?.signal).toBe(controller.signal);
+  });
+
   it("adds idempotency key for non-auth POST and supports If-Match for PATCH", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

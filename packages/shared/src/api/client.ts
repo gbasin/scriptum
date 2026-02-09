@@ -234,7 +234,11 @@ export interface CreateAclOverrideRequest {
   expires_at?: string | null;
 }
 
-interface RequestOptions {
+export interface ApiRequestOptions {
+  signal?: AbortSignal;
+}
+
+interface RequestOptions extends ApiRequestOptions {
   method?: HttpMethod;
   query?: QueryParams;
   body?: unknown;
@@ -327,6 +331,10 @@ function parseRetryAfterMs(retryAfter: string | null): number | null {
   }
 
   return Math.max(0, asDate - Date.now());
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 export class ScriptumApiClient {
@@ -433,6 +441,7 @@ export class ScriptumApiClient {
             options.body === undefined
               ? undefined
               : JSON.stringify(options.body),
+          signal: options.signal,
         });
 
         if (response.ok) {
@@ -452,7 +461,10 @@ export class ScriptumApiClient {
           apiError.retryable &&
           (response.status === 429 || response.status >= 500)
         ) {
-          await this.sleep(this.computeRetryDelayMs(attempt, retryAfterMs));
+          await this.sleep(
+            this.computeRetryDelayMs(attempt, retryAfterMs),
+            options.signal,
+          );
           continue;
         }
         throw apiError;
@@ -463,9 +475,9 @@ export class ScriptumApiClient {
         if (
           attempt < this.maxRetries &&
           error instanceof TypeError &&
-          !(error instanceof DOMException && error.name === "AbortError")
+          !isAbortError(error)
         ) {
-          await this.sleep(this.computeRetryDelayMs(attempt));
+          await this.sleep(this.computeRetryDelayMs(attempt), options.signal);
           continue;
         }
         throw error;
@@ -488,86 +500,133 @@ export class ScriptumApiClient {
       : Math.max(computedDelay, retryAfterMs);
   }
 
-  private async sleep(delayMs: number): Promise<void> {
+  private createAbortError(): Error {
+    if (typeof DOMException !== "undefined") {
+      return new DOMException("The operation was aborted", "AbortError");
+    }
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    return error;
+  }
+
+  private async sleep(delayMs: number, signal?: AbortSignal): Promise<void> {
     if (delayMs <= 0) {
       return;
     }
-    await new Promise((resolve) => {
-      setTimeout(resolve, delayMs);
+    if (signal?.aborted) {
+      throw this.createAbortError();
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, delayMs);
+
+      const onAbort = () => {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener("abort", onAbort);
+        reject(this.createAbortError());
+      };
+
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 
-  authOAuthStart(body: OAuthStartRequest): Promise<OAuthStartResponse> {
+  authOAuthStart(
+    body: OAuthStartRequest,
+    options: ApiRequestOptions = {},
+  ): Promise<OAuthStartResponse> {
     return this.request(authOAuthStartPath(), {
       method: "POST",
       body,
       includeAuth: false,
+      signal: options.signal,
     });
   }
 
   authOAuthCallback(
     body: OAuthCallbackRequest,
+    options: ApiRequestOptions = {},
   ): Promise<OAuthCallbackResponse> {
     return this.request(authOAuthCallbackPath(), {
       method: "POST",
       body,
       includeAuth: false,
+      signal: options.signal,
     });
   }
 
-  authTokenRefresh(body: AuthRefreshRequest): Promise<AuthRefreshResponse> {
+  authTokenRefresh(
+    body: AuthRefreshRequest,
+    options: ApiRequestOptions = {},
+  ): Promise<AuthRefreshResponse> {
     return this.request(authTokenRefreshPath(), {
       method: "POST",
       body,
       includeAuth: false,
+      signal: options.signal,
     });
   }
 
-  async authLogout(body: AuthLogoutRequest): Promise<void> {
+  async authLogout(
+    body: AuthLogoutRequest,
+    options: ApiRequestOptions = {},
+  ): Promise<void> {
     await this.request<void>(authLogoutPath(), {
       method: "POST",
       body,
       includeAuth: true,
+      signal: options.signal,
     });
   }
 
   listWorkspaces(params?: {
     limit?: number;
     cursor?: string;
-  }): Promise<PagedResponse<Workspace>> {
+  }, options: ApiRequestOptions = {}): Promise<PagedResponse<Workspace>> {
     return this.request(listWorkspacesPath(), {
       query: params,
+      signal: options.signal,
     });
   }
 
   createWorkspace(
     body: CreateWorkspaceRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ workspace: Workspace }> {
     return this.request(createWorkspacePath(), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
-  getWorkspace(workspaceId: string): Promise<{ workspace: Workspace }> {
-    return this.request(getWorkspacePath(workspaceId));
+  getWorkspace(
+    workspaceId: string,
+    options: ApiRequestOptions = {},
+  ): Promise<{ workspace: Workspace }> {
+    return this.request(getWorkspacePath(workspaceId), {
+      signal: options.signal,
+    });
   }
 
   updateWorkspace(
     workspaceId: string,
     body: UpdateWorkspaceRequest,
-    options: { ifMatch?: string } = {},
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
   ): Promise<{ workspace: Workspace }> {
     return this.request(updateWorkspacePath(workspaceId), {
       method: "PATCH",
       body,
       ifMatch: options.ifMatch,
+      signal: options.signal,
     });
   }
 
   inviteToWorkspace(
     workspaceId: string,
     body: InviteToWorkspaceRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{
     invite_id: string;
     email: string;
@@ -578,25 +637,30 @@ export class ScriptumApiClient {
     return this.request(inviteToWorkspacePath(workspaceId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
   acceptInvite(
     token: string,
     body: AcceptInviteRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ workspace: Workspace; member: WorkspaceMember }> {
     return this.request(acceptInvitePath(token), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
   listMembers(
     workspaceId: string,
     params?: { limit?: number; cursor?: string },
+    options: ApiRequestOptions = {},
   ): Promise<PagedResponse<WorkspaceMember>> {
     return this.request(listMembersPath(workspaceId), {
       query: params,
+      signal: options.signal,
     });
   }
 
@@ -604,23 +668,25 @@ export class ScriptumApiClient {
     workspaceId: string,
     userId: string,
     body: { role?: string; status?: string },
-    options: { ifMatch?: string } = {},
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
   ): Promise<WorkspaceMember> {
     return this.request(updateMemberPath(workspaceId, userId), {
       method: "PATCH",
       body,
       ifMatch: options.ifMatch,
+      signal: options.signal,
     });
   }
 
   async removeMember(
     workspaceId: string,
     userId: string,
-    options: { ifMatch?: string } = {},
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
   ): Promise<void> {
     await this.request<void>(removeMemberPath(workspaceId, userId), {
       method: "DELETE",
       ifMatch: options.ifMatch,
+      signal: options.signal,
     });
   }
 
@@ -633,19 +699,23 @@ export class ScriptumApiClient {
       tag?: string;
       include_archived?: boolean;
     },
+    options: ApiRequestOptions = {},
   ): Promise<PagedResponse<Document>> {
     return this.request(listDocumentsPath(workspaceId), {
       query: params,
+      signal: options.signal,
     });
   }
 
   createDocument(
     workspaceId: string,
     body: CreateDocumentRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ document: Document; sections: Section[]; etag: string }> {
     return this.request(createDocumentPath(workspaceId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
@@ -653,6 +723,7 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     params?: { include_content?: boolean; include_sections?: boolean },
+    options: ApiRequestOptions = {},
   ): Promise<{
     document: Document;
     content_md?: string;
@@ -660,6 +731,7 @@ export class ScriptumApiClient {
   }> {
     return this.request(getDocumentPath(workspaceId, documentId), {
       query: params,
+      signal: options.signal,
     });
   }
 
@@ -667,12 +739,13 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     body: UpdateDocumentRequest,
-    options: { ifMatch?: string } = {},
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
   ): Promise<{ document: Document }> {
     return this.request(updateDocumentPath(workspaceId, documentId), {
       method: "PATCH",
       body,
       ifMatch: options.ifMatch,
+      signal: options.signal,
     });
   }
 
@@ -680,12 +753,13 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     params?: { hard_delete?: boolean },
-    options: { ifMatch?: string } = {},
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
   ): Promise<void> {
     await this.request<void>(deleteDocumentPath(workspaceId, documentId), {
       method: "DELETE",
       query: params,
       ifMatch: options.ifMatch,
+      signal: options.signal,
     });
   }
 
@@ -693,19 +767,23 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     body: AddTagsRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ document: Document }> {
     return this.request(addTagsPath(workspaceId, documentId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
   searchDocuments(
     workspaceId: string,
     params: { q: string; limit?: number; cursor?: string },
+    options: ApiRequestOptions = {},
   ): Promise<PagedResponse<SearchDocumentResult>> {
     return this.request(searchDocumentsPath(workspaceId), {
       query: params,
+      signal: options.signal,
     });
   }
 
@@ -713,11 +791,13 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     params?: { status?: "open" | "resolved"; limit?: number; cursor?: string },
+    options: ApiRequestOptions = {},
   ): Promise<
     PagedResponse<{ thread: CommentThread; messages: CommentMessage[] }>
   > {
     return this.request(listCommentsPath(workspaceId, documentId), {
       query: params,
+      signal: options.signal,
     });
   }
 
@@ -725,10 +805,12 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     body: CreateCommentRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ thread: CommentThread; message: CommentMessage }> {
     return this.request(createCommentPath(workspaceId, documentId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
@@ -736,10 +818,12 @@ export class ScriptumApiClient {
     workspaceId: string,
     commentId: string,
     body: AddCommentMessageRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ message: CommentMessage }> {
     return this.request(addCommentMessagePath(workspaceId, commentId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
@@ -747,10 +831,12 @@ export class ScriptumApiClient {
     workspaceId: string,
     commentId: string,
     body: ResolveCommentRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ thread: CommentThread }> {
     return this.request(resolveCommentPath(workspaceId, commentId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
@@ -758,20 +844,24 @@ export class ScriptumApiClient {
     workspaceId: string,
     commentId: string,
     body: ReopenCommentRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ thread: CommentThread }> {
     return this.request(reopenCommentPath(workspaceId, commentId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
   createShareLink(
     workspaceId: string,
     body: CreateShareLinkRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ share_link: ShareLink }> {
     return this.request(createShareLinkPath(workspaceId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
@@ -779,12 +869,13 @@ export class ScriptumApiClient {
     workspaceId: string,
     shareLinkId: string,
     body: UpdateShareLinkRequest,
-    options: { ifMatch?: string } = {},
+    options: { ifMatch?: string; signal?: AbortSignal } = {},
   ): Promise<{ share_link: ShareLink }> {
     return this.request(updateShareLinkPath(workspaceId, shareLinkId), {
       method: "PATCH",
       body,
       ifMatch: options.ifMatch,
+      signal: options.signal,
     });
   }
 
@@ -792,10 +883,12 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     body: CreateAclOverrideRequest,
+    options: ApiRequestOptions = {},
   ): Promise<{ acl_override: AclOverride }> {
     return this.request(createAclOverridePath(workspaceId, documentId), {
       method: "POST",
       body,
+      signal: options.signal,
     });
   }
 
@@ -803,18 +896,24 @@ export class ScriptumApiClient {
     workspaceId: string,
     documentId: string,
     overrideId: string,
+    options: ApiRequestOptions = {},
   ): Promise<void> {
     await this.request<void>(
       deleteAclOverridePath(workspaceId, documentId, overrideId),
       {
         method: "DELETE",
+        signal: options.signal,
       },
     );
   }
 
-  createSyncSession(workspaceId: string): Promise<SyncSession> {
+  createSyncSession(
+    workspaceId: string,
+    options: ApiRequestOptions = {},
+  ): Promise<SyncSession> {
     return this.request(createSyncSessionPath(workspaceId), {
       method: "POST",
+      signal: options.signal,
     });
   }
 }

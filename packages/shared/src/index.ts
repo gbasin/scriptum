@@ -1,6 +1,7 @@
 export type {
   AcceptInviteRequest,
   AclOverride,
+  ApiRequestOptions,
   AddCommentMessageRequest,
   AddTagsRequest,
   AuthLogoutRequest,

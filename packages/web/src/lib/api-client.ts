@@ -42,6 +42,7 @@ export interface PagedResult<T> {
 export interface ListWorkspacesOptions {
   limit?: number;
   cursor?: string;
+  signal?: AbortSignal;
 }
 
 export interface ListDocumentsOptions {
@@ -50,11 +51,13 @@ export interface ListDocumentsOptions {
   pathPrefix?: string;
   tag?: string;
   includeArchived?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface GetDocumentOptions {
   includeContent?: boolean;
   includeSections?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface GetDocumentResult {
@@ -77,6 +80,14 @@ export interface UpdateDocumentInput {
   title?: string;
   path?: string;
   archived?: boolean;
+}
+
+export interface ApiRequestOptions {
+  signal?: AbortSignal;
+}
+
+export interface UpdateDocumentOptions extends ApiRequestOptions {
+  etag: string;
 }
 
 export interface ApiClientOptions {
@@ -104,27 +115,31 @@ interface ApiClient {
     workspaceId: string,
     documentId: string,
     input: UpdateDocumentInput,
-    options: { etag: string },
+    options: UpdateDocumentOptions,
   ) => Promise<Document>;
   createComment: (
     workspaceId: string,
     documentId: string,
     input: CreateCommentInput,
+    requestOptions?: ApiRequestOptions,
   ) => Promise<{ thread: CommentThread; message: CommentMessage }>;
   addCommentMessage: (
     workspaceId: string,
     threadId: string,
     bodyMd: string,
+    requestOptions?: ApiRequestOptions,
   ) => Promise<CommentMessage>;
   resolveCommentThread: (
     workspaceId: string,
     threadId: string,
     ifVersion: number,
+    requestOptions?: ApiRequestOptions,
   ) => Promise<CommentThread>;
   reopenCommentThread: (
     workspaceId: string,
     threadId: string,
     ifVersion: number,
+    requestOptions?: ApiRequestOptions,
   ) => Promise<CommentThread>;
 }
 
@@ -416,6 +431,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             ? { limit: listOptions.limit }
             : {}),
           ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
+        }, {
+          signal: listOptions.signal,
         }),
       );
       return mapPaged(payload, mapWorkspace);
@@ -435,6 +452,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           ...(listOptions.includeArchived !== undefined
             ? { include_archived: listOptions.includeArchived }
             : {}),
+        }, {
+          signal: listOptions.signal,
         }),
       );
       return mapPaged(payload, mapDocument);
@@ -449,6 +468,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           ...(getOptions.includeSections !== undefined
             ? { include_sections: getOptions.includeSections }
             : {}),
+        }, {
+          signal: getOptions.signal,
         }),
       );
 
@@ -470,13 +491,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       const payload = await runWithApiError(() =>
         sharedClient.updateDocument(workspaceId, documentId, input, {
           ifMatch: updateOptions.etag,
+          signal: updateOptions.signal,
         }),
       );
       const record = asRecord(payload);
       return mapDocument(record?.document);
     },
 
-    createComment: async (workspaceId, documentId, input) => {
+    createComment: async (workspaceId, documentId, input, requestOptions = {}) => {
       const payload = await runWithApiError(() =>
         sharedClient.createComment(workspaceId, documentId, {
           anchor: {
@@ -486,6 +508,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             head_seq: input.anchor.headSeq,
           },
           message: input.message,
+        }, {
+          signal: requestOptions.signal,
         }),
       );
 
@@ -496,10 +520,17 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       };
     },
 
-    addCommentMessage: async (workspaceId, threadId, bodyMd) => {
+    addCommentMessage: async (
+      workspaceId,
+      threadId,
+      bodyMd,
+      requestOptions = {},
+    ) => {
       const payload = await runWithApiError(() =>
         sharedClient.addCommentMessage(workspaceId, threadId, {
           body_md: bodyMd,
+        }, {
+          signal: requestOptions.signal,
         }),
       );
 
@@ -507,10 +538,17 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       return mapCommentMessage(record?.message);
     },
 
-    resolveCommentThread: async (workspaceId, threadId, ifVersion) => {
+    resolveCommentThread: async (
+      workspaceId,
+      threadId,
+      ifVersion,
+      requestOptions = {},
+    ) => {
       const payload = await runWithApiError(() =>
         sharedClient.resolveComment(workspaceId, threadId, {
           if_version: ifVersion,
+        }, {
+          signal: requestOptions.signal,
         }),
       );
 
@@ -518,10 +556,17 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       return mapCommentThread(record?.thread);
     },
 
-    reopenCommentThread: async (workspaceId, threadId, ifVersion) => {
+    reopenCommentThread: async (
+      workspaceId,
+      threadId,
+      ifVersion,
+      requestOptions = {},
+    ) => {
       const payload = await runWithApiError(() =>
         sharedClient.reopenComment(workspaceId, threadId, {
           if_version: ifVersion,
+        }, {
+          signal: requestOptions.signal,
         }),
       );
 
@@ -569,7 +614,7 @@ export async function updateDocument(
   workspaceId: string,
   documentId: string,
   input: UpdateDocumentInput,
-  options: { etag: string },
+  options: UpdateDocumentOptions,
 ): Promise<Document> {
   return getDefaultClient().updateDocument(
     workspaceId,
@@ -583,27 +628,41 @@ export async function createComment(
   workspaceId: string,
   documentId: string,
   input: CreateCommentInput,
+  requestOptions?: ApiRequestOptions,
 ): Promise<{ thread: CommentThread; message: CommentMessage }> {
-  return getDefaultClient().createComment(workspaceId, documentId, input);
+  return getDefaultClient().createComment(
+    workspaceId,
+    documentId,
+    input,
+    requestOptions,
+  );
 }
 
 export async function addCommentMessage(
   workspaceId: string,
   threadId: string,
   bodyMd: string,
+  requestOptions?: ApiRequestOptions,
 ): Promise<CommentMessage> {
-  return getDefaultClient().addCommentMessage(workspaceId, threadId, bodyMd);
+  return getDefaultClient().addCommentMessage(
+    workspaceId,
+    threadId,
+    bodyMd,
+    requestOptions,
+  );
 }
 
 export async function resolveCommentThread(
   workspaceId: string,
   threadId: string,
   ifVersion: number,
+  requestOptions?: ApiRequestOptions,
 ): Promise<CommentThread> {
   return getDefaultClient().resolveCommentThread(
     workspaceId,
     threadId,
     ifVersion,
+    requestOptions,
   );
 }
 
@@ -611,10 +670,12 @@ export async function reopenCommentThread(
   workspaceId: string,
   threadId: string,
   ifVersion: number,
+  requestOptions?: ApiRequestOptions,
 ): Promise<CommentThread> {
   return getDefaultClient().reopenCommentThread(
     workspaceId,
     threadId,
     ifVersion,
+    requestOptions,
   );
 }
