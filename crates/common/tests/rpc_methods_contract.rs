@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use scriptum_common::protocol::jsonrpc::SUPPORTED_PROTOCOL_VERSIONS;
 use scriptum_common::protocol::rpc_methods::{IMPLEMENTED_METHODS, PLANNED_METHODS};
 
 fn load_contract() -> serde_json::Value {
@@ -34,6 +35,22 @@ fn planned_methods_match_contract() {
 
     let actual: BTreeSet<&str> = PLANNED_METHODS.iter().copied().collect();
     assert_eq!(actual, expected, "PLANNED_METHODS diverged from contract");
+}
+
+#[test]
+fn rpc_protocol_versions_match_contract() {
+    let contract = load_contract();
+    let expected: Vec<&str> = contract["rpc_protocol_versions"]
+        .as_array()
+        .expect("rpc_protocol_versions should be an array")
+        .iter()
+        .map(|v| v.as_str().expect("version should be a string"))
+        .collect();
+
+    assert_eq!(
+        SUPPORTED_PROTOCOL_VERSIONS, &expected[..],
+        "SUPPORTED_PROTOCOL_VERSIONS diverged from contract"
+    );
 }
 
 #[test]
