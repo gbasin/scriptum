@@ -57,21 +57,42 @@ function parseWikiLinkParts(rawInner: string): ParsedWikiLinkParts | null {
 
 function extractWikiLinks(markdown: string): ParsedWikiLink[] {
   const links: ParsedWikiLink[] = [];
-  const pattern = /\[\[([^[\]]+)\]\]/g;
-  let match: RegExpExecArray | null = pattern.exec(markdown);
+  let cursor = 0;
 
-  while (match) {
-    const parsed = parseWikiLinkParts(match[1] ?? "");
+  while (cursor < markdown.length - 1) {
+    const start = markdown.indexOf("[[", cursor);
+    if (start === -1) {
+      break;
+    }
+
+    if (start > 0 && markdown[start - 1] === "\\") {
+      cursor = start + 2;
+      continue;
+    }
+
+    const end = markdown.indexOf("]]", start + 2);
+    if (end === -1) {
+      break;
+    }
+
+    const rawInner = markdown.slice(start + 2, end);
+    // Nested links are treated as invalid and skipped.
+    if (rawInner.includes("[[")) {
+      cursor = end + 2;
+      continue;
+    }
+
+    const parsed = parseWikiLinkParts(rawInner);
     if (parsed) {
       const normalizedTarget = normalizeBacklinkTarget(parsed.target);
       if (normalizedTarget.length > 0) {
         links.push({
-          raw: match[0],
+          raw: markdown.slice(start, end + 2),
           target: normalizedTarget,
         });
       }
     }
-    match = pattern.exec(markdown);
+    cursor = end + 2;
   }
 
   return links;
