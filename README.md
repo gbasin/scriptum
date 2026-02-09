@@ -72,7 +72,13 @@ scriptum/
 
 ## Status
 
-Active development — web editor, shared editor extensions, MCP server, and Rust crates are in progress. See [SPEC.md](SPEC.md) for the complete specification.
+Scriptum is in active implementation (not spec-only).
+
+- Core code is implemented across Rust workspace crates (`common`, `daemon`, `cli`, `relay`) and TypeScript packages (`web`, `desktop`, `editor`, `mcp-server`, `shared`).
+- CI, linting, unit tests, Playwright smoke coverage, and runbooks are part of the repository.
+- Product work is ongoing; expect active iteration across collaboration, sync, auth, and desktop reliability.
+
+See [SPEC.md](SPEC.md) for the full product and architecture reference.
 
 ## Development
 
@@ -80,9 +86,18 @@ Active development — web editor, shared editor extensions, MCP server, and Rus
 pnpm install              # Install dependencies
 pnpm build                # Build all packages (Turborepo)
 pnpm test                 # Run unit tests
+pnpm coverage:ts          # Run TypeScript coverage (Vitest)
+pnpm coverage:rust        # Run Rust coverage (cargo-llvm-cov)
+pnpm coverage             # Run TS + Rust coverage
 pnpm lint                 # Lint (Biome)
 pnpm test:ui:smoke        # Playwright smoke tests
 pnpm ci:fast              # Fast CI pipeline
+```
+
+Rust coverage requires `cargo-llvm-cov`:
+
+```bash
+cargo install cargo-llvm-cov
 ```
 
 ### Relay (Docker)
