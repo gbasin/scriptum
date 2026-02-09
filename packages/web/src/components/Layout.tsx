@@ -5,6 +5,7 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { useDocumentCrud } from "../hooks/useDocumentCrud";
 import { useLayoutState } from "../hooks/useLayoutState";
 import { useToast } from "../hooks/useToast";
+import { useCommentsStore } from "../store/comments";
 import {
   buildIncomingBacklinks,
   type IncomingBacklink,
@@ -24,6 +25,7 @@ import {
   isSearchPanelShortcut,
   SearchPanel,
 } from "./sidebar/SearchPanel";
+import { CommentsPanel } from "./right-panel/CommentsPanel";
 import {
   collectWorkspaceTags,
   filterDocumentsByTag,
@@ -106,6 +108,9 @@ export function Layout() {
     workspaces,
   } = useLayoutState();
   const toast = useToast();
+  const threadsByDocumentKey = useCommentsStore(
+    (state) => state.threadsByDocumentKey,
+  );
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [showArchivedDocuments, setShowArchivedDocuments] = useState(false);
   const [pendingRenameDocumentId, setPendingRenameDocumentId] = useState<
@@ -337,6 +342,15 @@ export function Layout() {
 
   const handleBacklinkSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
+  };
+  const handleCommentThreadSelect = (documentId: string, threadId: string) => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    setActiveDocumentForWorkspace(activeWorkspaceId, documentId);
+    navigate(
+      `/workspace/${encodeURIComponent(activeWorkspaceId)}/document/${encodeURIComponent(documentId)}#comment-thread-${encodeURIComponent(threadId)}`,
+    );
   };
   const handleCreateNewDocument = () => {
     setShowArchivedDocuments(false);
@@ -683,12 +697,13 @@ export function Layout() {
               id={RIGHT_PANEL_TAB_PANEL_IDS.comments}
               role="tabpanel"
             >
-              <p
-                className={styles.commentsPlaceholder}
-                data-testid="comments-panel-empty"
-              >
-                Comments panel is coming soon.
-              </p>
+              <CommentsPanel
+                activeDocumentId={activeDocumentId}
+                documents={workspaceDocuments}
+                onThreadSelect={handleCommentThreadSelect}
+                threadsByDocumentKey={threadsByDocumentKey}
+                workspaceId={activeWorkspaceId}
+              />
             </section>
           ) : null}
         </aside>

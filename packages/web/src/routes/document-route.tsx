@@ -12,7 +12,7 @@ import type {
 } from "@scriptum/shared";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AvatarStack } from "../components/AvatarStack";
 import {
   CommentPopover,
@@ -61,6 +61,7 @@ import {
   UNKNOWN_REMOTE_TIMELINE_AUTHOR,
 } from "../lib/timeline";
 import { useDocumentsStore } from "../store/documents";
+import { useCommentsStore } from "../store/comments";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
@@ -212,6 +213,22 @@ function badgeSuffix(name: string): string {
   return normalized || "peer";
 }
 
+function parseCommentThreadHash(hash: string): string | null {
+  const prefix = "#comment-thread-";
+  if (!hash.startsWith(prefix)) {
+    return null;
+  }
+  const encodedThreadId = hash.slice(prefix.length);
+  if (encodedThreadId.length === 0) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(encodedThreadId);
+  } catch {
+    return encodedThreadId;
+  }
+}
+
 function resolveGlobalWebRtcProviderFactory():
   | WebRtcProviderFactory
   | undefined {
@@ -289,6 +306,7 @@ function EditorRuntimeErrorThrower(props: { error: Error | null }) {
 
 export function DocumentRoute() {
   const { workspaceId, documentId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const toast = useToast();
   const closeDocument = useDocumentsStore((state) => state.closeDocument);
@@ -332,6 +350,9 @@ export function DocumentRoute() {
     null,
   );
   const setPresencePeers = usePresenceStore((state) => state.setPeers);
+  const setDocumentThreads = useCommentsStore(
+    (state) => state.setDocumentThreads,
+  );
   const pendingChanges = useSyncStore((state) => state.pendingChanges);
   const [cursor, setCursor] = useState(fixtureState.cursor);
   const [daemonWsBaseUrl] = useState(DEFAULT_DAEMON_WS_BASE_URL);
@@ -599,6 +620,60 @@ export function DocumentRoute() {
     }
     setActiveDocumentForWorkspace(workspaceId, documentId);
   }, [documentId, setActiveDocumentForWorkspace, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !documentId) {
+      return;
+    }
+    setDocumentThreads(workspaceId, documentId, inlineCommentThreads);
+  }, [
+    documentId,
+    inlineCommentThreads,
+    setDocumentThreads,
+    workspaceId,
+  ]);
+
+  useEffect(() => {
+    const highlightedThreadId = parseCommentThreadHash(location.hash);
+    if (!highlightedThreadId) {
+      return;
+    }
+
+    const highlightedThread = inlineCommentThreads.find(
+      (thread) => thread.id === highlightedThreadId,
+    );
+    if (!highlightedThread) {
+      return;
+    }
+
+    const view = editorViewRef.current;
+    const selectedText = view
+      ? view.state.sliceDoc(
+          highlightedThread.startOffsetUtf16,
+          highlightedThread.endOffsetUtf16,
+        )
+      : `Thread ${highlightedThread.id}`;
+    const line = view
+      ? view.state.doc.lineAt(highlightedThread.startOffsetUtf16).number
+      : 1;
+
+    setActiveSelection({
+      from: highlightedThread.startOffsetUtf16,
+      line,
+      selectedText,
+      to: highlightedThread.endOffsetUtf16,
+    });
+
+    if (view) {
+      view.dispatch({
+        selection: {
+          anchor: highlightedThread.startOffsetUtf16,
+          head: highlightedThread.endOffsetUtf16,
+        },
+        scrollIntoView: true,
+      });
+    }
+  }, [editorViewRef, inlineCommentThreads, location.hash]);
 
   useEffect(() => {
     if (!fixtureModeEnabled) {
