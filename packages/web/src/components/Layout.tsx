@@ -538,7 +538,7 @@ export function Layout() {
           aria-label="Show document outline panel"
           className={styles.showOutlineButton}
           data-testid="outline-panel-toggle"
-          onClick={() => setRightPanelTab("outline")}
+          onClick={toggleRightPanel}
           type="button"
         >
           Show Outline

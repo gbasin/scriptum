@@ -739,6 +739,84 @@ describe("Layout backlinks panel", () => {
     });
   });
 
+  it("preserves the selected right-panel tab when reopening the panel", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const workspace = makeWorkspace();
+    useDocumentsStore.getState().setDocuments([
+      makeDocument({
+        id: "doc-auth",
+        path: "docs/auth.md",
+        title: "Auth",
+      }),
+      makeDocument({
+        id: "doc-notes",
+        path: "notes/overview.md",
+        title: "Overview",
+        bodyMd: "Read [[Auth]] first.",
+      }),
+    ]);
+    useDocumentsStore
+      .getState()
+      .setActiveDocumentForWorkspace(workspace.id, "doc-auth");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter
+          initialEntries={["/workspace/ws-alpha/document/doc-auth"]}
+        >
+          <Routes>
+            <Route element={<Layout />}>
+              <Route
+                path="/workspace/:workspaceId/document/:docId"
+                element={<div />}
+              />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const backlinksTab = container.querySelector(
+      '[data-testid="right-panel-tab-backlinks"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      backlinksTab?.click();
+    });
+    expect(backlinksTab?.getAttribute("aria-selected")).toBe("true");
+
+    const hideButton = container.querySelector(
+      '[data-testid="outline-panel-toggle"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      hideButton?.click();
+    });
+
+    const showButton = container.querySelector(
+      '[data-testid="outline-panel-toggle"]',
+    ) as HTMLButtonElement | null;
+    expect(showButton?.textContent).toContain("Show Outline");
+
+    act(() => {
+      showButton?.click();
+    });
+
+    const reopenedBacklinksTab = container.querySelector(
+      '[data-testid="right-panel-tab-backlinks"]',
+    ) as HTMLButtonElement | null;
+    expect(reopenedBacklinksTab?.getAttribute("aria-selected")).toBe("true");
+    expect(
+      container.querySelector("#right-panel-tabpanel-backlinks"),
+    ).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("rewrites wiki references and reports rename update counts", () => {
     const renamedDocument = makeDocument({
       id: "doc-auth",
