@@ -32,7 +32,10 @@ import { StatusBar } from "../components/StatusBar";
 import { ShareDialog } from "../components/share/ShareDialog";
 import { useScriptumEditor } from "../hooks/useScriptumEditor";
 import { useToast } from "../hooks/useToast";
-import type { CreateCommentInput } from "../lib/api-client";
+import {
+  createShareLink as createShareLinkApi,
+  type CreateCommentInput,
+} from "../lib/api-client";
 import {
   buildOpenDocumentTabs,
   nextDocumentIdAfterClose,
@@ -72,6 +75,7 @@ import {
   createShareLinkRecord,
   expirationIsoFromOption,
   parseShareLinkMaxUses,
+  shareUrlFromCreateShareLinkResponse,
   type ShareLinkExpirationOption,
   type ShareLinkPermission,
   type ShareLinkTargetType,
@@ -497,8 +501,7 @@ export function DocumentRoute() {
   const reconnectProgress = fixtureModeEnabled
     ? fixtureState.reconnectProgress
     : null;
-  const shareLinksEnabled =
-    fixtureModeEnabled && fixtureState.shareLinksEnabled;
+  const shareLinksEnabled = !fixtureModeEnabled || fixtureState.shareLinksEnabled;
   const showEditorLoadingSkeleton =
     !fixtureModeEnabled && syncState === "reconnecting";
   const handleEditorDocContentChanged = (
@@ -963,6 +966,7 @@ export function DocumentRoute() {
     if (!workspaceId) {
       const message =
         "Cannot generate a share link without an active workspace.";
+      setGeneratedShareUrl("");
       setShareGenerationError(message);
       toast.error(message);
       return;
@@ -970,12 +974,26 @@ export function DocumentRoute() {
 
     if (typeof window === "undefined") {
       const message = "Cannot generate a share link outside the browser.";
+      setGeneratedShareUrl("");
       setShareGenerationError(message);
       toast.error(message);
       return;
     }
 
+    const trimmedMaxUses = shareMaxUsesInput.trim();
+    const maxUses = parseShareLinkMaxUses(shareMaxUsesInput);
+    if (trimmedMaxUses.length > 0 && maxUses === null) {
+      const message = "Max uses must be a positive whole number.";
+      setGeneratedShareUrl("");
+      setShareGenerationError(message);
+      toast.error(message);
+      return;
+    }
+
+    const expiresAt = expirationIsoFromOption(shareExpirationOption);
+
     try {
+      setGeneratedShareUrl("");
       setShareGenerationError(null);
 
       const resolvedTargetType: ShareLinkTargetType =
@@ -984,20 +1002,41 @@ export function DocumentRoute() {
         resolvedTargetType === "document"
           ? (documentId ?? workspaceId)
           : workspaceId;
-      const token = makeClientId("share");
-      const record = createShareLinkRecord({
-        token,
-        targetType: resolvedTargetType,
-        targetId: resolvedTargetId,
-        permission: sharePermission,
-        expiresAt: expirationIsoFromOption(shareExpirationOption),
-        maxUses: parseShareLinkMaxUses(shareMaxUsesInput),
-      });
+      if (fixtureModeEnabled) {
+        const token = makeClientId("share");
+        const record = createShareLinkRecord({
+          token,
+          targetType: resolvedTargetType,
+          targetId: resolvedTargetId,
+          permission: sharePermission,
+          expiresAt,
+          maxUses,
+        });
 
-      await Promise.resolve(storeShareLinkRecord(record));
-      setGeneratedShareUrl(
-        buildShareLinkUrl(record.token, window.location.origin),
-      );
+        await Promise.resolve(storeShareLinkRecord(record));
+        setGeneratedShareUrl(
+          buildShareLinkUrl(record.token, window.location.origin),
+        );
+      } else {
+        const payload = await createShareLinkApi(workspaceId, {
+          target_type: resolvedTargetType,
+          target_id: resolvedTargetId,
+          permission: sharePermission,
+          expires_at: expiresAt,
+          ...(maxUses === null ? {} : { max_uses: maxUses }),
+        });
+        const shareUrl = shareUrlFromCreateShareLinkResponse(
+          payload,
+          window.location.origin,
+        );
+        if (!shareUrl) {
+          throw new Error(
+            "Share link created but relay did not return a usable URL.",
+          );
+        }
+        setGeneratedShareUrl(shareUrl);
+      }
+
       toast.success(
         `Generated ${resolvedTargetType === "document" ? "document" : "workspace"} share link.`,
       );
@@ -1006,6 +1045,7 @@ export function DocumentRoute() {
         error instanceof Error && error.message.trim().length > 0
           ? error.message
           : "Failed to generate share link. Please try again.";
+      setGeneratedShareUrl("");
       setShareGenerationError(message);
       toast.error(message);
     }

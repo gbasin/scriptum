@@ -89,6 +89,43 @@ export function buildShareLinkUrl(token: string, origin: string): string {
   return `${normalizedOrigin}/share/${encodeURIComponent(token)}`;
 }
 
+export function shareUrlFromCreateShareLinkResponse(
+  payload: unknown,
+  origin: string,
+): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const envelope = payload as Record<string, unknown>;
+  const shareLinkRaw = envelope.share_link ?? envelope.shareLink;
+  if (
+    !shareLinkRaw ||
+    typeof shareLinkRaw !== "object" ||
+    Array.isArray(shareLinkRaw)
+  ) {
+    return null;
+  }
+
+  const shareLink = shareLinkRaw as Record<string, unknown>;
+  const urlOnce = shareLink.url_once;
+  if (typeof urlOnce === "string" && urlOnce.trim().length > 0) {
+    return urlOnce;
+  }
+
+  const camelUrlOnce = shareLink.urlOnce;
+  if (typeof camelUrlOnce === "string" && camelUrlOnce.trim().length > 0) {
+    return camelUrlOnce;
+  }
+
+  const token = shareLink.token;
+  if (typeof token !== "string" || token.trim().length === 0) {
+    return null;
+  }
+
+  return buildShareLinkUrl(token, origin);
+}
+
 export function sharePermissionLabel(permission: ShareLinkPermission): string {
   return permission === "edit" ? "editor" : "viewer";
 }
