@@ -10,6 +10,7 @@ import type {
 } from "@scriptum/shared";
 import { ScriptumApiClient, ScriptumApiError } from "@scriptum/shared";
 import { getAccessToken as getAccessTokenFromAuth } from "./auth";
+import { asRecord } from "./type-guards";
 
 const DEFAULT_RELAY_URL =
   import.meta.env.VITE_SCRIPTUM_RELAY_URL ?? "http://localhost:8080";
@@ -144,13 +145,6 @@ interface ApiClient {
 }
 
 type UnknownRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): UnknownRecord | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as UnknownRecord;
-}
 
 function readString(
   record: UnknownRecord | null,

@@ -13,6 +13,7 @@ import {
   persist,
   type StateStorage,
 } from "zustand/middleware";
+import { asBoolean, asNumber, asRecord, asString } from "../lib/type-guards";
 
 const DEFAULT_WORKSPACES_ARRAY_NAME = "workspaces";
 const DEFAULT_WORKSPACE_META_MAP_NAME = "workspaceMeta";
@@ -75,21 +76,6 @@ function resolveWorkspacePersistStorage(): StateStorage {
   }
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
 function asWorkspaceTheme(value: unknown): WorkspaceTheme | null {
   return value === "system" || value === "light" || value === "dark"
     ? value
@@ -112,10 +98,6 @@ function asWorkspaceEditorFontFamily(
 
 function asWorkspaceDefaultRole(value: unknown): WorkspaceDefaultRole | null {
   return value === "viewer" || value === "editor" ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function asIntegerInRange(

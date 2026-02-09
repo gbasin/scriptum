@@ -1,5 +1,6 @@
 import type * as Y from "yjs";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
+import { asNullableString, asNumber, asString } from "../lib/type-guards";
 
 const DEFAULT_PRESENCE_MAP_NAME = "presence";
 
@@ -54,21 +55,6 @@ export type PresenceStore = UseBoundStore<StoreApi<PresenceStoreState>>;
 export interface PresenceYjsBindingOptions {
   presenceMapName?: string;
   store?: PresenceStore;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function asNullableString(value: unknown): string | null {
-  if (value === null) {
-    return null;
-  }
-  return asString(value);
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function normalizeCursor(value: unknown): CursorPosition | null {

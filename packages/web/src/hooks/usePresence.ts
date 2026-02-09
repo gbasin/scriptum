@@ -1,5 +1,6 @@
 import { nameToColor } from "@scriptum/editor";
 import { useCallback, useEffect, useState } from "react";
+import { asNumber, asRecord } from "../lib/type-guards";
 
 export interface PresenceCursor {
   anchor: number;
@@ -44,20 +45,6 @@ export interface AwarenessLike {
   on(event: "change", listener: () => void): void;
   off(event: "change", listener: () => void): void;
   setLocalStateField(field: string, value: unknown): void;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asNumber(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  return value;
 }
 
 function normalizeCursor(value: unknown): PresenceCursor | null {
