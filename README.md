@@ -133,6 +133,9 @@ scriptum status
 ## Development
 
 ```bash
+pnpm dev                  # Start web + daemon + relay (parallel)
+pnpm dev:local            # Start web + daemon in local-only mode (no relay)
+pnpm dev:web              # Start only the web dev server
 pnpm install              # Install dependencies
 pnpm build                # Build all packages (Turborepo)
 pnpm test                 # Run unit tests
