@@ -143,4 +143,58 @@ describe("documents store", () => {
       DOC_GAMMA.id,
     );
   });
+
+  it("normalizes open document operations and ignores missing ids", () => {
+    const store = createDocumentsStore();
+    store.getState().setDocuments([DOC_ALPHA, DOC_BETA]);
+
+    store.getState().openDocument(DOC_ALPHA.id);
+    store.getState().openDocument(DOC_ALPHA.id);
+    store.getState().openDocument("missing-doc");
+    expect(store.getState().openDocumentIds).toEqual([DOC_ALPHA.id]);
+    expect(store.getState().activeDocumentIdByWorkspace["ws-alpha"]).toBe(
+      DOC_ALPHA.id,
+    );
+
+    store.getState().closeDocument(DOC_ALPHA.id);
+    expect(store.getState().openDocumentIds).toEqual([]);
+  });
+
+  it("updates existing document snapshots through upsert", () => {
+    const store = createDocumentsStore();
+    store.getState().setDocuments([DOC_ALPHA]);
+    store.getState().openDocument(DOC_ALPHA.id);
+
+    store.getState().upsertDocument({
+      ...DOC_ALPHA,
+      etag: "doc-alpha-v2",
+      title: "Alpha Updated",
+      updatedAt: "2026-01-05T00:00:00.000Z",
+    });
+
+    expect(store.getState().documents).toHaveLength(1);
+    expect(store.getState().documents[0]?.title).toBe("Alpha Updated");
+    expect(store.getState().openDocuments[0]?.title).toBe("Alpha Updated");
+    expect(store.getState().openDocumentIds).toEqual([DOC_ALPHA.id]);
+  });
+
+  it("normalizes invalid active document ids and supports reset", () => {
+    const store = createDocumentsStore();
+    store.getState().setDocuments([DOC_ALPHA, DOC_GAMMA]);
+
+    store.getState().setActiveDocumentForWorkspace("ws-alpha", "missing-doc");
+    expect(store.getState().activeDocumentIdByWorkspace["ws-alpha"]).toBeNull();
+    expect(store.getState().openDocumentIds).toEqual([]);
+
+    store.getState().setActiveDocumentForWorkspace("ws-beta", DOC_GAMMA.id);
+    expect(store.getState().activeDocumentIdByWorkspace["ws-beta"]).toBe(
+      DOC_GAMMA.id,
+    );
+    expect(store.getState().openDocumentIds).toEqual([DOC_GAMMA.id]);
+
+    store.getState().reset();
+    expect(store.getState().documents).toEqual([]);
+    expect(store.getState().openDocumentIds).toEqual([]);
+    expect(store.getState().activeDocumentIdByWorkspace).toEqual({});
+  });
 });
