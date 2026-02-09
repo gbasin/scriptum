@@ -72,19 +72,23 @@ scriptum/
 
 ## Status
 
-Spec-only phase — no code yet. See [SPEC.md](SPEC.md) for the complete specification.
+Active development — web editor, shared editor extensions, MCP server, and Rust crates are in progress. See [SPEC.md](SPEC.md) for the complete specification.
 
-## Relay Docker Dev
+## Development
 
-Start local relay + PostgreSQL:
+```bash
+pnpm install              # Install dependencies
+pnpm build                # Build all packages (Turborepo)
+pnpm test                 # Run unit tests
+pnpm lint                 # Lint (Biome)
+pnpm test:ui:smoke        # Playwright smoke tests
+pnpm ci:fast              # Fast CI pipeline
+```
+
+### Relay (Docker)
 
 ```bash
 docker compose -f docker/compose.yml up --build
-```
-
-Relay health check:
-
-```bash
 curl http://localhost:8080/healthz
 ```
 

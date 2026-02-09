@@ -424,17 +424,17 @@ When the reconciliation trigger fires (>50% section changed by 2+ editors in 30s
                             │  │  (y-webrtc)│  │
                             │  └────────────┘  │
                             │                  │
-                            │  ┌────────────┐  │
-                            │  │  Relay     │  │  ← Required (sync + persistence)
-                            │  │  Server    │  │
-                            │  └────────────┘  │
+                           │  ┌────────────┐  │
+                           │  │  Relay     │  │  ← Required for multi-user / cross-device sync
+                           │  │  Server    │  │
+                           │  └────────────┘  │
                             │                  │
                             └──────────────────┘
 ```
 
 Core architectural decisions:
 1. Canonical state is CRDT; markdown is a projection.
-2. **Yjs-in-daemon model**: The daemon owns the authoritative Y.Doc and exposes a local WebSocket server (`ws://localhost:{port}`). Desktop/web CodeMirror connects via y-websocket as a standard Yjs provider. CLI and MCP connect as peers over the same local WS. On mobile, the daemon is embedded in-process (same as Tauri desktop mode).
+2. **Yjs-in-daemon model**: The daemon owns the authoritative Y.Doc and exposes a local WebSocket server (`ws://localhost:{port}`). Desktop/web CodeMirror connects via a Scriptum provider (`scriptum-sync.v1`, y-websocket-inspired framing for Yjs sync+awareness). CLI and MCP connect as peers over the same local WS. On mobile, the daemon is embedded in-process (same as Tauri desktop mode).
 3. Relay assigns monotonic `server_seq` per `(workspace_id, doc_id)`.
 4. Local writes are acknowledged only after durable local WAL fsync.
 5. Protocol compatibility target is N and N-1 for REST, WS, JSON-RPC.
@@ -450,7 +450,7 @@ Core architectural decisions:
 | Shell | **Tauri 2.0** | ~10MB binary, Rust backend, native performance, file system access |
 | Frontend | **React 19 + TypeScript** | Ecosystem, component libraries, developer familiarity |
 | Editor | **CodeMirror 6** + custom Live Preview extension (single monolithic CM6 extension) | Y.Text native, exact formatting preservation, MIT licensed, Obsidian-style live preview |
-| Yjs Binding | **y-codemirror.next** → y-websocket → daemon local WS | Sync, remote cursors, shared undo/redo |
+| Yjs Binding | **y-codemirror.next** → Scriptum WS provider (`scriptum-sync.v1`, y-websocket-inspired) → daemon local WS | Sync, remote cursors, shared undo/redo |
 | CRDT | **Yjs** | Battle-tested, CodeMirror 6 integration, efficient binary encoding |
 | Styling | **Tailwind CSS 4** | Utility-first, consistent design, fast iteration |
 | State | **Zustand** | Lightweight, works well with Yjs reactive updates |
@@ -676,7 +676,7 @@ scriptum/
 │   │       │   ├── horizontal-rule.ts  # HR rendering
 │   │       │   └── math.ts            # KaTeX math rendering
 │   │       ├── collaboration/          # y-codemirror.next wrappers
-│   │       │   ├── provider.ts         # y-websocket provider setup
+│   │       │   ├── provider.ts         # Scriptum WS provider setup (scriptum-sync.v1)
 │   │       │   ├── cursors.ts          # Remote cursor rendering (name labels, auto-hide)
 │   │       │   ├── selections.ts       # Per-collaborator selection highlights
 │   │       │   └── awareness.ts        # Awareness state management
@@ -907,7 +907,7 @@ const awareness = new awarenessProtocol.Awareness(ydoc)
 
 **Why Yjs over Automerge?**
 - CodeMirror 6 has mature Yjs integration (y-codemirror.next)
-- y-webrtc and y-websocket are mature
+- y-webrtc is mature; `scriptum-sync.v1` reuses y-websocket sync/awareness framing patterns
 - Smaller wire format (important for real-time)
 - Larger ecosystem of providers and bindings
 - y-crdt (Rust) bindings for the CLI/backend
@@ -1070,9 +1070,10 @@ The Scriptum daemon (`scriptumd`) is a Rust process that owns all local collabor
 │  - Named pipe (Windows): \\.\pipe\scriptum-daemon                 │
 │  - Protocol: JSON-RPC over the socket (CLI, MCP)                  │
 │  - Local WebSocket server (dual endpoints):                       │
-│    - ws://localhost:{port}/yjs — Yjs binary sync protocol         │
-│      (sync step 1/2 + awareness). y-websocket clients connect     │
-│      out of the box. Used by CodeMirror/y-codemirror.next.        │
+│    - ws://localhost:{port}/yjs — Scriptum sync protocol           │
+│      (`scriptum-sync.v1`) carrying Yjs sync step 1/2 + awareness  │
+│      frames (y-websocket-inspired). Used by CodeMirror via a      │
+│      Scriptum provider adapter built on y-codemirror.next.        │
 │    - ws://localhost:{port}/rpc — JSON-RPC over WebSocket.         │
 │      Same methods as Unix socket, different transport.             │
 │    - Port auto-assigned, written to ~/.scriptum/ws.port           │
@@ -1479,9 +1480,10 @@ Key Niwa insight: agents lose context (sub-agent spawns, context compaction, cra
 │  On document open:                                                │
 │       │                                                           │
 │       ▼                                                           │
-│  1. Connect to relay server (y-websocket) — ALWAYS                │
-│     - Relay is the persistent CRDT store, auth gateway,           │
-│       and awareness aggregator. It is NOT optional.               │
+│  1. Determine session mode                                         │
+│     - Local-only mode: use local daemon replica only (no relay)   │
+│     - Multi-user / cross-device mode: connect relay               │
+│       (`scriptum-sync.v1`)                                        │
 │       │                                                           │
 │       ▼                                                           │
 │  2. Also try WebRTC (y-webrtc) for direct peer connections        │
@@ -1501,7 +1503,8 @@ Key Niwa insight: agents lose context (sub-agent spawns, context compaction, cra
 │  - LAN peers discovered via mDNS → direct TCP, lowest            │
 │    latency                                                        │
 │  - Internet peers → WebRTC when possible for lower latency        │
-│  - Relay ALWAYS receives updates (required for persistence)       │
+│  - Relay receives updates for collaborative/cross-device sessions │
+│    (required for shared persistence and offline catch-up)         │
 │                                                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -2739,7 +2742,7 @@ Playwright configured to retain on failure: trace, screenshot diffs, video (opti
 
 Must complete before any parallel work begins. Validates the core architecture.
 
-- [ ] **Critical path validation**: CodeMirror (JS) edits a doc via y-websocket connecting to daemon's local WS server. CLI (Rust) edits the same doc via y-crdt. Both converge. Persistence works across daemon restarts. This spike de-risks the Yjs-in-daemon architecture before building anything else.
+- [ ] **Critical path validation**: CodeMirror (JS) edits a doc via the Scriptum WS provider (`scriptum-sync.v1`, y-websocket-inspired) connecting to daemon's local WS server. CLI (Rust) edits the same doc via y-crdt. Both converge. Persistence works across daemon restarts. This spike de-risks the Yjs-in-daemon architecture before building anything else.
 
 ---
 
