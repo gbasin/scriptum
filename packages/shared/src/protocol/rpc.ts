@@ -233,12 +233,58 @@ export interface DocSearchResult {
 export interface DocDiffParams {
   workspace_id: string;
   doc_id: string;
-  from_seq: number;
-  to_seq: number;
+  from_seq?: number;
+  to_seq?: number;
+  granularity?: "snapshot" | "coarse" | "fine";
+}
+
+export interface DocDiffSnapshotAttribution {
+  author_id: string;
+  author_type: RpcAuthorType;
+  timestamp: string;
+}
+
+export interface DocDiffAuthorshipSegment {
+  author_id: string;
+  author_type: RpcAuthorType;
+  start_offset: number;
+  end_offset: number;
+  timestamp: string;
+}
+
+export interface DocDiffSnapshot {
+  seq: number;
+  timestamp: string;
+  content_md: string;
+  author_attributions: DocDiffSnapshotAttribution[];
+  authorship_segments: DocDiffAuthorshipSegment[];
 }
 
 export interface DocDiffResult {
   patch_md: string;
+  from_seq: number;
+  to_seq: number;
+  granularity: "snapshot" | "coarse" | "fine";
+  snapshots: DocDiffSnapshot[];
+}
+
+export interface DocHistoryParams {
+  workspace_id: string;
+  doc_id: string;
+  from_seq?: number;
+  to_seq?: number;
+}
+
+export interface DocHistoryEvent {
+  seq: number;
+  author_id: string;
+  author_type: RpcAuthorType;
+  timestamp: string;
+  summary?: string;
+}
+
+export interface DocHistoryResult {
+  events: DocHistoryEvent[];
 }
 
 export type AgentWhoamiParams = Record<string, never>;
@@ -370,6 +416,7 @@ export interface RpcParamsMap {
   "doc.tree": DocTreeParams;
   "doc.search": DocSearchParams;
   "doc.diff": DocDiffParams;
+  "doc.history": DocHistoryParams;
   "agent.whoami": AgentWhoamiParams;
   "agent.status": AgentStatusParams;
   "agent.conflicts": AgentConflictsParams;
@@ -392,6 +439,7 @@ export interface RpcResultMap {
   "doc.tree": DocTreeResult;
   "doc.search": DocSearchResult;
   "doc.diff": DocDiffResult;
+  "doc.history": DocHistoryResult;
   "agent.whoami": AgentWhoamiResult;
   "agent.status": AgentStatusResult;
   "agent.conflicts": AgentConflictsResult;

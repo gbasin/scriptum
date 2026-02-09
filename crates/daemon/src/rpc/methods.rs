@@ -191,11 +191,23 @@ fn parse_change_type(status: &str) -> ChangeType {
     }
 }
 
+const HISTORY_SYSTEM_AUTHOR_ID: &str = "system";
+const HISTORY_LOCAL_HUMAN_AUTHOR_ID: &str = "local-user";
+
+#[derive(Debug, Clone)]
+struct DocSnapshotRecord {
+    content_md: String,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    author_id: String,
+    author_type: EditorType,
+    summary: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct RpcServerState {
     doc_manager: Arc<RwLock<DocManager>>,
     doc_metadata: Arc<RwLock<HashMap<(Uuid, Uuid), DocMetadataRecord>>>,
-    doc_history: Arc<RwLock<HashMap<(Uuid, Uuid), BTreeMap<i64, String>>>>,
+    doc_history: Arc<RwLock<HashMap<(Uuid, Uuid), BTreeMap<i64, DocSnapshotRecord>>>>,
     degraded_docs: Arc<RwLock<HashSet<Uuid>>>,
     crdt_store_dir: Arc<PathBuf>,
     workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
@@ -389,13 +401,82 @@ struct DocSearchResult {
 struct DocDiffParams {
     workspace_id: Uuid,
     doc_id: Uuid,
-    from_seq: i64,
-    to_seq: i64,
+    #[serde(default)]
+    from_seq: Option<i64>,
+    #[serde(default)]
+    to_seq: Option<i64>,
+    #[serde(default)]
+    granularity: DocDiffGranularity,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+enum DocDiffGranularity {
+    #[default]
+    Snapshot,
+    Coarse,
+    Fine,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DocDiffSnapshotAttribution {
+    author_id: String,
+    author_type: EditorType,
+    timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DocDiffAuthorshipSegment {
+    author_id: String,
+    author_type: EditorType,
+    start_offset: usize,
+    end_offset: usize,
+    timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DocDiffSnapshot {
+    seq: i64,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    content_md: String,
+    #[serde(default)]
+    author_attributions: Vec<DocDiffSnapshotAttribution>,
+    #[serde(default)]
+    authorship_segments: Vec<DocDiffAuthorshipSegment>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct DocDiffResult {
     patch_md: String,
+    from_seq: i64,
+    to_seq: i64,
+    granularity: DocDiffGranularity,
+    snapshots: Vec<DocDiffSnapshot>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DocHistoryParams {
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    #[serde(default)]
+    from_seq: Option<i64>,
+    #[serde(default)]
+    to_seq: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocHistoryEvent {
+    seq: i64,
+    author_id: String,
+    author_type: EditorType,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocHistoryResult {
+    events: Vec<DocHistoryEvent>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
@@ -1404,12 +1485,38 @@ impl RpcServerState {
         seq: i64,
         content_md: &str,
     ) {
+        self.record_doc_snapshot_with_metadata(
+            workspace_id,
+            doc_id,
+            seq,
+            content_md,
+            HISTORY_SYSTEM_AUTHOR_ID,
+            EditorType::Agent,
+            None,
+        )
+        .await;
+    }
+
+    async fn record_doc_snapshot_with_metadata(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        seq: i64,
+        content_md: &str,
+        author_id: &str,
+        author_type: EditorType,
+        summary: Option<&str>,
+    ) {
         let mut history = self.doc_history.write().await;
-        history
-            .entry((workspace_id, doc_id))
-            .or_default()
-            .entry(seq)
-            .or_insert_with(|| content_md.to_string());
+        history.entry((workspace_id, doc_id)).or_default().entry(seq).or_insert_with(|| {
+            DocSnapshotRecord {
+                content_md: content_md.to_string(),
+                timestamp: chrono::Utc::now(),
+                author_id: author_id.to_string(),
+                author_type,
+                summary: summary.map(str::to_string),
+            }
+        });
     }
 
     fn append_doc_wal_update(
@@ -1604,10 +1711,16 @@ impl RpcServerState {
         {
             let mut history = self.doc_history.write().await;
             for doc in &imported_docs {
-                history
-                    .entry((workspace_id, doc.doc_id))
-                    .or_default()
-                    .insert(0, doc.content.clone());
+                history.entry((workspace_id, doc.doc_id)).or_default().insert(
+                    0,
+                    DocSnapshotRecord {
+                        content_md: doc.content.clone(),
+                        timestamp: chrono::Utc::now(),
+                        author_id: HISTORY_SYSTEM_AUTHOR_ID.to_string(),
+                        author_type: EditorType::Agent,
+                        summary: Some("workspace import".to_string()),
+                    },
+                );
             }
         }
 
@@ -1775,11 +1888,21 @@ impl RpcServerState {
                     normalized_title,
                 )
             };
-            self.record_doc_snapshot(
+            let snapshot_author_id = params
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| HISTORY_LOCAL_HUMAN_AUTHOR_ID.to_string());
+            let snapshot_author_type =
+                if params.agent_id.is_some() { EditorType::Agent } else { EditorType::Human };
+            let snapshot_summary = params.client_update_id.clone();
+            self.record_doc_snapshot_with_metadata(
                 params.workspace_id,
                 params.doc_id,
                 updated_seq,
                 &updated_content,
+                &snapshot_author_id,
+                snapshot_author_type,
+                Some(snapshot_summary.as_str()),
             )
             .await;
             let source_doc_id = params.doc_id.to_string();
@@ -1941,39 +2064,20 @@ impl RpcServerState {
         Ok(DocSearchResult { items, total: workspace_hits.len(), next_cursor })
     }
 
-    async fn doc_diff(
-        &self,
-        workspace_id: Uuid,
-        doc_id: Uuid,
-        from_seq: i64,
-        to_seq: i64,
-    ) -> Result<DocDiffResult, String> {
-        if from_seq < 0 || to_seq < 0 {
-            return Err("from_seq and to_seq must be >= 0".to_string());
-        }
-        if from_seq > to_seq {
-            return Err(format!(
-                "from_seq must be <= to_seq (from_seq={from_seq}, to_seq={to_seq})"
-            ));
-        }
-
+    async fn doc_diff(&self, params: DocDiffParams) -> Result<DocDiffResult, String> {
         let head_seq = {
             let mut metadata = self.doc_metadata.write().await;
             metadata
-                .entry((workspace_id, doc_id))
-                .or_insert_with(|| default_metadata(workspace_id, doc_id))
+                .entry((params.workspace_id, params.doc_id))
+                .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id))
                 .head_seq
         };
-
-        if from_seq > head_seq || to_seq > head_seq {
-            return Err(format!(
-                "requested sequence range [{from_seq}, {to_seq}] exceeds head_seq {head_seq}"
-            ));
-        }
+        let (from_seq, to_seq) =
+            resolve_doc_history_range(head_seq, params.from_seq, params.to_seq)?;
 
         let mut snapshots = {
             let history = self.doc_history.read().await;
-            let doc_history = history.get(&(workspace_id, doc_id));
+            let doc_history = history.get(&(params.workspace_id, params.doc_id));
             (
                 doc_history.and_then(|h| h.get(&from_seq).cloned()),
                 doc_history.and_then(|h| h.get(&to_seq).cloned()),
@@ -1983,34 +2087,123 @@ impl RpcServerState {
         if snapshots.0.is_none() || snapshots.1.is_none() {
             let doc = {
                 let mut manager = self.doc_manager.write().await;
-                manager.subscribe_or_create(doc_id)
+                manager.subscribe_or_create(params.doc_id)
             };
             let current_content = doc.get_text_string("content");
-            self.record_doc_snapshot(workspace_id, doc_id, head_seq, &current_content).await;
+            self.record_doc_snapshot(
+                params.workspace_id,
+                params.doc_id,
+                head_seq,
+                &current_content,
+            )
+            .await;
             {
                 let mut manager = self.doc_manager.write().await;
-                let _ = manager.unsubscribe(doc_id);
+                let _ = manager.unsubscribe(params.doc_id);
             }
 
             let history = self.doc_history.read().await;
-            if let Some(doc_history) = history.get(&(workspace_id, doc_id)) {
+            if let Some(doc_history) = history.get(&(params.workspace_id, params.doc_id)) {
                 snapshots.0 = snapshots.0.or_else(|| doc_history.get(&from_seq).cloned());
                 snapshots.1 = snapshots.1.or_else(|| doc_history.get(&to_seq).cloned());
             }
         }
 
-        let Some(from_content) = snapshots.0 else {
+        let Some(from_snapshot) = snapshots.0 else {
             return Err(format!(
-                "sequence {from_seq} is unavailable for doc {doc_id} (head_seq={head_seq})"
+                "sequence {from_seq} is unavailable for doc {} (head_seq={head_seq})",
+                params.doc_id
             ));
         };
-        let Some(to_content) = snapshots.1 else {
+        let Some(to_snapshot) = snapshots.1 else {
             return Err(format!(
-                "sequence {to_seq} is unavailable for doc {doc_id} (head_seq={head_seq})"
+                "sequence {to_seq} is unavailable for doc {} (head_seq={head_seq})",
+                params.doc_id
             ));
         };
 
-        Ok(DocDiffResult { patch_md: render_markdown_patch(&from_content, &to_content) })
+        let timeline_snapshots = {
+            let history = self.doc_history.read().await;
+            history
+                .get(&(params.workspace_id, params.doc_id))
+                .map(|doc_history| {
+                    doc_history
+                        .range(from_seq..=to_seq)
+                        .map(|(seq, snapshot)| snapshot_to_diff_snapshot(*seq, snapshot))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+
+        Ok(DocDiffResult {
+            patch_md: render_markdown_patch(&from_snapshot.content_md, &to_snapshot.content_md),
+            from_seq,
+            to_seq,
+            granularity: params.granularity,
+            snapshots: timeline_snapshots,
+        })
+    }
+
+    async fn doc_history(&self, params: DocHistoryParams) -> Result<DocHistoryResult, String> {
+        let head_seq = {
+            let mut metadata = self.doc_metadata.write().await;
+            metadata
+                .entry((params.workspace_id, params.doc_id))
+                .or_insert_with(|| default_metadata(params.workspace_id, params.doc_id))
+                .head_seq
+        };
+        let (from_seq, to_seq) =
+            resolve_doc_history_range(head_seq, params.from_seq, params.to_seq)?;
+
+        let has_range_snapshots = {
+            let history = self.doc_history.read().await;
+            history
+                .get(&(params.workspace_id, params.doc_id))
+                .map(|doc_history| {
+                    doc_history.contains_key(&from_seq) && doc_history.contains_key(&to_seq)
+                })
+                .unwrap_or(false)
+        };
+
+        if !has_range_snapshots {
+            let doc = {
+                let mut manager = self.doc_manager.write().await;
+                manager.subscribe_or_create(params.doc_id)
+            };
+            let current_content = doc.get_text_string("content");
+            self.record_doc_snapshot(
+                params.workspace_id,
+                params.doc_id,
+                head_seq,
+                &current_content,
+            )
+            .await;
+            {
+                let mut manager = self.doc_manager.write().await;
+                let _ = manager.unsubscribe(params.doc_id);
+            }
+        }
+
+        let events = {
+            let history = self.doc_history.read().await;
+            history
+                .get(&(params.workspace_id, params.doc_id))
+                .map(|doc_history| {
+                    doc_history
+                        .range(from_seq..=to_seq)
+                        .map(|(seq, snapshot)| DocHistoryEvent {
+                            seq: *seq,
+                            author_id: snapshot.author_id.clone(),
+                            author_type: snapshot.author_type,
+                            timestamp: snapshot.timestamp,
+                            summary: snapshot.summary.clone(),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+
+        Ok(DocHistoryResult { events })
     }
 
     async fn bundle_doc(&self, params: DocBundleParams) -> Result<DocBundleResult, String> {
@@ -2275,6 +2468,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
         rpc_methods::DOC_EDIT_SECTION => handle_doc_edit_section(request, state).await,
         rpc_methods::DOC_SECTIONS => handle_doc_sections(request, state).await,
         rpc_methods::DOC_DIFF => handle_doc_diff(request, state).await,
+        rpc_methods::DOC_HISTORY => handle_doc_history(request, state).await,
         rpc_methods::DOC_SEARCH => handle_doc_search(request, state).await,
         rpc_methods::DOC_TREE => handle_doc_tree(request, state).await,
         rpc_methods::AGENT_WHOAMI => handle_agent_whoami(request, state),
@@ -2434,7 +2628,7 @@ async fn handle_doc_diff(request: Request, state: &RpcServerState) -> Response {
         Err(response) => return response,
     };
 
-    match state.doc_diff(params.workspace_id, params.doc_id, params.from_seq, params.to_seq).await {
+    match state.doc_diff(params).await {
         Ok(result) => Response::success(request.id, json!(result)),
         Err(reason) => invalid_params_response(request.id, reason),
     }
@@ -2450,6 +2644,31 @@ fn parse_doc_diff_params(
 
     serde_json::from_value::<DocDiffParams>(params).map_err(|error| {
         invalid_params_response(request_id, format!("failed to decode doc.diff params: {error}"))
+    })
+}
+
+async fn handle_doc_history(request: Request, state: &RpcServerState) -> Response {
+    let params = match parse_doc_history_params(request.params, request.id.clone()) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+
+    match state.doc_history(params).await {
+        Ok(result) => Response::success(request.id, json!(result)),
+        Err(reason) => invalid_params_response(request.id, reason),
+    }
+}
+
+fn parse_doc_history_params(
+    params: Option<serde_json::Value>,
+    request_id: RequestId,
+) -> Result<DocHistoryParams, Response> {
+    let Some(params) = params else {
+        return Err(invalid_params_response(request_id, "doc.history requires params".to_string()));
+    };
+
+    serde_json::from_value::<DocHistoryParams>(params).map_err(|error| {
+        invalid_params_response(request_id, format!("failed to decode doc.history params: {error}"))
     })
 }
 
@@ -2927,6 +3146,55 @@ fn decode_doc_search_cursor(cursor: Option<&str>) -> Result<usize, String> {
 
 fn encode_doc_search_cursor(offset: usize) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(offset.to_string())
+}
+
+fn resolve_doc_history_range(
+    head_seq: i64,
+    from_seq: Option<i64>,
+    to_seq: Option<i64>,
+) -> Result<(i64, i64), String> {
+    let from_seq = from_seq.unwrap_or(0);
+    let to_seq = to_seq.unwrap_or(head_seq);
+    if from_seq < 0 || to_seq < 0 {
+        return Err("from_seq and to_seq must be >= 0".to_string());
+    }
+    if from_seq > to_seq {
+        return Err(format!("from_seq must be <= to_seq (from_seq={from_seq}, to_seq={to_seq})"));
+    }
+    if from_seq > head_seq || to_seq > head_seq {
+        return Err(format!(
+            "requested sequence range [{from_seq}, {to_seq}] exceeds head_seq {head_seq}"
+        ));
+    }
+    Ok((from_seq, to_seq))
+}
+
+fn snapshot_to_diff_snapshot(seq: i64, snapshot: &DocSnapshotRecord) -> DocDiffSnapshot {
+    DocDiffSnapshot {
+        seq,
+        timestamp: snapshot.timestamp,
+        content_md: snapshot.content_md.clone(),
+        author_attributions: vec![DocDiffSnapshotAttribution {
+            author_id: snapshot.author_id.clone(),
+            author_type: snapshot.author_type,
+            timestamp: snapshot.timestamp,
+        }],
+        authorship_segments: snapshot_authorship_segments(snapshot),
+    }
+}
+
+fn snapshot_authorship_segments(snapshot: &DocSnapshotRecord) -> Vec<DocDiffAuthorshipSegment> {
+    let content_len = snapshot.content_md.chars().count();
+    if content_len == 0 {
+        return Vec::new();
+    }
+    vec![DocDiffAuthorshipSegment {
+        author_id: snapshot.author_id.clone(),
+        author_type: snapshot.author_type,
+        start_offset: 0,
+        end_offset: content_len,
+        timestamp: snapshot.timestamp,
+    }]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3908,11 +4176,65 @@ mod tests {
             .and_then(|value| value.get("patch_md"))
             .and_then(|value| value.as_str())
             .unwrap_or_default();
+        let result = diff_response.result.as_ref().expect("doc.diff result should be present");
 
         assert!(patch.starts_with("```diff\n"));
         assert!(patch.contains("-old line"));
         assert!(patch.contains("+new line"));
         assert!(patch.contains("+extra line"));
+        assert_eq!(result["from_seq"], json!(0));
+        assert_eq!(result["to_seq"], json!(2));
+        assert_eq!(result["granularity"], json!("snapshot"));
+        let snapshots = result["snapshots"].as_array().expect("snapshots should be an array");
+        assert_eq!(snapshots.len(), 3);
+        assert_eq!(snapshots[0]["seq"], json!(0));
+        assert_eq!(snapshots[2]["seq"], json!(2));
+        assert_eq!(snapshots[2]["author_attributions"][0]["author_id"], json!("local-user"));
+        let end_offset = snapshots[2]["authorship_segments"][0]["end_offset"]
+            .as_u64()
+            .expect("authorship segment should include numeric end_offset");
+        assert!(end_offset > 0);
+    }
+
+    #[tokio::test]
+    async fn doc_diff_defaults_to_full_history_when_bounds_are_omitted() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/history.md", "History", "v0").await;
+
+        let edit_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_id,
+                    "client_update_id": "upd-default-range-1",
+                    "content_md": "v1"
+                })),
+                RequestId::Number(913),
+            ),
+            &state,
+        )
+        .await;
+        assert!(edit_response.error.is_none(), "doc.edit should succeed: {edit_response:?}");
+
+        let diff_response = dispatch_request(
+            Request::new(
+                "doc.diff",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": doc_id
+                })),
+                RequestId::Number(914),
+            ),
+            &state,
+        )
+        .await;
+        assert!(diff_response.error.is_none(), "doc.diff should succeed: {diff_response:?}");
+        let result = diff_response.result.expect("doc.diff result should be present");
+        assert_eq!(result["from_seq"], json!(0));
+        assert_eq!(result["to_seq"], json!(1));
     }
 
     #[tokio::test]
@@ -3943,6 +4265,77 @@ mod tests {
             .and_then(|value| value.as_str())
             .unwrap_or_default();
         assert!(reason.contains("head_seq"));
+    }
+
+    #[tokio::test]
+    async fn doc_history_returns_timeline_events_with_authors_and_summaries() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/history.md", "History", "# Title\nseed\n").await;
+
+        let agent_edit = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-history-1",
+                "content_md": "# Title\nagent change\n",
+                "agent_id": "agent-1"
+            })),
+            RequestId::Number(94),
+        );
+        let agent_edit_response = dispatch_request(agent_edit, &state).await;
+        assert!(
+            agent_edit_response.error.is_none(),
+            "expected agent edit to succeed: {agent_edit_response:?}"
+        );
+
+        let human_edit = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "upd-history-2",
+                "content_md": "# Title\nhuman change\n"
+            })),
+            RequestId::Number(95),
+        );
+        let human_edit_response = dispatch_request(human_edit, &state).await;
+        assert!(
+            human_edit_response.error.is_none(),
+            "expected human edit to succeed: {human_edit_response:?}"
+        );
+
+        let history_request = Request::new(
+            "doc.history",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id
+            })),
+            RequestId::Number(96),
+        );
+        let history_response = dispatch_request(history_request, &state).await;
+        assert!(
+            history_response.error.is_none(),
+            "expected doc.history to succeed: {history_response:?}"
+        );
+
+        let result = history_response.result.expect("doc.history result should be present");
+        let events = result["events"].as_array().expect("doc.history events should be an array");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0]["seq"], json!(0));
+        assert_eq!(events[0]["author_id"], json!("system"));
+        assert_eq!(events[1]["seq"], json!(1));
+        assert_eq!(events[1]["author_id"], json!("agent-1"));
+        assert_eq!(events[1]["summary"], json!("upd-history-1"));
+        assert_eq!(events[2]["seq"], json!(2));
+        assert_eq!(events[2]["author_id"], json!("local-user"));
+        assert_eq!(events[2]["summary"], json!("upd-history-2"));
+        assert!(
+            events[2]["timestamp"].as_str().is_some(),
+            "doc.history events should include timestamps"
+        );
     }
 
     #[tokio::test]

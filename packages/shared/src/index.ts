@@ -80,6 +80,8 @@ export type {
   DocBundleResult,
   DocDiffParams,
   DocDiffResult,
+  DocHistoryParams,
+  DocHistoryResult,
   DocEditParams,
   DocEditResult,
   DocReadParams,
@@ -139,7 +141,6 @@ export type {
   WorkspaceAgentsConfig,
   WorkspaceAppearanceConfig,
   WorkspaceConfig,
-  WorkspaceDefaultRole,
   WorkspaceDensity,
   WorkspaceEditorConfig,
   WorkspaceEditorFontFamily,
@@ -148,3 +149,17 @@ export type {
   WorkspacePermissionsConfig,
   WorkspaceTheme,
 } from "./types/workspace";
+export {
+  DAEMON_LOCAL_HOST,
+  DAEMON_LOCAL_PORT,
+  DAEMON_WHOAMI_URL,
+  DAEMON_YJS_WS_URL,
+} from "./contracts/daemon-ports";
+export { ERROR_CODES, type ErrorCode } from "./contracts/error-codes";
+export {
+  DEFAULT_ASSIGNABLE_ROLES,
+  WORKSPACE_ROLES,
+  type WorkspaceDefaultRole,
+  type WorkspaceRole,
+} from "./contracts/roles";
+export { STORAGE_KEYS, type StorageKey } from "./contracts/storage-keys";
