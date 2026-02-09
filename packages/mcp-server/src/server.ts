@@ -2,14 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
-import { createDaemonClient, type DaemonClient } from "./daemon-client";
-import { registerAgentsResource } from "./resources/agents";
-import { registerDocResources } from "./resources/docs";
-import { registerWorkspaceResource } from "./resources/workspace";
-import type { AgentNameResolver } from "./shared";
-import { registerPassthroughTools } from "./tools/passthrough";
-import { registerStatusTool } from "./tools/status";
-import { registerSubscribeTool } from "./tools/subscribe";
+import { createDaemonClient, type DaemonClient } from "./daemon-client.js";
+import { registerAgentsResource } from "./resources/agents.js";
+import { registerDocResources } from "./resources/docs.js";
+import { registerWorkspaceResource } from "./resources/workspace.js";
+import type { AgentNameResolver } from "./shared.js";
+import { registerPassthroughTools } from "./tools/passthrough.js";
+import { registerStatusTool } from "./tools/status.js";
+import { registerSubscribeTool } from "./tools/subscribe.js";
 
 const DEFAULT_AGENT_NAME = "mcp-agent";
 const SERVER_INFO: Implementation = {

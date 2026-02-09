@@ -415,7 +415,7 @@ async fn get_document(
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
-    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Viewer).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Viewer).await?;
     let document = state.store.get(ws_id, doc_id).await?;
     Ok(Json(DocumentEnvelope { document }))
 }
@@ -427,7 +427,7 @@ async fn update_document(
     headers: HeaderMap,
     ValidatedJson(payload): ValidatedJson<UpdateDocumentRequest>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
-    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
     if let Some(path) = payload.path.as_deref() {
         validate_path(path)?;
     }
@@ -459,7 +459,7 @@ async fn delete_document(
     headers: HeaderMap,
     Query(query): Query<DeleteDocumentQuery>,
 ) -> Result<StatusCode, DocApiError> {
-    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
     let if_match = extract_if_match(&headers)?;
     let current = state.store.get(ws_id, doc_id).await?;
     if !etag_matches(if_match, &current.etag) {
@@ -489,7 +489,7 @@ async fn update_document_tags(
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<UpdateDocumentTagsRequest>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
-    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
     let tags = normalize_tag_names(&payload.tags)?;
     let document = state.store.update_tags(ws_id, doc_id, payload.op, &tags).await?;
     Ok(Json(DocumentEnvelope { document }))
@@ -501,7 +501,7 @@ async fn create_acl_override(
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<CreateAclOverrideRequest>,
 ) -> Result<(StatusCode, Json<AclOverrideEnvelope>), DocApiError> {
-    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
 
     validate_acl_override_request(&payload)?;
 
@@ -514,7 +514,7 @@ async fn delete_acl_override(
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id, override_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<StatusCode, DocApiError> {
-    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
 
     state.store.delete_acl_override(ws_id, doc_id, override_id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -646,6 +646,22 @@ impl DocumentStore {
         match self {
             Self::Postgres(pool) => workspace_role_for_user_pg(pool, user_id, workspace_id).await,
             Self::Memory(store) => workspace_role_for_user_mem(store, user_id, workspace_id).await,
+        }
+    }
+
+    async fn acl_override_role_for_user(
+        &self,
+        user_id: Uuid,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+    ) -> Result<Option<WorkspaceRole>, DocApiError> {
+        match self {
+            Self::Postgres(pool) => {
+                acl_override_role_for_user_pg(pool, user_id, workspace_id, doc_id).await
+            }
+            Self::Memory(store) => {
+                acl_override_role_for_user_mem(store, user_id, workspace_id, doc_id).await
+            }
         }
     }
 
@@ -1062,6 +1078,40 @@ async fn workspace_role_for_user_pg(
     .transpose()
 }
 
+async fn acl_override_role_for_user_pg(
+    pool: &PgPool,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+) -> Result<Option<WorkspaceRole>, DocApiError> {
+    let role = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT role
+        FROM acl_overrides
+        WHERE workspace_id = $1
+          AND doc_id = $2
+          AND subject_type = 'user'
+          AND subject_id = $3
+          AND (expires_at IS NULL OR expires_at > now())
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(doc_id)
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    role.map(|value| {
+        WorkspaceRole::from_db_value(&value).ok_or_else(|| {
+            DocApiError::internal(anyhow::anyhow!("invalid ACL override role '{value}' in database"))
+        })
+    })
+    .transpose()
+}
+
 // ── Memory implementations (for testing) ───────────────────────────
 
 async fn create_mem(
@@ -1334,6 +1384,36 @@ async fn workspace_role_for_user_mem(
     Ok(None)
 }
 
+async fn acl_override_role_for_user_mem(
+    store: &RwLock<MemoryDocumentStore>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+) -> Result<Option<WorkspaceRole>, DocApiError> {
+    let store = store.read().await;
+    let user_id = user_id.to_string();
+    let now = Utc::now();
+
+    let role = store
+        .acl_overrides
+        .values()
+        .filter(|override_entry| {
+            override_entry.workspace_id == workspace_id
+                && override_entry.doc_id == doc_id
+                && override_entry.subject_type == "user"
+                && override_entry.subject_id == user_id
+                && override_entry.expires_at.is_none_or(|expires_at| expires_at > now)
+        })
+        .max_by_key(|override_entry| override_entry.created_at)
+        .map(|override_entry| override_entry.role.clone());
+
+    role.map(|value| {
+        WorkspaceRole::from_db_value(&value)
+            .ok_or_else(|| DocApiError::internal(anyhow::anyhow!("invalid ACL override role '{value}' in memory store")))
+    })
+    .transpose()
+}
+
 fn mem_to_document(doc: &MemoryDocument) -> Document {
     Document {
         id: doc.id,
@@ -1393,6 +1473,32 @@ async fn require_workspace_role(
         return Err(DocApiError::Forbidden);
     };
     if !role.allows(required_role) {
+        return Err(DocApiError::Forbidden);
+    }
+    Ok(())
+}
+
+async fn require_document_role(
+    store: &DocumentStore,
+    user: &AuthenticatedUser,
+    workspace_id: Uuid,
+    doc_id: Uuid,
+    required_role: WorkspaceRole,
+) -> Result<(), DocApiError> {
+    if user.workspace_id != workspace_id {
+        return Err(DocApiError::Forbidden);
+    }
+
+    let workspace_role = store.workspace_role_for_user(user.user_id, workspace_id).await?;
+    let Some(workspace_role) = workspace_role else {
+        return Err(DocApiError::Forbidden);
+    };
+
+    let effective_role = store
+        .acl_override_role_for_user(user.user_id, workspace_id, doc_id)
+        .await?
+        .unwrap_or(workspace_role);
+    if !effective_role.allows(required_role) {
         return Err(DocApiError::Forbidden);
     }
     Ok(())

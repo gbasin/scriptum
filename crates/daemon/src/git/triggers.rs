@@ -292,11 +292,7 @@ impl TriggerCollector {
         paths.dedup();
         paths
             .into_iter()
-            .map(|path| ChangedFile {
-                path,
-                doc_id: None,
-                change_type: ChangeType::Modified,
-            })
+            .map(|path| ChangedFile { path, doc_id: None, change_type: ChangeType::Modified })
             .collect()
     }
 

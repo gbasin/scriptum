@@ -3,12 +3,12 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { DaemonClient } from "../daemon-client";
+import type { DaemonClient } from "../daemon-client.js";
 import {
   makeResourceResult,
   parseResourceVariable,
   resolveWorkspaceForDocId,
-} from "../shared";
+} from "../shared.js";
 
 export function registerDocResources(
   server: McpServer,

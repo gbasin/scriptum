@@ -2,8 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 
-import type { DaemonClient } from "./daemon-client";
-import { createServer, resolveAgentNameFromClientInfo } from "./server";
+import type { DaemonClient } from "./daemon-client.js";
+import { createServer, resolveAgentNameFromClientInfo } from "./server.js";
 
 describe("mcp server scaffold", () => {
   it("falls back to mcp-agent when client info has no name", () => {

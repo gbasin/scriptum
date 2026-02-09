@@ -48,7 +48,8 @@ fn rpc_protocol_versions_match_contract() {
         .collect();
 
     assert_eq!(
-        SUPPORTED_PROTOCOL_VERSIONS, &expected[..],
+        SUPPORTED_PROTOCOL_VERSIONS,
+        &expected[..],
         "SUPPORTED_PROTOCOL_VERSIONS diverged from contract"
     );
 }

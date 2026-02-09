@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { DaemonClient } from "../daemon-client";
+import type { DaemonClient } from "../daemon-client.js";
 import {
   type AgentNameResolver,
   makeToolResult,
@@ -8,7 +8,7 @@ import {
   type ToolDefinition,
   type ToolPayload,
   toToolPayload,
-} from "../shared";
+} from "../shared.js";
 
 const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
@@ -81,7 +81,7 @@ export function registerPassthroughTools(
         description: definition.description,
         inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
       },
-      async (toolArgs) => {
+      async (toolArgs: unknown) => {
         const rpcParams = injectAgentIdForMutatingCalls(
           definition.rpcMethod,
           toToolPayload(toolArgs),

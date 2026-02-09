@@ -128,11 +128,7 @@ impl AnthropicCommitClient {
             .as_deref()
             .and_then(trimmed_non_empty)
             .unwrap_or_else(|| DEFAULT_ANTHROPIC_MODEL.to_string());
-        let api_key = if config.ai.enabled {
-            resolve_api_key(config)
-        } else {
-            None
-        };
+        let api_key = if config.ai.enabled { resolve_api_key(config) } else { None };
 
         Self {
             http: reqwest::Client::new(),

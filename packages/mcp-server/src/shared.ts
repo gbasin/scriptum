@@ -1,9 +1,10 @@
 import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
+import type { AnySchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { CallToolRequestParamsSchema } from "@modelcontextprotocol/sdk/types.js";
 
-import type { DaemonClient } from "./daemon-client";
+import type { DaemonClient } from "./daemon-client.js";
 
-export const PASSTHROUGH_TOOL_INPUT_SCHEMA =
+export const PASSTHROUGH_TOOL_INPUT_SCHEMA: AnySchema =
   CallToolRequestParamsSchema.shape.arguments;
 
 export interface ToolDefinition {

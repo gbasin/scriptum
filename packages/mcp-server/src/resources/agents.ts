@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { DaemonClient } from "../daemon-client";
+import type { DaemonClient } from "../daemon-client.js";
 import {
   type AgentListResponse,
   type AgentNameResolver,
   listWorkspaces,
   makeResourceResult,
-} from "../shared";
+} from "../shared.js";
 
 export function registerAgentsResource(
   server: McpServer,

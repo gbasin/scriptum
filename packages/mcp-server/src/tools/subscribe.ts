@@ -1,13 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { DaemonClient } from "../daemon-client";
+import type { DaemonClient } from "../daemon-client.js";
 import {
   type AgentNameResolver,
   makeToolResult,
   PASSTHROUGH_TOOL_INPUT_SCHEMA,
   type ToolPayload,
   toToolPayload,
-} from "../shared";
+} from "../shared.js";
 
 export function registerSubscribeTool(
   server: McpServer,
@@ -21,7 +21,7 @@ export function registerSubscribeTool(
         "Polling subscribe helper. Calls daemon agent.status, compares change token, and reports whether it changed.",
       inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
     },
-    async (toolArgs) => {
+    async (toolArgs: unknown) => {
       const subscribeParams = toToolPayload(toolArgs);
       const previousChangeToken = extractPreviousChangeToken(subscribeParams);
       const statusPayload = await daemonClient.request("agent.status", {

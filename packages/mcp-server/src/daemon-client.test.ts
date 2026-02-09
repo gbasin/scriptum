@@ -3,7 +3,7 @@ import { createServer, type Server as NetServer } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createDaemonClient, DaemonNotRunningError } from "./daemon-client";
+import { createDaemonClient, DaemonNotRunningError } from "./daemon-client.js";
 
 describe("createDaemonClient", () => {
   it("calls daemon JSON-RPC over unix socket", async () => {

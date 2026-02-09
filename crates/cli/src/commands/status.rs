@@ -83,11 +83,11 @@ async fn call_status() -> anyhow::Result<AgentStatusResult> {
     let client = DaemonClient::default();
     let mut status: AgentStatusResult = client.call(rpc_methods::AGENT_STATUS, json!({})).await?;
 
-    if let Ok(git_status) = client.call::<_, GitStatusResult>(rpc_methods::GIT_STATUS, json!({})).await {
-        status.ai_commits_configured = git_status
-            .ai_configured
-            .or(git_status.ai_commit_enabled)
-            .or(git_status.ai_enabled);
+    if let Ok(git_status) =
+        client.call::<_, GitStatusResult>(rpc_methods::GIT_STATUS, json!({})).await
+    {
+        status.ai_commits_configured =
+            git_status.ai_configured.or(git_status.ai_commit_enabled).or(git_status.ai_enabled);
     }
 
     Ok(status)

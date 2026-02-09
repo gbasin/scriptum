@@ -191,9 +191,7 @@ mod tests {
         // new auth_* command to this file but forgets to add it to the manifest,
         // this test fails. If someone adds a command to the manifest but not Rust,
         // this also fails.
-        let commands = manifest["commands"]
-            .as_array()
-            .expect("commands must be an array");
+        let commands = manifest["commands"].as_array().expect("commands must be an array");
 
         // Authoritative list of auth command functions defined in this module.
         // Adding a new auth_* #[tauri::command] here without updating the manifest
@@ -207,10 +205,8 @@ mod tests {
             function_name(auth_clear_tokens),
         ];
 
-        let manifest_names: Vec<&str> = commands
-            .iter()
-            .map(|c| c["name"].as_str().unwrap())
-            .collect();
+        let manifest_names: Vec<&str> =
+            commands.iter().map(|c| c["name"].as_str().unwrap()).collect();
 
         assert_eq!(
             manifest_names, rust_auth_commands,
@@ -218,10 +214,7 @@ mod tests {
         );
 
         // Validate auth_open_browser arg name matches Rust param
-        let open_browser_cmd = commands
-            .iter()
-            .find(|c| c["name"] == "auth_open_browser")
-            .unwrap();
+        let open_browser_cmd = commands.iter().find(|c| c["name"] == "auth_open_browser").unwrap();
         let args = open_browser_cmd["args"].as_object().unwrap();
         assert!(
             args.contains_key("authorizationUrl"),
@@ -230,12 +223,8 @@ mod tests {
 
         // Validate AuthTokens field names match the Rust struct
         let types = &manifest["types"];
-        let token_fields: Vec<&str> = types["AuthTokens"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
+        let token_fields: Vec<&str> =
+            types["AuthTokens"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
 
         // Serialize a dummy AuthTokens and check its keys match
         let dummy_tokens = crate::auth::AuthTokens {
@@ -245,12 +234,8 @@ mod tests {
             refresh_expires_at: Some("e".into()),
         };
         let tokens_value = serde_json::to_value(&dummy_tokens).unwrap();
-        let mut tokens_keys: Vec<&str> = tokens_value
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(|k| k.as_str())
-            .collect();
+        let mut tokens_keys: Vec<&str> =
+            tokens_value.as_object().unwrap().keys().map(|k| k.as_str()).collect();
         tokens_keys.sort();
         let mut sorted_contract_fields = token_fields.clone();
         sorted_contract_fields.sort();
@@ -275,12 +260,8 @@ mod tests {
             error_description: Some("d".into()),
         };
         let payload_value = serde_json::to_value(&dummy_payload).unwrap();
-        let mut payload_keys: Vec<&str> = payload_value
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(|k| k.as_str())
-            .collect();
+        let mut payload_keys: Vec<&str> =
+            payload_value.as_object().unwrap().keys().map(|k| k.as_str()).collect();
         payload_keys.sort();
         let mut sorted_payload_fields = payload_fields.clone();
         sorted_payload_fields.sort();
