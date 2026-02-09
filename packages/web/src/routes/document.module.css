@@ -68,7 +68,7 @@
 
 .threadCollapsedDot {
   background: var(--color-text-muted);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   display: inline-block;
   height: 0.4rem;
   width: 0.4rem;
@@ -83,7 +83,7 @@
 }
 
 .attributionBadge {
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   display: inline-flex;
   font-size: var(--text-xs);
   font-weight: 700;

@@ -42,7 +42,7 @@
   background: transparent;
   border: 1px solid
     color-mix(in oklab, var(--color-warning-text) 72%, var(--color-warning));
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   color: inherit;
   cursor: pointer;
   font-size: var(--text-sm);

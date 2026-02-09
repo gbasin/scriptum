@@ -16,7 +16,7 @@
 
   align-items: center;
   border: 2px solid #fff;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: #fff;
   display: flex;
   font-size: var(--avatar-font-size);

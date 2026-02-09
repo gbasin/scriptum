@@ -23,7 +23,7 @@
 }
 
 .marker {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   height: 0.55rem;
   width: 0.55rem;
 }

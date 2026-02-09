@@ -22,7 +22,7 @@
 
   align-items: center;
   border: 1px solid var(--author-color-border);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   color: var(--author-color);
   display: inline-flex;
   font-size: var(--text-xs);
@@ -33,7 +33,7 @@
 
 .legendChipDot {
   background: var(--author-color);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   display: inline-block;
   height: 0.4rem;
   width: 0.4rem;
