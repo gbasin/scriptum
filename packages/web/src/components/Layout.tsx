@@ -9,6 +9,7 @@ import {
   buildIncomingBacklinks,
   type IncomingBacklink,
 } from "../lib/wiki-links";
+import { AddTagDialog } from "./AddTagDialog";
 import { CommandPalette } from "./CommandPalette";
 import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -45,6 +46,10 @@ export function formatRenameBacklinkToast(
   updatedDocuments: number,
 ): string {
   return `Updated ${updatedLinks} links across ${updatedDocuments} documents.`;
+}
+
+function normalizeTag(tag: string): string {
+  return tag.trim().replace(/^#+/, "");
 }
 
 const COMPACT_LAYOUT_BREAKPOINT_PX = 1024;
@@ -94,6 +99,10 @@ export function Layout() {
   >(null);
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
+  const [pendingTagDocument, setPendingTagDocument] = useState<Document | null>(
+    null,
+  );
+  const [pendingTagValue, setPendingTagValue] = useState("");
   const [outlineContainer, setOutlineContainer] = useState<HTMLElement | null>(
     null,
   );
@@ -178,6 +187,10 @@ export function Layout() {
     formatRenameBacklinkToast,
     navigate,
     openDocument,
+    openTagDialog: (document) => {
+      setPendingTagDocument(document);
+      setPendingTagValue("");
+    },
     pendingDeleteDocument,
     removeDocument,
     setActiveDocumentForWorkspace,
@@ -191,6 +204,8 @@ export function Layout() {
   useEffect(() => {
     setActiveTag(null);
     setShowArchivedDocuments(false);
+    setPendingTagDocument(null);
+    setPendingTagValue("");
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -301,6 +316,49 @@ export function Layout() {
   const handleCreateNewDocument = () => {
     setShowArchivedDocuments(false);
     createUntitledDocument();
+  };
+  const handleCancelAddTag = () => {
+    setPendingTagDocument(null);
+    setPendingTagValue("");
+  };
+  const handleConfirmAddTag = () => {
+    const targetDocument = pendingTagDocument;
+    if (!targetDocument) {
+      return;
+    }
+
+    const normalizedTag = normalizeTag(pendingTagValue);
+    if (normalizedTag.length === 0) {
+      toast.error("Enter a tag name.");
+      return;
+    }
+
+    const currentDocument = documents.find(
+      (document) => document.id === targetDocument.id,
+    );
+    if (!currentDocument) {
+      handleCancelAddTag();
+      return;
+    }
+
+    const hasTag = currentDocument.tags.some(
+      (tag) => normalizeTag(tag) === normalizedTag,
+    );
+    if (hasTag) {
+      toast.success(`"${normalizedTag}" is already on this document.`);
+      handleCancelAddTag();
+      return;
+    }
+
+    const now = new Date().toISOString();
+    upsertDocument({
+      ...currentDocument,
+      etag: `${currentDocument.etag}:tag:${Date.now().toString(36)}`,
+      tags: [...currentDocument.tags, normalizedTag],
+      updatedAt: now,
+    });
+    toast.success(`Added #${normalizedTag} to "${currentDocument.path}".`);
+    handleCancelAddTag();
   };
   const showCompactPanelBackdrop =
     isCompactLayout && (sidebarOpen || rightPanelOpen);
@@ -595,6 +653,15 @@ export function Layout() {
         onCancel={handleCancelDeleteDocument}
         onConfirm={handleConfirmDeleteDocument}
         open={Boolean(pendingDeleteDocument)}
+      />
+      <AddTagDialog
+        documentPath={pendingTagDocument?.path ?? null}
+        onCancel={handleCancelAddTag}
+        onConfirm={handleConfirmAddTag}
+        onTagChange={setPendingTagValue}
+        open={Boolean(pendingTagDocument)}
+        suggestions={workspaceTags}
+        tagValue={pendingTagValue}
       />
       <ToastViewport />
     </div>

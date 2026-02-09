@@ -139,6 +139,94 @@ describe("Layout search panel integration", () => {
     });
   });
 
+  it("opens add-tag dialog with suggestions and updates document tags", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const documentButton = container.querySelector(
+      '[data-testid="tree-node-docs/search.md"] button',
+    ) as HTMLButtonElement | null;
+    expect(documentButton).not.toBeNull();
+
+    act(() => {
+      documentButton?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 36,
+        }),
+      );
+    });
+
+    const addTagAction = document.querySelector(
+      '[data-testid="context-action-add-tag"]',
+    ) as HTMLButtonElement | null;
+    expect(addTagAction).not.toBeNull();
+
+    act(() => {
+      addTagAction?.click();
+    });
+
+    expect(document.querySelector('[data-testid="add-tag-dialog"]')).not.toBeNull();
+    const suggestionList = document.getElementById(
+      "workspace-tag-suggestions",
+    ) as HTMLDataListElement | null;
+    expect(suggestionList).not.toBeNull();
+    const suggestionValues = Array.from(
+      suggestionList?.querySelectorAll("option") ?? [],
+    ).map((option) => option.value);
+    expect(suggestionValues).toContain("auth");
+    expect(suggestionValues).toContain("search");
+
+    const tagInput = document.querySelector(
+      '[data-testid="add-tag-input"]',
+    ) as HTMLInputElement | null;
+    expect(tagInput).not.toBeNull();
+
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(tagInput, "feature");
+      tagInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const confirmButton = document.querySelector(
+      '[data-testid="add-tag-confirm"]',
+    ) as HTMLButtonElement | null;
+    expect(confirmButton).not.toBeNull();
+
+    act(() => {
+      confirmButton?.click();
+    });
+
+    expect(document.querySelector('[data-testid="add-tag-dialog"]')).toBeNull();
+    const updatedDocument = useDocumentsStore
+      .getState()
+      .documents.find((document) => document.id === "doc-b");
+    expect(updatedDocument?.tags).toContain("feature");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("toggles archived document view and supports unarchive from context menu", () => {
     useDocumentsStore
       .getState()

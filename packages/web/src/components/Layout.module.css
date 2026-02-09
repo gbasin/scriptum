@@ -116,6 +116,14 @@
   padding: var(--space-1) var(--space-2);
 }
 
+.primaryButton {
+  composes: buttonBase from "../styles/Controls.module.css";
+  composes: buttonPrimary from "../styles/Controls.module.css";
+  min-height: 2.5rem;
+  min-width: 2.5rem;
+  padding: var(--space-1) var(--space-2);
+}
+
 .secondaryButtonActive {
   background: color-mix(in oklab, var(--color-accent-hex) 22%, transparent);
   border-color: color-mix(
@@ -236,6 +244,21 @@
   justify-content: flex-end;
 }
 
+.tagField {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.tagLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.tagInput {
+  width: 100%;
+}
+
 .dangerButton {
   composes: buttonBase from "../styles/Controls.module.css";
   composes: buttonDanger from "../styles/Controls.module.css";
@@ -313,6 +336,7 @@
 
   .panelTabButton,
   .panelTabButtonActive,
+  .primaryButton,
   .secondaryButton,
   .showSidebarButton,
   .showOutlineButton,
@@ -329,6 +353,7 @@
   .secondaryButton,
   .panelTabButton,
   .panelTabButtonActive,
+  .primaryButton,
   .showSidebarButton,
   .showOutlineButton,
   .dangerButton {

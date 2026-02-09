@@ -19,6 +19,7 @@ export interface UseDocumentCrudOptions {
   ) => string;
   navigate: NavigateFunction;
   openDocument: (documentId: string) => void;
+  openTagDialog: (document: Document) => void;
   pendingDeleteDocument: Document | null;
   removeDocument: (documentId: string) => void;
   setActiveDocumentForWorkspace: (
@@ -57,6 +58,7 @@ export function useDocumentCrud(
     formatRenameBacklinkToast,
     navigate,
     openDocument,
+    openTagDialog,
     pendingDeleteDocument,
     removeDocument,
     setActiveDocumentForWorkspace,
@@ -238,13 +240,7 @@ export function useDocumentCrud(
     }
 
     if (action === "add-tag") {
-      const now = new Date().toISOString();
-      updateExistingDocument(document.id, (currentDocument) => ({
-        ...currentDocument,
-        etag: `${currentDocument.etag}:tag:${Date.now().toString(36)}`,
-        tags: Array.from(new Set([...currentDocument.tags, "tagged"])),
-        updatedAt: now,
-      }));
+      openTagDialog(document);
       return;
     }
 
