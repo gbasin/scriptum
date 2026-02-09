@@ -6,6 +6,9 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "coverage": "pnpm coverage:ts && pnpm coverage:rust",
+    "coverage:ts": "pnpm --filter @scriptum/web run coverage && pnpm --filter @scriptum/editor run coverage && pnpm --filter @scriptum/shared run coverage && pnpm --filter @scriptum/mcp-server run coverage",
+    "coverage:rust": "scripts/ci/rust-coverage.sh",
     "ci:job": "scripts/ci/pipeline.sh",
     "ci:fast": "scripts/ci/pipeline.sh fast",
     "ci:full": "scripts/ci/pipeline.sh full",
@@ -20,6 +23,7 @@
   "devDependencies": {
     "@playwright/test": "1.57.0",
     "@biomejs/biome": "latest",
+    "@vitest/coverage-v8": "latest",
     "turbo": "latest",
     "vitest": "latest"
   }

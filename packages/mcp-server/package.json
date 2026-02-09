@@ -9,6 +9,7 @@
     "build": "echo \"@scriptum/mcp-server build\"",
     "lint": "echo \"@scriptum/mcp-server lint\"",
     "test": "vitest run",
+    "coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=lcov",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

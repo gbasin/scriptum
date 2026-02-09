@@ -9,6 +9,7 @@
     "build": "echo \"@scriptum/editor build\"",
     "lint": "echo \"@scriptum/editor lint\"",
     "test": "vitest run",
+    "coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=lcov",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

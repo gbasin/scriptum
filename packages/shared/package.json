@@ -9,6 +9,7 @@
     "build": "echo \"@scriptum/shared build\"",
     "lint": "echo \"@scriptum/shared lint\"",
     "test": "vitest run",
+    "coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=lcov",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
