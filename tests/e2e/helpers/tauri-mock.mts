@@ -1,23 +1,44 @@
 // Tauri mock injection for e2e tests — simulates window.__TAURI_INTERNALS__
 // and @tauri-apps/api/* module imports in a browser context.
+// Command names come from the shared contract (tauri-commands.ts).
 
 import type { Page } from "@playwright/test";
+import {
+  TAURI_AUTH_COMMANDS,
+  TAURI_DEEP_LINK_EVENT,
+  TAURI_REDIRECT_URI,
+} from "../../../packages/web/src/lib/tauri-commands.ts";
+
+/** Contract values passed to the browser via addInitScript. */
+interface TauriMockContract {
+  commands: typeof TAURI_AUTH_COMMANDS;
+  deepLinkEvent: string;
+  redirectUri: string;
+}
 
 /**
  * Inject Tauri mock globals via addInitScript. This runs before any app code
  * and sets up __TAURI_INTERNALS__, __TAURI_INVOKE__, __TAURI_LISTEN__, and
  * the __TAURI_MOCK__ namespace for test assertions.
+ *
+ * Command names are derived from the shared contract — not hardcoded strings.
  */
 export async function injectTauriMock(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+  const contract: TauriMockContract = {
+    commands: TAURI_AUTH_COMMANDS,
+    deepLinkEvent: TAURI_DEEP_LINK_EVENT,
+    redirectUri: TAURI_REDIRECT_URI,
+  };
+
+  await page.addInitScript((c: TauriMockContract) => {
     // Command handlers map — tests can override individual commands.
     const commandHandlers: Record<
       string,
       (args: Record<string, unknown>) => unknown
     > = {
-      auth_redirect_uri: () => "scriptum://auth/callback",
+      [c.commands.AUTH_REDIRECT_URI]: () => c.redirectUri,
 
-      auth_open_browser: (args) => {
+      [c.commands.AUTH_OPEN_BROWSER]: (args) => {
         (window as unknown as Record<string, unknown>).__TAURI_MOCK__ = {
           ...((window as unknown as Record<string, unknown>).__TAURI_MOCK__ as
             | Record<string, unknown>
@@ -27,7 +48,7 @@ export async function injectTauriMock(page: Page): Promise<void> {
         return undefined;
       },
 
-      auth_parse_callback: (args) => {
+      [c.commands.AUTH_PARSE_CALLBACK]: (args) => {
         const url = new URL(args.url as string);
         return {
           url: args.url,
@@ -38,7 +59,7 @@ export async function injectTauriMock(page: Page): Promise<void> {
         };
       },
 
-      auth_store_tokens: (args) => {
+      [c.commands.AUTH_STORE_TOKENS]: (args) => {
         const mock = (window as unknown as Record<string, unknown>)
           .__TAURI_MOCK__ as Record<string, unknown>;
         const keychain =
@@ -49,14 +70,14 @@ export async function injectTauriMock(page: Page): Promise<void> {
         return undefined;
       },
 
-      auth_load_tokens: () => {
+      [c.commands.AUTH_LOAD_TOKENS]: () => {
         const mock = (window as unknown as Record<string, unknown>)
           .__TAURI_MOCK__ as Record<string, unknown> | undefined;
         const keychain = mock?._keychain as Map<string, unknown> | undefined;
         return keychain?.get("tokens") ?? null;
       },
 
-      auth_clear_tokens: () => {
+      [c.commands.AUTH_CLEAR_TOKENS]: () => {
         const mock = (window as unknown as Record<string, unknown>)
           .__TAURI_MOCK__ as Record<string, unknown> | undefined;
         const keychain = mock?._keychain as Map<string, unknown> | undefined;
@@ -128,11 +149,27 @@ export async function injectTauriMock(page: Page): Promise<void> {
         }
       };
     };
-  });
+  }, contract);
 
-  // Intercept HTML responses to inject import map for @tauri-apps/api/*
+  // Intercept HTML navigation responses to inject import map for @tauri-apps/api/*
   await page.route("**/*", async (route) => {
-    const response = await route.fetch();
+    // Only intercept document (navigation) requests — they're the only ones
+    // that return HTML where we need to inject the import map. Let all other
+    // requests (XHR, fetch, scripts, images) pass through normally so relay
+    // API calls and other resources aren't disrupted.
+    if (route.request().resourceType() !== "document") {
+      await route.continue();
+      return;
+    }
+
+    let response: Awaited<ReturnType<typeof route.fetch>> | undefined;
+    try {
+      response = await route.fetch();
+    } catch {
+      // If the fetch fails (e.g., dev server not ready), let the browser handle it.
+      await route.continue();
+      return;
+    }
     const contentType = response.headers()["content-type"] ?? "";
 
     if (!contentType.includes("text/html")) {
@@ -184,11 +221,14 @@ export async function injectTauriMock(page: Page): Promise<void> {
  * Simulates the OS handing `scriptum://auth/callback?code=X&state=Y` to the app.
  */
 export async function emitDeepLink(page: Page, url: string): Promise<void> {
-  await page.evaluate((callbackUrl) => {
-    const mock = (window as unknown as Record<string, unknown>)
-      .__TAURI_MOCK__ as Record<string, (...args: unknown[]) => void>;
-    mock.emit("scriptum://auth/deep-link", [callbackUrl]);
-  }, url);
+  await page.evaluate(
+    ({ callbackUrl, event }) => {
+      const mock = (window as unknown as Record<string, unknown>)
+        .__TAURI_MOCK__ as Record<string, (...args: unknown[]) => void>;
+      mock.emit(event, [callbackUrl]);
+    },
+    { callbackUrl: url, event: TAURI_DEEP_LINK_EVENT },
+  );
 }
 
 /**
@@ -234,3 +274,6 @@ export async function getKeychainTokens(page: Page): Promise<unknown> {
     return keychain?.get("tokens") ?? null;
   });
 }
+
+/** Re-export command constants for use in test specs. */
+export { TAURI_AUTH_COMMANDS } from "../../../packages/web/src/lib/tauri-commands.ts";

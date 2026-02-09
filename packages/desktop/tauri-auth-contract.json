@@ -1,0 +1,29 @@
+{
+  "_comment": "Tauri auth IPC contract — single source of truth for command names and payload shapes. Validated by Rust tests (commands.rs) and TypeScript tests (tauri-commands.test.ts).",
+  "version": 1,
+  "deep_link_event": "scriptum://auth/deep-link",
+  "redirect_uri": "scriptum://auth/callback",
+  "commands": [
+    { "name": "auth_redirect_uri", "args": {} },
+    { "name": "auth_open_browser", "args": { "authorizationUrl": "string" } },
+    { "name": "auth_parse_callback", "args": { "url": "string" } },
+    { "name": "auth_store_tokens", "args": { "tokens": "AuthTokens" } },
+    { "name": "auth_load_tokens", "args": {} },
+    { "name": "auth_clear_tokens", "args": {} }
+  ],
+  "types": {
+    "AuthTokens": [
+      "access_token",
+      "refresh_token",
+      "access_expires_at",
+      "refresh_expires_at"
+    ],
+    "OAuthCallbackPayload": [
+      "url",
+      "code",
+      "state",
+      "error",
+      "error_description"
+    ]
+  }
+}

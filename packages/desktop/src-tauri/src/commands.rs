@@ -149,6 +149,128 @@ mod tests {
 
     use super::*;
 
+    /// Load the shared contract manifest and validate that Rust command names,
+    /// arg shapes, and payload field names match. If the Rust side drifts, this
+    /// test fails — and the TS-side contract test (`tauri-commands.test.ts`)
+    /// validates the TypeScript mirror, so any divergence is caught on both ends.
+    #[test]
+    fn auth_contract_matches_json_manifest() {
+        let manifest_json = include_str!("../../tauri-auth-contract.json");
+        let manifest: Value = serde_json::from_str(manifest_json)
+            .expect("tauri-auth-contract.json must be valid JSON");
+
+        // Validate deep_link_event
+        assert_eq!(
+            manifest["deep_link_event"].as_str().unwrap(),
+            crate::auth::DEEP_LINK_EVENT_FOR_CONTRACT,
+            "deep_link_event in contract manifest must match Rust DEEP_LINK_EVENT"
+        );
+
+        // Validate redirect_uri
+        assert_eq!(
+            manifest["redirect_uri"].as_str().unwrap(),
+            crate::auth::DESKTOP_OAUTH_REDIRECT_URI,
+            "redirect_uri in contract manifest must match Rust DESKTOP_OAUTH_REDIRECT_URI"
+        );
+
+        // Validate command names — every command in the manifest must match a real
+        // #[tauri::command] function name.
+        let commands = manifest["commands"]
+            .as_array()
+            .expect("commands must be an array");
+
+        let expected_auth_commands = [
+            "auth_redirect_uri",
+            "auth_open_browser",
+            "auth_parse_callback",
+            "auth_store_tokens",
+            "auth_load_tokens",
+            "auth_clear_tokens",
+        ];
+
+        let manifest_names: Vec<&str> = commands
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(
+            manifest_names, expected_auth_commands,
+            "contract manifest command names must match the Rust auth command functions"
+        );
+
+        // Validate auth_open_browser arg name matches Rust param
+        let open_browser_cmd = commands
+            .iter()
+            .find(|c| c["name"] == "auth_open_browser")
+            .unwrap();
+        let args = open_browser_cmd["args"].as_object().unwrap();
+        assert!(
+            args.contains_key("authorizationUrl"),
+            "auth_open_browser must accept authorizationUrl (camelCase — Tauri auto-converts from Rust snake_case)"
+        );
+
+        // Validate AuthTokens field names match the Rust struct
+        let types = &manifest["types"];
+        let token_fields: Vec<&str> = types["AuthTokens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+
+        // Serialize a dummy AuthTokens and check its keys match
+        let dummy_tokens = crate::auth::AuthTokens {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            access_expires_at: Some("e".into()),
+            refresh_expires_at: Some("e".into()),
+        };
+        let tokens_value = serde_json::to_value(&dummy_tokens).unwrap();
+        let mut tokens_keys: Vec<&str> = tokens_value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        tokens_keys.sort();
+        let mut sorted_contract_fields = token_fields.clone();
+        sorted_contract_fields.sort();
+        assert_eq!(
+            tokens_keys, sorted_contract_fields,
+            "AuthTokens serde field names must match contract manifest"
+        );
+
+        // Validate OAuthCallbackPayload field names match the Rust struct
+        let payload_fields: Vec<&str> = types["OAuthCallbackPayload"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+
+        let dummy_payload = crate::auth::OAuthCallbackPayload {
+            url: "u".into(),
+            code: Some("c".into()),
+            state: Some("s".into()),
+            error: Some("e".into()),
+            error_description: Some("d".into()),
+        };
+        let payload_value = serde_json::to_value(&dummy_payload).unwrap();
+        let mut payload_keys: Vec<&str> = payload_value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        payload_keys.sort();
+        let mut sorted_payload_fields = payload_fields.clone();
+        sorted_payload_fields.sort();
+        assert_eq!(
+            payload_keys, sorted_payload_fields,
+            "OAuthCallbackPayload serde field names must match contract manifest"
+        );
+    }
+
     #[test]
     fn greet_returns_welcome_message() {
         let result = greet("Alice");

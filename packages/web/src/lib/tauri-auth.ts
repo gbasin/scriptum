@@ -1,9 +1,15 @@
 // Tauri auth bridge — desktop OAuth flow via system browser + deep links.
 // All @tauri-apps imports are dynamic so this module is safe to import in browser builds.
+// Command names and payload types come from tauri-commands.ts (shared contract).
 
 import type { AuthService, AuthSession, StartGitHubOAuthResult } from "./auth";
+import {
+  TAURI_AUTH_COMMANDS,
+  TAURI_DEEP_LINK_EVENT,
+  type TauriAuthTokens,
+  type TauriOAuthCallbackPayload,
+} from "./tauri-commands";
 
-const DEEP_LINK_EVENT = "scriptum://auth/deep-link";
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Synchronous Tauri 2.0 detection (available before any async import). */
@@ -38,21 +44,15 @@ async function getTauriEvent(): Promise<TauriEventApi> {
 /** Get the desktop OAuth redirect URI (`scriptum://auth/callback`). */
 export async function getTauriRedirectUri(): Promise<string> {
   const { invoke } = await getTauriCore();
-  return invoke<string>("auth_redirect_uri");
+  return invoke<string>(TAURI_AUTH_COMMANDS.AUTH_REDIRECT_URI);
 }
 
 /** Open a URL in the system browser (not the webview). */
 export async function openInSystemBrowser(url: string): Promise<void> {
   const { invoke } = await getTauriCore();
-  await invoke("auth_open_browser", { authorizationUrl: url });
-}
-
-interface OAuthCallbackPayload {
-  url: string;
-  code: string | null;
-  state: string | null;
-  error: string | null;
-  error_description: string | null;
+  await invoke(TAURI_AUTH_COMMANDS.AUTH_OPEN_BROWSER, {
+    authorizationUrl: url,
+  });
 }
 
 interface DeepLinkListenerResult {
@@ -110,16 +110,17 @@ export function listenForDeepLinkCallback(options?: {
         }
 
         unlisten = await eventApi.listen<string[]>(
-          DEEP_LINK_EVENT,
+          TAURI_DEEP_LINK_EVENT,
           async (event) => {
             try {
               const urls = event.payload;
               if (!urls || urls.length === 0) return;
 
-              const payload = await coreApi.invoke<OAuthCallbackPayload>(
-                "auth_parse_callback",
-                { url: urls[0] },
-              );
+              const payload =
+                await coreApi.invoke<TauriOAuthCallbackPayload>(
+                  TAURI_AUTH_COMMANDS.AUTH_PARSE_CALLBACK,
+                  { url: urls[0] },
+                );
 
               if (payload.error) {
                 cleanup();
@@ -163,35 +164,28 @@ export function listenForDeepLinkCallback(options?: {
   };
 }
 
-interface AuthTokens {
-  access_token: string;
-  refresh_token: string;
-  access_expires_at: string | null;
-  refresh_expires_at: string | null;
-}
-
 /** Store tokens in the system keychain. */
 export async function storeTauriTokens(session: AuthSession): Promise<void> {
   const { invoke } = await getTauriCore();
-  const tokens: AuthTokens = {
+  const tokens: TauriAuthTokens = {
     access_token: session.accessToken,
     refresh_token: session.refreshToken,
     access_expires_at: session.accessExpiresAt,
     refresh_expires_at: session.refreshExpiresAt,
   };
-  await invoke("auth_store_tokens", { tokens });
+  await invoke(TAURI_AUTH_COMMANDS.AUTH_STORE_TOKENS, { tokens });
 }
 
 /** Load tokens from the system keychain. */
-export async function loadTauriTokens(): Promise<AuthTokens | null> {
+export async function loadTauriTokens(): Promise<TauriAuthTokens | null> {
   const { invoke } = await getTauriCore();
-  return invoke<AuthTokens | null>("auth_load_tokens");
+  return invoke<TauriAuthTokens | null>(TAURI_AUTH_COMMANDS.AUTH_LOAD_TOKENS);
 }
 
 /** Clear tokens from the system keychain. */
 export async function clearTauriTokens(): Promise<void> {
   const { invoke } = await getTauriCore();
-  await invoke("auth_clear_tokens");
+  await invoke(TAURI_AUTH_COMMANDS.AUTH_CLEAR_TOKENS);
 }
 
 /**

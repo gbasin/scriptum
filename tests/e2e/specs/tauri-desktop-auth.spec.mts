@@ -13,6 +13,7 @@ import {
   getLastBrowserUrl,
   injectTauriMock,
   overrideTauriCommand,
+  TAURI_AUTH_COMMANDS,
 } from "../helpers/tauri-mock.mts";
 
 test.describe("Tauri desktop auth", () => {
@@ -146,7 +147,7 @@ test.describe("Tauri desktop auth", () => {
     // Override auth_redirect_uri to throw an error
     await overrideTauriCommand(
       page,
-      "auth_redirect_uri",
+      TAURI_AUTH_COMMANDS.AUTH_REDIRECT_URI,
       'throw new Error("Tauri IPC unavailable");',
     );
 

@@ -31,7 +31,10 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       NODE_ENV: "test",
-      // No fixture mode — real auth paths execute with Tauri mocks.
+      // Point relay URL at the dev server itself so the reachability check
+      // succeeds and the app enters "relay" mode (showing the login page)
+      // instead of auto-authenticating as "Local User".
+      VITE_SCRIPTUM_RELAY_URL: baseURL,
     },
   },
   projects: [
