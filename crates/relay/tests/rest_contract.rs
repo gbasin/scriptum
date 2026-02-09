@@ -181,3 +181,11 @@ fn rest_contract_sources_include_precondition_enforcement() {
         );
     }
 }
+
+#[test]
+fn rest_contract_mounts_documents_router_in_api_builder() {
+    assert!(
+        API_MOD_SOURCE.contains(".merge(documents::router(pool.clone(), Arc::clone(&jwt_service)))"),
+        "build_router_from_env must merge the documents router so document CRUD routes are reachable",
+    );
+}

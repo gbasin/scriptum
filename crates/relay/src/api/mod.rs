@@ -656,6 +656,7 @@ pub async fn build_router_from_env(
 
     Ok(build_router_with_store(WorkspaceStore::Postgres(pool.clone()), Arc::clone(&jwt_service))
         .merge(auth::router(oauth_state))
+        .merge(documents::router(pool.clone(), Arc::clone(&jwt_service)))
         .merge(comments::router(pool.clone(), Arc::clone(&jwt_service)))
         .merge(search::router(pool, jwt_service)))
 }
