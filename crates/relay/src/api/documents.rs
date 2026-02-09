@@ -459,7 +459,7 @@ async fn delete_document(
     headers: HeaderMap,
     Query(query): Query<DeleteDocumentQuery>,
 ) -> Result<StatusCode, DocApiError> {
-    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Owner).await?;
     let if_match = extract_if_match(&headers)?;
     let current = state.store.get(ws_id, doc_id).await?;
     if !etag_matches(if_match, &current.etag) {
@@ -501,7 +501,7 @@ async fn create_acl_override(
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<CreateAclOverrideRequest>,
 ) -> Result<(StatusCode, Json<AclOverrideEnvelope>), DocApiError> {
-    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Owner).await?;
 
     validate_acl_override_request(&payload)?;
 
@@ -514,7 +514,7 @@ async fn delete_acl_override(
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id, override_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<StatusCode, DocApiError> {
-    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Editor).await?;
+    require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Owner).await?;
 
     state.store.delete_acl_override(ws_id, doc_id, override_id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -2742,7 +2742,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn editor_role_can_manage_acl_overrides_for_other_users_documents() {
+    async fn editor_role_cannot_manage_acl_overrides_for_other_users_documents() {
         let store = test_store();
         let jwt = test_jwt_service();
         let app = build_router_with_store(store.clone(), jwt.clone());
@@ -2770,7 +2770,6 @@ mod tests {
         store.grant_workspace_role_for_tests(ws_id, editor_id, WorkspaceRole::Editor).await;
 
         let create_override_resp = app
-            .clone()
             .oneshot(json_request(
                 "POST",
                 &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
@@ -2783,24 +2782,45 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert_eq!(create_override_resp.status(), StatusCode::CREATED);
-        let create_override_body = body_json(create_override_resp).await;
-        let override_id = create_override_body["acl_override"]["id"].as_str().unwrap();
+        assert_eq!(create_override_resp.status(), StatusCode::FORBIDDEN);
+    }
 
-        let delete_override_resp = app
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri(format!(
-                        "/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides/{override_id}"
-                    ))
-                    .header("Authorization", format!("Bearer {editor_token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+    #[tokio::test]
+    async fn editor_role_cannot_delete_documents() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store.clone(), jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let editor_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let editor_token = auth_token(&jwt, editor_id, ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "owner-delete-only.md"}),
+                &owner_token,
+            ))
             .await
             .unwrap();
-        assert_eq!(delete_override_resp.status(), StatusCode::NO_CONTENT);
+        assert_eq!(create_doc_resp.status(), StatusCode::CREATED);
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        store.grant_workspace_role_for_tests(ws_id, editor_id, WorkspaceRole::Editor).await;
+
+        let delete_resp = app
+            .oneshot(delete_request(
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}"),
+                &editor_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(delete_resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

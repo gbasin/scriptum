@@ -694,7 +694,7 @@ fn build_router_with_store(
         .route("/v1/workspaces/{id}", get(workspaces::get_workspace).route_layer(viewer_role_layer))
         .route(
             "/v1/workspaces/{id}",
-            patch(workspaces::update_workspace).route_layer(owner_role_layer),
+            patch(workspaces::update_workspace).route_layer(owner_role_layer.clone()),
         )
         .route(
             "/v1/workspaces/{id}/share-links",
@@ -702,7 +702,11 @@ fn build_router_with_store(
         )
         .route(
             "/v1/workspaces/{id}/share-links/{share_link_id}",
-            patch(update_share_link).delete(revoke_share_link).route_layer(editor_role_layer),
+            patch(update_share_link).route_layer(editor_role_layer),
+        )
+        .route(
+            "/v1/workspaces/{id}/share-links/{share_link_id}",
+            delete(revoke_share_link).route_layer(owner_role_layer),
         )
         .route(
             "/v1/workspaces/{workspace_id}/members",
@@ -3197,10 +3201,10 @@ mod tests {
             guard.memberships.insert(
                 (workspace_id, user_id),
                 MemoryMembership {
-                    role: "editor".to_owned(),
+                    role: "owner".to_owned(),
                     status: "active".to_owned(),
-                    email: "editor@test.local".to_owned(),
-                    display_name: "Editor".to_owned(),
+                    email: "owner@test.local".to_owned(),
+                    display_name: "Owner".to_owned(),
                     joined_at: now,
                 },
             );
@@ -3391,6 +3395,99 @@ mod tests {
         assert_eq!(list_after_revoke.items.len(), 1);
         assert!(list_after_revoke.items[0].disabled);
         assert!(list_after_revoke.items[0].revoked_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn revoke_share_link_requires_owner_role() {
+        let jwt_service = Arc::new(
+            JwtAccessTokenService::new(TEST_SECRET).expect("jwt service should initialize"),
+        );
+        let owner_id = Uuid::new_v4();
+        let editor_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let now = Utc::now();
+        let store = Arc::new(RwLock::new(MemoryWorkspaceStore::default()));
+
+        {
+            let mut guard = store.write().await;
+            guard.workspaces.insert(
+                workspace_id,
+                MemoryWorkspace {
+                    id: workspace_id,
+                    slug: "revoke-rbac".to_owned(),
+                    name: "Revoke RBAC".to_owned(),
+                    created_at: now,
+                    updated_at: now,
+                    deleted_at: None,
+                },
+            );
+            guard.memberships.insert(
+                (workspace_id, owner_id),
+                MemoryMembership {
+                    role: "owner".to_owned(),
+                    status: "active".to_owned(),
+                    email: "owner@test.local".to_owned(),
+                    display_name: "Owner".to_owned(),
+                    joined_at: now,
+                },
+            );
+            guard.memberships.insert(
+                (workspace_id, editor_id),
+                MemoryMembership {
+                    role: "editor".to_owned(),
+                    status: "active".to_owned(),
+                    email: "editor@test.local".to_owned(),
+                    display_name: "Editor".to_owned(),
+                    joined_at: now,
+                },
+            );
+        }
+
+        let router =
+            build_router_with_store(WorkspaceStore::Memory(store), Arc::clone(&jwt_service));
+        let owner_token = bearer_token(&jwt_service, owner_id, workspace_id);
+        let editor_token = bearer_token(&jwt_service, editor_id, workspace_id);
+
+        let create_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/workspaces/{workspace_id}/share-links"))
+                    .header(AUTHORIZATION, format!("Bearer {owner_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "target_type": "workspace",
+                            "target_id": workspace_id,
+                            "permission": "view"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("create share link should return response");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let created: ShareLinkEnvelope = read_json(create_response).await;
+
+        let revoke_response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/v1/workspaces/{workspace_id}/share-links/{}",
+                        created.share_link.id
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {editor_token}"))
+                    .header("if-match", created.share_link.etag.clone())
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("revoke share link should return response");
+
+        assert_eq!(revoke_response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

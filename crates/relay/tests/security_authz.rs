@@ -51,8 +51,19 @@ fn acl_override_management_enforces_workspace_authorization() {
         "workspace owners should be allowed to manage overrides"
     );
     assert!(
-        DOCUMENTS_SOURCE.contains("editor_role_can_manage_acl_overrides_for_other_users_documents"),
-        "workspace editors should be allowed to manage overrides"
+        DOCUMENTS_SOURCE
+            .contains("editor_role_cannot_manage_acl_overrides_for_other_users_documents"),
+        "workspace editors should be denied ACL override management"
+    );
+    assert!(
+        DOCUMENTS_SOURCE.contains(
+            "require_document_role(&state.store, &user, ws_id, doc_id, WorkspaceRole::Owner)"
+        ),
+        "destructive document routes must enforce owner role"
+    );
+    assert!(
+        DOCUMENTS_SOURCE.contains("editor_role_cannot_delete_documents"),
+        "editor delete regression test must enforce owner-only document deletion"
     );
 }
 
