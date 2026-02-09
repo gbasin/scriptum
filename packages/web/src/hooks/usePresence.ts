@@ -1,6 +1,10 @@
-import { nameToColor } from "@scriptum/editor";
+import {
+  nameToColor,
+  parseAwarenessPeer,
+  readAwarenessPeers,
+  type AwarenessPeerSnapshot,
+} from "@scriptum/editor";
 import { useCallback, useEffect, useState } from "react";
-import { asNumber, asRecord } from "../lib/type-guards";
 
 export interface PresenceCursor {
   anchor: number;
@@ -47,66 +51,39 @@ export interface AwarenessLike {
   setLocalStateField(field: string, value: unknown): void;
 }
 
-function normalizeCursor(value: unknown): PresenceCursor | null {
-  const cursor = asRecord(value);
-  if (!cursor) {
-    return null;
-  }
-
-  const anchor = asNumber(cursor.anchor);
-  const head = asNumber(cursor.head);
-  if (anchor === null || head === null) {
-    return null;
-  }
-
-  const sectionIdRaw = cursor.sectionId;
-  const sectionId =
-    typeof sectionIdRaw === "string" || sectionIdRaw === null
-      ? sectionIdRaw
-      : undefined;
-  const line = asNumber(cursor.line) ?? undefined;
-  const column = asNumber(cursor.column) ?? undefined;
-
+function toPresencePeer(peer: AwarenessPeerSnapshot): PresencePeer {
   return {
-    anchor,
-    column,
-    head,
-    line,
-    sectionId,
-  };
-}
-
-function toPeer(clientId: number, state: unknown): PresencePeer {
-  const stateRecord = asRecord(state);
-  const user = asRecord(stateRecord?.user);
-
-  const name =
-    typeof user?.name === "string" && user.name.trim().length > 0
-      ? user.name
-      : `User ${clientId}`;
-  const type = user?.type === "agent" ? "agent" : "human";
-  const color =
-    typeof user?.color === "string" && user.color.trim().length > 0
-      ? user.color
-      : nameToColor(name);
-
-  return {
-    clientId,
-    color,
-    cursor: normalizeCursor(stateRecord?.cursor),
-    name,
-    type,
+    clientId: peer.clientId,
+    color: peer.color,
+    cursor: peer.cursor
+      ? {
+          anchor: peer.cursor.anchor,
+          head: peer.cursor.head,
+          ...(peer.cursor.line === undefined ? {} : { line: peer.cursor.line }),
+          ...(peer.cursor.column === undefined
+            ? {}
+            : { column: peer.cursor.column }),
+          ...(peer.cursor.sectionId === undefined
+            ? {}
+            : { sectionId: peer.cursor.sectionId }),
+        }
+      : null,
+    name: peer.name,
+    type: peer.type,
   };
 }
 
 function readPeers(awareness: AwarenessLike): ParsedPeers {
   const localClientId = awareness.clientID;
+  const awarenessPeers = readAwarenessPeers(awareness.getStates(), {
+    fallbackColor: nameToColor,
+  });
   const connectedPeers: PresencePeer[] = [];
   let localPeer: PresencePeer | null = null;
 
-  for (const [clientId, state] of awareness.getStates()) {
-    const peer = toPeer(clientId, state);
-    if (clientId === localClientId) {
+  for (const peerState of awarenessPeers) {
+    const peer = toPresencePeer(peerState);
+    if (peer.clientId === localClientId) {
       localPeer = peer;
       continue;
     }
@@ -150,22 +127,16 @@ export function usePresence(options: UsePresenceOptions): UsePresenceResult {
         return;
       }
 
-      const localState = asRecord(awareness.getLocalState());
-      const user = asRecord(localState?.user);
-      const localName =
-        typeof user?.name === "string" && user.name.trim().length > 0
-          ? user.name
-          : `User ${awareness.clientID}`;
-      const localType = user?.type === "agent" ? "agent" : "human";
-      const color =
-        typeof user?.color === "string" && user.color.trim().length > 0
-          ? user.color
-          : nameToColor(localName);
+      const localPeer = parseAwarenessPeer(
+        awareness.clientID,
+        awareness.getLocalState(),
+        nameToColor,
+      );
 
       awareness.setLocalStateField("user", {
-        color,
-        name: localName,
-        type: localType,
+        color: localPeer.color,
+        name: localPeer.name,
+        type: localPeer.type,
       });
       awareness.setLocalStateField("cursor", cursor);
       awareness.setLocalStateField("viewport", viewport);

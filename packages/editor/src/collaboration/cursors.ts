@@ -18,6 +18,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import type { Awareness } from "y-protocols/awareness";
+import { readAwarenessPeers } from "./presence";
 
 /** Milliseconds before a name label auto-hides after last cursor movement. */
 const LABEL_HIDE_DELAY_MS = 3_000;
@@ -254,47 +255,37 @@ export function remoteCursorExtension(
   const lastMovedAt = new Map<number, number>();
 
   function readPeers(): readonly RemotePeer[] {
-    const localClientId = awareness.clientID;
     const now = nowFn();
     const peers: RemotePeer[] = [];
+    const awarenessPeers = readAwarenessPeers(awareness.getStates(), {
+      fallbackColor: nameToColor,
+      includeLocal: false,
+      localClientId: awareness.clientID,
+    });
 
-    for (const [clientId, state] of awareness.getStates()) {
-      if (clientId === localClientId) continue;
-
-      // y-codemirror.next stores cursor info in state.cursor
-      const cursor = state.cursor;
-      if (cursor == null) continue;
-
-      // y-codemirror.next encodes selection as {anchor, head}.
-      const anchor =
-        typeof cursor.anchor === "number" ? cursor.anchor : undefined;
-      const head = typeof cursor.head === "number" ? cursor.head : undefined;
-      if (anchor == null && head == null) continue;
-
-      const safeAnchor = anchor ?? head ?? 0;
-      const safeHead = head ?? anchor ?? 0;
-      const selectionFrom = Math.min(safeAnchor, safeHead);
-      const selectionTo = Math.max(safeAnchor, safeHead);
-      const cursorPos = safeHead;
-
-      const name: string = state.user?.name ?? `User ${clientId}`;
-      const color: string = state.user?.color ?? nameToColor(name);
+    for (const peer of awarenessPeers) {
+      if (!peer.cursor) {
+        continue;
+      }
+      const selectionFrom = Math.min(peer.cursor.anchor, peer.cursor.head);
+      const selectionTo = Math.max(peer.cursor.anchor, peer.cursor.head);
+      const cursorPos = peer.cursor.head;
 
       // Detect cursor movement.
-      const prevPos = lastKnownCursor.get(clientId);
+      const prevPos = lastKnownCursor.get(peer.clientId);
       if (prevPos !== cursorPos) {
-        lastMovedAt.set(clientId, now);
-        lastKnownCursor.set(clientId, cursorPos);
+        lastMovedAt.set(peer.clientId, now);
+        lastKnownCursor.set(peer.clientId, cursorPos);
       }
 
       peers.push({
-        clientId,
-        name,
-        color,
+        clientId: peer.clientId,
+        name: peer.name,
+        color: peer.color,
         cursor: cursorPos,
         selectionFrom,
         selectionTo,
-        lastMovedAt: lastMovedAt.get(clientId) ?? now,
+        lastMovedAt: lastMovedAt.get(peer.clientId) ?? now,
       });
     }
 
