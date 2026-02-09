@@ -96,7 +96,7 @@ function registerToolHandlers(
 ): void {
   registerStatusTool(server, daemonClient, resolveAgentName);
   registerSubscribeTool(server, daemonClient, resolveAgentName);
-  registerPassthroughTools(server, daemonClient);
+  registerPassthroughTools(server, daemonClient, resolveAgentName);
 }
 
 function registerResourceHandlers(

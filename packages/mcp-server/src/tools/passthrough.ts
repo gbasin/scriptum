@@ -2,9 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { DaemonClient } from "../daemon-client";
 import {
+  type AgentNameResolver,
   makeToolResult,
   PASSTHROUGH_TOOL_INPUT_SCHEMA,
   type ToolDefinition,
+  type ToolPayload,
   toToolPayload,
 } from "../shared";
 
@@ -65,9 +67,12 @@ const PASSTHROUGH_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   },
 ];
 
+const MUTATING_RPC_METHODS = new Set<string>(["doc.edit", "agent.claim"]);
+
 export function registerPassthroughTools(
   server: McpServer,
   daemonClient: DaemonClient,
+  resolveAgentName: AgentNameResolver,
 ): void {
   for (const definition of PASSTHROUGH_TOOL_DEFINITIONS) {
     server.registerTool(
@@ -77,7 +82,11 @@ export function registerPassthroughTools(
         inputSchema: PASSTHROUGH_TOOL_INPUT_SCHEMA,
       },
       async (toolArgs) => {
-        const rpcParams = toToolPayload(toolArgs);
+        const rpcParams = injectAgentIdForMutatingCalls(
+          definition.rpcMethod,
+          toToolPayload(toolArgs),
+          resolveAgentName,
+        );
         const payload = await daemonClient.request(
           definition.rpcMethod,
           rpcParams,
@@ -87,4 +96,19 @@ export function registerPassthroughTools(
       },
     );
   }
+}
+
+function injectAgentIdForMutatingCalls(
+  rpcMethod: string,
+  rpcParams: ToolPayload,
+  resolveAgentName: AgentNameResolver,
+): ToolPayload {
+  if (!MUTATING_RPC_METHODS.has(rpcMethod)) {
+    return rpcParams;
+  }
+
+  return {
+    ...rpcParams,
+    agent_id: resolveAgentName(),
+  };
 }

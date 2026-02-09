@@ -171,6 +171,21 @@ describe("mcp tool contract", () => {
         MCP_TO_DAEMON_CONTRACT.scriptum_claim,
         MCP_TO_DAEMON_CONTRACT.scriptum_bundle,
       ]);
+      expect(calls[3]?.params).toEqual({
+        workspace_id: "ws",
+        doc_id: "doc",
+        client_update_id: "cu-1",
+        content_md: "hello",
+        agent_id: "contract-checker",
+      });
+      expect(calls[9]?.params).toEqual({
+        workspace_id: "ws",
+        doc_id: "doc",
+        section_id: "sec-1",
+        ttl_sec: 300,
+        mode: "shared",
+        agent_id: "contract-checker",
+      });
 
       const statusPayload = readToolResultPayload(statusResult);
       expect(statusPayload.structuredContent).toEqual({
@@ -214,6 +229,77 @@ describe("mcp tool contract", () => {
           echoed_params: expect.anything(),
         });
       }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("uses daemon change_token from agent.status to compute subscribe changed flag", async () => {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    let statusCallCount = 0;
+    const daemonClient: DaemonClient = {
+      async request(method: string) {
+        if (method !== "agent.status") {
+          return {} as never;
+        }
+        const changeToken = statusCallCount === 0 ? "tok-1" : "tok-2";
+        statusCallCount += 1;
+        return {
+          active_sessions: [],
+          change_token: changeToken,
+        } as never;
+      },
+    };
+    const server = createServer({
+      daemonClient,
+      transportFactory: () => serverTransport,
+    });
+    const client = new Client({
+      name: "contract-checker",
+      version: "1.0.0",
+    });
+
+    await server.start();
+
+    try {
+      await client.connect(clientTransport);
+
+      const unchanged = await client.callTool({
+        name: "scriptum_subscribe",
+        arguments: { workspace_id: "ws", last_change_token: "tok-1" },
+      });
+      const changed = await client.callTool({
+        name: "scriptum_subscribe",
+        arguments: { workspace_id: "ws", last_change_token: "tok-1" },
+      });
+
+      const unchangedPayload = readToolResultPayload(unchanged).structuredContent as {
+        changed: boolean;
+        change_token: string | null;
+      };
+      const changedPayload = readToolResultPayload(changed).structuredContent as {
+        changed: boolean;
+        change_token: string | null;
+      };
+
+      expect(unchangedPayload).toEqual({
+        changed: false,
+        change_token: "tok-1",
+        status: {
+          active_sessions: [],
+          change_token: "tok-1",
+        },
+      });
+      expect(changedPayload).toEqual({
+        changed: true,
+        change_token: "tok-2",
+        status: {
+          active_sessions: [],
+          change_token: "tok-2",
+        },
+      });
     } finally {
       await client.close();
       await server.close();

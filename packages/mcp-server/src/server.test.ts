@@ -197,8 +197,16 @@ describe("mcp server scaffold", () => {
       });
       const editPayload = readToolTextPayload(editToolResult) as {
         forwarded_method: string;
+        forwarded_params: Record<string, unknown>;
       };
       expect(editPayload.forwarded_method).toBe("doc.edit");
+      expect(editPayload.forwarded_params).toEqual({
+        workspace_id: "ws-1",
+        doc_id: "doc-1",
+        content: "Updated content",
+        agent: "cursor",
+        agent_id: "cursor",
+      });
 
       const listToolResult = await client.callTool({
         name: "scriptum_list",
@@ -255,8 +263,18 @@ describe("mcp server scaffold", () => {
       });
       const claimPayload = readToolTextPayload(claimToolResult) as {
         forwarded_method: string;
+        forwarded_params: Record<string, unknown>;
       };
       expect(claimPayload.forwarded_method).toBe("agent.claim");
+      expect(claimPayload.forwarded_params).toEqual({
+        workspace_id: "ws-1",
+        doc_id: "doc-1",
+        section_id: "sec-1",
+        ttl_sec: 600,
+        mode: "shared",
+        note: "rewriting auth",
+        agent_id: "cursor",
+      });
 
       const bundleToolResult = await client.callTool({
         name: "scriptum_bundle",
@@ -303,6 +321,7 @@ describe("mcp server scaffold", () => {
             doc_id: "doc-1",
             content: "Updated content",
             agent: "cursor",
+            agent_id: "cursor",
           },
         },
         {
@@ -347,6 +366,7 @@ describe("mcp server scaffold", () => {
             ttl_sec: 600,
             mode: "shared",
             note: "rewriting auth",
+            agent_id: "cursor",
           },
         },
         {
