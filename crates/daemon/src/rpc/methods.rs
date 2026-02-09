@@ -37,6 +37,7 @@ use scriptum_common::protocol::jsonrpc::{
     INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
     SUPPORTED_PROTOCOL_VERSIONS as RPC_SUPPORTED_PROTOCOL_VERSIONS,
 };
+use scriptum_common::protocol::rpc_methods;
 use scriptum_common::section::{parser::parse_sections, slug::slugify};
 use scriptum_common::types::{
     AgentSession as RpcAgentSession, Document as RpcDocument, EditorType, OverlapEditor,
@@ -294,6 +295,8 @@ struct DocReadParams {
     doc_id: Uuid,
     #[serde(default)]
     include_content: bool,
+    #[serde(default)]
+    include_backlinks: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -302,6 +305,8 @@ struct DocReadResult {
     sections: Vec<Section>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content_md: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backlinks: Option<Vec<BacklinkContext>>,
     attributions: Vec<SectionAttribution>,
     degraded: bool,
 }
@@ -1629,6 +1634,7 @@ impl RpcServerState {
         workspace_id: Uuid,
         doc_id: Uuid,
         include_content: bool,
+        include_backlinks: bool,
     ) -> DocReadResult {
         let doc = {
             let mut manager = self.doc_manager.write().await;
@@ -1648,6 +1654,31 @@ impl RpcServerState {
         let sections = parse_sections(&content_md);
         self.record_doc_snapshot(workspace_id, doc_id, metadata.head_seq, &content_md).await;
         let degraded = self.degraded_docs.read().await.contains(&doc_id);
+        let backlinks = if include_backlinks {
+            let metadata_by_doc_id = {
+                let metadata = self.doc_metadata.read().await;
+                metadata
+                    .values()
+                    .filter(|record| record.workspace_id == workspace_id)
+                    .cloned()
+                    .map(|record| (record.doc_id.to_string(), record))
+                    .collect::<HashMap<_, _>>()
+            };
+            match self.load_bundle_backlinks(workspace_id, doc_id, &metadata_by_doc_id) {
+                Ok(backlinks) => Some(backlinks),
+                Err(error) => {
+                    warn!(
+                        doc_id = %doc_id,
+                        workspace_id = %workspace_id,
+                        error = %error,
+                        "failed to load backlinks for doc.read"
+                    );
+                    Some(Vec::new())
+                }
+            }
+        } else {
+            None
+        };
 
         {
             let mut manager = self.doc_manager.write().await;
@@ -1658,6 +1689,7 @@ impl RpcServerState {
             document,
             sections,
             content_md: include_content.then_some(content_md),
+            backlinks,
             attributions: Vec::new(),
             degraded,
         }
@@ -1750,6 +1782,22 @@ impl RpcServerState {
                 &updated_content,
             )
             .await;
+            let source_doc_id = params.doc_id.to_string();
+            let linkable_docs = {
+                let metadata = self.doc_metadata.read().await;
+                metadata
+                    .values()
+                    .filter(|record| record.workspace_id == params.workspace_id)
+                    .map(|record| LinkableDocument {
+                        doc_id: record.doc_id.to_string(),
+                        path: record.path.clone(),
+                        title: Some(record.title.clone()),
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let parsed_links = parse_wiki_links(&updated_content);
+            let resolved_backlinks =
+                resolve_wiki_links(&source_doc_id, &parsed_links, &linkable_docs);
             if let Err(error) = self.with_agent_storage(|conn, _| {
                 Self::upsert_search_index_entry(
                     conn,
@@ -1757,13 +1805,22 @@ impl RpcServerState {
                     &updated_title,
                     &updated_content,
                 )?;
+                let backlink_store = BacklinkStore::new(conn);
+                backlink_store
+                    .ensure_schema()
+                    .map_err(|error| format!("failed to ensure backlink index schema: {error}"))?;
+                backlink_store.replace_for_source(&source_doc_id, &resolved_backlinks).map_err(
+                    |error| {
+                        format!("failed to update backlinks for doc {}: {error}", params.doc_id)
+                    },
+                )?;
                 Ok(())
             }) {
                 warn!(
                     doc_id = %params.doc_id,
                     workspace_id = %params.workspace_id,
                     error = %error,
-                    "failed to update persistent search index after doc.edit"
+                    "failed to update persistent search/backlink indexes after doc.edit"
                 );
             }
 
@@ -2195,13 +2252,13 @@ pub async fn handle_raw_request(raw: &[u8], state: &RpcServerState) -> Response 
 
 pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Response {
     match request.method.as_str() {
-        "rpc.ping" => Response::success(
+        rpc_methods::RPC_PING => Response::success(
             request.id,
             json!({
                 "ok": true,
             }),
         ),
-        "daemon.shutdown" => {
+        rpc_methods::DAEMON_SHUTDOWN => {
             if let Some(notifier) = &state.shutdown_notifier {
                 let _ = notifier.send(());
             }
@@ -2212,25 +2269,25 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
                 }),
             )
         }
-        "doc.read" => handle_doc_read(request, state).await,
-        "doc.edit" => handle_doc_edit(request, state).await,
-        "doc.bundle" => handle_doc_bundle(request, state).await,
-        "doc.edit_section" => handle_doc_edit_section(request, state).await,
-        "doc.sections" => handle_doc_sections(request, state).await,
-        "doc.diff" => handle_doc_diff(request, state).await,
-        "doc.search" => handle_doc_search(request, state).await,
-        "doc.tree" => handle_doc_tree(request, state).await,
-        "agent.whoami" => handle_agent_whoami(request, state),
-        "agent.status" => handle_agent_status(request, state).await,
-        "agent.conflicts" => handle_agent_conflicts(request, state),
-        "agent.list" => handle_agent_list(request, state),
-        "agent.claim" => handle_agent_claim(request, state),
-        "workspace.list" => handle_workspace_list(request, state).await,
-        "workspace.open" => handle_workspace_open(request, state).await,
-        "workspace.create" => handle_workspace_create(request, state).await,
-        "git.status" => handle_git_status(request, state),
-        "git.sync" => handle_git_sync(request, state).await,
-        "git.configure" => handle_git_configure(request, state),
+        rpc_methods::DOC_READ => handle_doc_read(request, state).await,
+        rpc_methods::DOC_EDIT => handle_doc_edit(request, state).await,
+        rpc_methods::DOC_BUNDLE => handle_doc_bundle(request, state).await,
+        rpc_methods::DOC_EDIT_SECTION => handle_doc_edit_section(request, state).await,
+        rpc_methods::DOC_SECTIONS => handle_doc_sections(request, state).await,
+        rpc_methods::DOC_DIFF => handle_doc_diff(request, state).await,
+        rpc_methods::DOC_SEARCH => handle_doc_search(request, state).await,
+        rpc_methods::DOC_TREE => handle_doc_tree(request, state).await,
+        rpc_methods::AGENT_WHOAMI => handle_agent_whoami(request, state),
+        rpc_methods::AGENT_STATUS => handle_agent_status(request, state).await,
+        rpc_methods::AGENT_CONFLICTS => handle_agent_conflicts(request, state),
+        rpc_methods::AGENT_LIST => handle_agent_list(request, state),
+        rpc_methods::AGENT_CLAIM => handle_agent_claim(request, state),
+        rpc_methods::WORKSPACE_LIST => handle_workspace_list(request, state).await,
+        rpc_methods::WORKSPACE_OPEN => handle_workspace_open(request, state).await,
+        rpc_methods::WORKSPACE_CREATE => handle_workspace_create(request, state).await,
+        rpc_methods::GIT_STATUS => handle_git_status(request, state),
+        rpc_methods::GIT_SYNC => handle_git_sync(request, state).await,
+        rpc_methods::GIT_CONFIGURE => handle_git_configure(request, state),
         "rpc.internal_error" => Response::error(
             request.id,
             RpcError { code: INTERNAL_ERROR, message: "Internal error".to_string(), data: None },
@@ -2252,7 +2309,14 @@ async fn handle_doc_read(request: Request, state: &RpcServerState) -> Response {
         Err(response) => return response,
     };
 
-    let result = state.read_doc(params.workspace_id, params.doc_id, params.include_content).await;
+    let result = state
+        .read_doc(
+            params.workspace_id,
+            params.doc_id,
+            params.include_content,
+            params.include_backlinks,
+        )
+        .await;
     Response::success(request.id, json!(result))
 }
 
@@ -2437,11 +2501,11 @@ fn handle_agent_whoami(request: Request, state: &RpcServerState) -> Response {
     let result = AgentWhoamiResult {
         agent_id: (*state.agent_id).clone(),
         capabilities: vec![
-            "agent.whoami".to_string(),
-            "agent.status".to_string(),
-            "agent.conflicts".to_string(),
-            "agent.list".to_string(),
-            "agent.claim".to_string(),
+            rpc_methods::AGENT_WHOAMI.to_string(),
+            rpc_methods::AGENT_STATUS.to_string(),
+            rpc_methods::AGENT_CONFLICTS.to_string(),
+            rpc_methods::AGENT_LIST.to_string(),
+            rpc_methods::AGENT_CLAIM.to_string(),
         ],
     };
     Response::success(request.id, json!(result))
@@ -3454,6 +3518,7 @@ mod tests {
         assert!(response.error.is_none(), "expected success response: {response:?}");
         let result = response.result.expect("result should be populated");
         assert_eq!(result.get("content_md"), None);
+        assert_eq!(result.get("backlinks"), None);
         assert_eq!(result["sections"].as_array().expect("sections should be an array").len(), 1);
     }
 
@@ -3502,7 +3567,7 @@ mod tests {
         assert_eq!(result["head_seq"], json!(1));
         assert_eq!(result["etag"], json!(format!("doc:{doc_id}:1")));
 
-        let read = state.read_doc(workspace_id, doc_id, true).await;
+        let read = state.read_doc(workspace_id, doc_id, true, false).await;
         assert_eq!(read.content_md, Some("# After\nnew".to_string()));
         assert_eq!(read.document.head_seq, 1);
         assert_eq!(read.document.etag, format!("doc:{doc_id}:1"));
@@ -3531,9 +3596,151 @@ mod tests {
         let response = dispatch_request(request, &state).await;
 
         assert!(response.error.is_none(), "expected success response: {response:?}");
-        let read = state.read_doc(workspace_id, doc_id, true).await;
+        let read = state.read_doc(workspace_id, doc_id, true, false).await;
         assert_eq!(read.content_md, Some("inserted via ops".to_string()));
         assert_eq!(read.document.head_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn doc_edit_indexes_backlinks_and_doc_read_returns_incoming_backlinks() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let target_doc_id = Uuid::new_v4();
+        let source_doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, target_doc_id, "docs/target.md", "Target", "# Target\n").await;
+        state.seed_doc(workspace_id, source_doc_id, "docs/source.md", "Source", "# Source\n").await;
+
+        let edit_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": source_doc_id,
+                    "client_update_id": "upd-backlinks-add-1",
+                    "content_md": "# Source\nSee [[docs/target.md]].",
+                })),
+                RequestId::Number(84),
+            ),
+            &state,
+        )
+        .await;
+        assert!(edit_response.error.is_none(), "doc.edit should succeed: {edit_response:?}");
+
+        let read_response = dispatch_request(
+            Request::new(
+                "doc.read",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": target_doc_id,
+                    "include_backlinks": true
+                })),
+                RequestId::Number(85),
+            ),
+            &state,
+        )
+        .await;
+        assert!(read_response.error.is_none(), "doc.read should succeed: {read_response:?}");
+        let read_result = read_response.result.expect("doc.read result should be present");
+        let backlinks = read_result["backlinks"]
+            .as_array()
+            .expect("doc.read backlinks should be present when include_backlinks=true");
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0]["doc_id"], json!(source_doc_id));
+        assert_eq!(backlinks[0]["path"], json!("docs/source.md"));
+        assert_eq!(backlinks[0]["snippet"], json!("docs/target.md"));
+
+        let bundle_response = dispatch_request(
+            Request::new(
+                "doc.bundle",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": target_doc_id,
+                    "include": ["backlinks"],
+                    "token_budget": 4000
+                })),
+                RequestId::Number(86),
+            ),
+            &state,
+        )
+        .await;
+        assert!(bundle_response.error.is_none(), "doc.bundle should succeed: {bundle_response:?}");
+        let bundle_result = bundle_response.result.expect("doc.bundle result should be present");
+        assert_eq!(bundle_result["context"]["backlinks"][0]["doc_id"], json!(source_doc_id));
+        assert_eq!(bundle_result["context"]["backlinks"][0]["path"], json!("docs/source.md"));
+    }
+
+    #[tokio::test]
+    async fn doc_edit_removes_backlinks_when_links_are_deleted() {
+        let state = RpcServerState::default();
+        let workspace_id = Uuid::new_v4();
+        let target_doc_id = Uuid::new_v4();
+        let source_doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, target_doc_id, "docs/target.md", "Target", "# Target\n").await;
+        state.seed_doc(workspace_id, source_doc_id, "docs/source.md", "Source", "# Source\n").await;
+
+        let add_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": source_doc_id,
+                    "client_update_id": "upd-backlinks-remove-1",
+                    "content_md": "# Source\nSee [[docs/target.md]].",
+                })),
+                RequestId::Number(87),
+            ),
+            &state,
+        )
+        .await;
+        assert!(add_response.error.is_none(), "initial doc.edit should succeed: {add_response:?}");
+
+        let remove_response = dispatch_request(
+            Request::new(
+                "doc.edit",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": source_doc_id,
+                    "client_update_id": "upd-backlinks-remove-2",
+                    "content_md": "# Source\nNo links now.",
+                })),
+                RequestId::Number(88),
+            ),
+            &state,
+        )
+        .await;
+        assert!(
+            remove_response.error.is_none(),
+            "second doc.edit should succeed: {remove_response:?}"
+        );
+
+        let read_response = dispatch_request(
+            Request::new(
+                "doc.read",
+                Some(json!({
+                    "workspace_id": workspace_id,
+                    "doc_id": target_doc_id,
+                    "include_backlinks": true
+                })),
+                RequestId::Number(89),
+            ),
+            &state,
+        )
+        .await;
+        assert!(read_response.error.is_none(), "doc.read should succeed: {read_response:?}");
+        let read_result = read_response.result.expect("doc.read result should be present");
+        assert_eq!(read_result["backlinks"], json!([]));
+
+        let backlink_count = state
+            .with_agent_storage(|conn, _| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM backlinks WHERE source_doc_id = ?1 AND target_doc_id = ?2",
+                    rusqlite::params![source_doc_id.to_string(), target_doc_id.to_string()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("failed to count backlinks: {error}"))
+            })
+            .expect("backlink count should query");
+        assert_eq!(backlink_count, 0);
     }
 
     #[tokio::test]
@@ -3573,7 +3780,7 @@ mod tests {
         assert_eq!(report.recovered_docs, 1);
         assert!(report.degraded_docs.is_empty());
 
-        let recovered_doc = recovered_state.read_doc(workspace_id, doc_id, true).await;
+        let recovered_doc = recovered_state.read_doc(workspace_id, doc_id, true, false).await;
         assert_eq!(recovered_doc.content_md, Some("# Recovered\nfrom wal\n".to_string()));
     }
 
@@ -3607,7 +3814,7 @@ mod tests {
             .unwrap_or_default();
         assert!(reason.contains("if_etag mismatch"));
 
-        let read = state.read_doc(workspace_id, doc_id, true).await;
+        let read = state.read_doc(workspace_id, doc_id, true, false).await;
         assert_eq!(read.content_md, Some("unchanged".to_string()));
         assert_eq!(read.document.head_seq, 0);
         assert_eq!(read.document.etag, format!("doc:{doc_id}:0"));

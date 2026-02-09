@@ -141,11 +141,13 @@ export interface DocReadParams {
   workspace_id: string;
   doc_id: string;
   include_content?: boolean;
+  include_backlinks?: boolean;
 }
 
 export interface DocReadResult {
   document: RpcDocument;
   content_md?: string;
+  backlinks?: DocBundleBacklink[];
   sections: RpcSection[];
   attributions?: RpcSectionAttribution[];
   degraded: boolean;
