@@ -430,6 +430,102 @@ describe("Layout responsive panels", () => {
       root.unmount();
     });
   });
+
+  it("shows a compact backdrop and closes the sidebar when clicked", () => {
+    setViewportWidth(900);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const showSidebarButton = container.querySelector(
+      '[data-testid="sidebar-toggle"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      showSidebarButton?.click();
+    });
+
+    expect(
+      container.querySelector('[data-testid="compact-panel-backdrop"]'),
+    ).not.toBeNull();
+    expect(useUiStore.getState().sidebarOpen).toBe(true);
+
+    const backdrop = container.querySelector(
+      '[data-testid="compact-panel-backdrop"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      backdrop?.click();
+    });
+
+    expect(container.querySelector('[data-testid="app-sidebar"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="compact-panel-backdrop"]'),
+    ).toBeNull();
+    expect(useUiStore.getState().sidebarOpen).toBe(false);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("uses the compact backdrop to close the outline panel", () => {
+    setViewportWidth(900);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/workspace/ws-alpha"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/workspace/:workspaceId" element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const showOutlineButton = container.querySelector(
+      '[data-testid="outline-panel-toggle"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      showOutlineButton?.click();
+    });
+
+    expect(container.querySelector('[data-testid="outline-panel"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="compact-panel-backdrop"]'),
+    ).not.toBeNull();
+    expect(useUiStore.getState().rightPanelOpen).toBe(true);
+
+    const backdrop = container.querySelector(
+      '[data-testid="compact-panel-backdrop"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      backdrop?.click();
+    });
+
+    expect(container.querySelector('[data-testid="outline-panel"]')).toBeNull();
+    expect(useUiStore.getState().rightPanelOpen).toBe(false);
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });
 
 describe("Layout route error boundary", () => {

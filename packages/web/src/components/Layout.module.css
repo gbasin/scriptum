@@ -173,6 +173,17 @@
   outline-offset: 2px;
 }
 
+.compactPanelBackdrop {
+  appearance: none;
+  background: oklch(0.05 0.01 270 / 0.5);
+  border: 0;
+  cursor: pointer;
+  inset: 0;
+  padding: 0;
+  position: fixed;
+  z-index: var(--z-overlay);
+}
+
 .deleteOverlay {
   align-items: center;
   background: oklch(0.16 0.01 270 / 0.62);

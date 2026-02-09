@@ -280,9 +280,28 @@ export function Layout() {
   const handleBacklinkSelect = (documentId: string) => {
     handleDocumentSelect(documentId);
   };
+  const showCompactPanelBackdrop =
+    isCompactLayout && (sidebarOpen || rightPanelOpen);
+  const handleCompactPanelBackdropClick = () => {
+    if (sidebarOpen) {
+      toggleSidebar();
+    }
+    if (rightPanelOpen) {
+      toggleRightPanel();
+    }
+  };
 
   return (
     <div className={styles.layout} data-testid="app-layout">
+      {showCompactPanelBackdrop ? (
+        <button
+          aria-label="Close panels"
+          className={styles.compactPanelBackdrop}
+          data-testid="compact-panel-backdrop"
+          onClick={handleCompactPanelBackdropClick}
+          type="button"
+        />
+      ) : null}
       {sidebarOpen ? (
         <aside
           aria-label="Sidebar"
