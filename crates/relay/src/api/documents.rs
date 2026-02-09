@@ -88,6 +88,10 @@ impl From<DocumentRow> for Document {
 pub struct CreateDocumentRequest {
     pub path: String,
     pub title: Option<String>,
+    #[serde(default)]
+    pub content_md: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -173,6 +177,23 @@ pub struct CreateAclOverrideRequest {
 #[derive(Serialize)]
 struct DocumentEnvelope {
     document: Document,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DocumentSection {
+    id: String,
+    parent_id: Option<String>,
+    heading: String,
+    level: i32,
+    start_line: i64,
+    end_line: i64,
+}
+
+#[derive(Serialize)]
+struct CreateDocumentEnvelope {
+    document: Document,
+    sections: Vec<DocumentSection>,
+    etag: String,
 }
 
 #[derive(Serialize)]
@@ -328,14 +349,36 @@ async fn create_document(
     Extension(user): Extension<AuthenticatedUser>,
     Path(ws_id): Path<Uuid>,
     ValidatedJson(payload): ValidatedJson<CreateDocumentRequest>,
-) -> Result<(StatusCode, Json<DocumentEnvelope>), DocApiError> {
+) -> Result<(StatusCode, [(&'static str, String); 1], Json<CreateDocumentEnvelope>), DocApiError> {
     require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
     validate_path(&payload.path)?;
 
-    let document =
-        state.store.create(ws_id, user.user_id, &payload.path, payload.title.as_deref()).await?;
+    let normalized_tags = if payload.tags.is_empty() {
+        None
+    } else {
+        Some(normalize_tag_names(&payload.tags)?)
+    };
 
-    Ok((StatusCode::CREATED, Json(DocumentEnvelope { document })))
+    let mut document =
+        state.store.create(ws_id, user.user_id, &payload.path, payload.title.as_deref()).await?;
+    if let Some(tags) = normalized_tags {
+        document = state
+            .store
+            .update_tags(ws_id, document.id, DocumentTagOp::Add, &tags)
+            .await?;
+    }
+
+    let etag = document.etag.clone();
+
+    Ok((
+        StatusCode::CREATED,
+        [("etag", etag.clone())],
+        Json(CreateDocumentEnvelope {
+            document,
+            sections: Vec::new(),
+            etag,
+        }),
+    ))
 }
 
 async fn list_documents(
@@ -1494,18 +1537,32 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 &format!("/v1/workspaces/{ws_id}/documents"),
-                serde_json::json!({"path": "notes/hello.md", "title": "Hello"}),
+                serde_json::json!({
+                    "path": "notes/hello.md",
+                    "title": "Hello",
+                    "content_md": "# Hello\n\nBody",
+                    "tags": ["rfc", "auth"],
+                }),
                 &token,
             ))
             .await
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::CREATED);
+        let etag_header = resp
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .unwrap()
+            .to_string();
 
         let body = body_json(resp).await;
         assert_eq!(body["document"]["path"], "notes/hello.md");
         assert_eq!(body["document"]["title"], "Hello");
         assert!(body["document"]["id"].is_string());
+        assert_eq!(body["document"]["etag"], body["etag"]);
+        assert_eq!(body["etag"].as_str().unwrap(), etag_header);
+        assert_eq!(body["sections"], serde_json::json!([]));
     }
 
     #[tokio::test]
