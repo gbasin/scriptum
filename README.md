@@ -80,6 +80,26 @@ Scriptum is in active implementation (not spec-only).
 
 See [SPEC.md](SPEC.md) for the full product and architecture reference.
 
+## Prerequisites
+
+- Node.js `20+`
+- pnpm `10+`
+- Rust toolchain via [rustup](https://rustup.rs/) (stable toolchain, Rust 2021 edition compatible)
+
+Install Rust on macOS/Linux:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+```
+
+Install Rust test and coverage tools:
+
+```bash
+cargo install cargo-nextest
+cargo install cargo-llvm-cov
+```
+
 ## Development
 
 ```bash
@@ -105,6 +125,40 @@ cargo install cargo-llvm-cov
 ```bash
 docker compose -f docker/compose.yml up --build
 curl http://localhost:8080/healthz
+```
+
+## MCP Server
+
+`@scriptum/mcp-server` ships a `scriptum-mcp` CLI for stdio MCP clients.
+
+```bash
+npx -y @scriptum/mcp-server
+```
+
+Claude Code MCP config:
+
+```json
+{
+  "mcpServers": {
+    "scriptum": {
+      "command": "npx",
+      "args": ["-y", "@scriptum/mcp-server"]
+    }
+  }
+}
+```
+
+Local repo config (without npm publish):
+
+```json
+{
+  "mcpServers": {
+    "scriptum": {
+      "command": "node",
+      "args": ["/absolute/path/to/scriptum/packages/mcp-server/dist/index.js"]
+    }
+  }
+}
 ```
 
 ## License
