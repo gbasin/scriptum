@@ -38,13 +38,14 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::{
+    audit::{self, AuditEventType, NewAuditEvent},
     auth::{
         jwt::JwtAccessTokenService,
         middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
         oauth::OAuthState,
     },
     db::pool::{check_pool_health, create_pg_pool, PoolConfig},
-    error::{ErrorCode, RelayError},
+    error::{current_request_id, ErrorCode, RelayError},
     idempotency::{self, IdempotencyDbState},
     validation::ValidatedJson,
 };
@@ -747,10 +748,26 @@ async fn create_share_link(
     let token = generate_share_link_token();
     let token_hash = hash_share_link_token(&token);
     let password_hash = payload.password.as_deref().map(hash_share_link_password).transpose()?;
+    let audit_payload = payload.clone();
     let share_link = state
         .store
         .create_share_link(workspace_id, user.user_id, payload, token_hash, password_hash)
         .await?;
+    try_record_audit_event(
+        &state,
+        Some(workspace_id),
+        Some(user.user_id),
+        AuditEventType::ShareLinkOperation,
+        "share_link",
+        share_link.id.to_string(),
+        Some(serde_json::json!({
+            "action": "create",
+            "target_type": audit_payload.target_type,
+            "target_id": audit_payload.target_id,
+            "permission": audit_payload.permission,
+        })),
+    )
+    .await;
 
     Ok((
         StatusCode::CREATED,
@@ -776,25 +793,54 @@ async fn list_share_links(
 
 async fn update_share_link(
     State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((workspace_id, share_link_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     ValidatedJson(payload): ValidatedJson<UpdateShareLinkRequest>,
 ) -> Result<Json<ShareLinkEnvelope>, ApiError> {
     validate_share_link_update_request(&payload)?;
     let if_match = extract_if_match(&headers)?;
+    let audit_payload = payload.clone();
     let share_link =
         state.store.update_share_link(workspace_id, share_link_id, if_match, payload).await?;
+    try_record_audit_event(
+        &state,
+        Some(workspace_id),
+        Some(user.user_id),
+        AuditEventType::ShareLinkOperation,
+        "share_link",
+        share_link.id.to_string(),
+        Some(serde_json::json!({
+            "action": "update",
+            "permission": audit_payload.permission,
+            "expires_at": audit_payload.expires_at,
+            "max_uses": audit_payload.max_uses,
+            "disabled": audit_payload.disabled,
+        })),
+    )
+    .await;
 
     Ok(Json(ShareLinkEnvelope { share_link: share_link.into_share_link(String::new()) }))
 }
 
 async fn revoke_share_link(
     State(state): State<ApiState>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((workspace_id, share_link_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let if_match = extract_if_match(&headers)?;
     state.store.revoke_share_link(workspace_id, share_link_id, if_match).await?;
+    try_record_audit_event(
+        &state,
+        Some(workspace_id),
+        Some(user.user_id),
+        AuditEventType::ShareLinkOperation,
+        "share_link",
+        share_link_id.to_string(),
+        Some(serde_json::json!({ "action": "revoke" })),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -942,7 +988,44 @@ async fn extract_workspace_id(request: Request) -> Result<(Request, Uuid), ApiEr
     Ok((Request::from_parts(parts, body), workspace_id))
 }
 
+async fn try_record_audit_event(
+    state: &ApiState,
+    workspace_id: Option<Uuid>,
+    actor_user_id: Option<Uuid>,
+    event_type: AuditEventType,
+    entity_type: &str,
+    entity_id: impl Into<String>,
+    details: Option<serde_json::Value>,
+) {
+    let Some(pool) = state.store.postgres_pool() else {
+        return;
+    };
+    let event = NewAuditEvent {
+        workspace_id,
+        actor_user_id,
+        actor_agent_id: None,
+        event_type,
+        entity_type: entity_type.to_owned(),
+        entity_id: entity_id.into(),
+        request_id: current_request_id(),
+        ip_address: None,
+        user_agent: None,
+        details,
+    };
+
+    if let Err(error) = audit::record_event(pool, event).await {
+        tracing::warn!(error = ?error, "failed to record relay audit event");
+    }
+}
+
 impl WorkspaceStore {
+    fn postgres_pool(&self) -> Option<&PgPool> {
+        match self {
+            Self::Postgres(pool) => Some(pool),
+            Self::Memory(_) => None,
+        }
+    }
+
     async fn create_workspace(
         &self,
         user_id: Uuid,

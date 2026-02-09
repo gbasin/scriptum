@@ -4,11 +4,16 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{auth::middleware::AuthenticatedUser, validation::ValidatedJson};
+use crate::{
+    audit::AuditEventType,
+    auth::middleware::AuthenticatedUser,
+    validation::ValidatedJson,
+};
 
 use super::{
     extract_if_match, normalize_limit, parse_cursor, validate_name, validate_slug, ApiError,
-    ApiState, CreateWorkspaceRequest, ListWorkspacesQuery, UpdateWorkspaceRequest,
+    try_record_audit_event, ApiState, CreateWorkspaceRequest, ListWorkspacesQuery,
+    UpdateWorkspaceRequest,
     WorkspaceEnvelope, WorkspaceRecord, WorkspacesPageEnvelope,
 };
 
@@ -19,12 +24,28 @@ pub(super) async fn create_workspace(
 ) -> Result<(StatusCode, Json<WorkspaceEnvelope>), ApiError> {
     validate_name(&payload.name)?;
     validate_slug(&payload.slug)?;
+    let audit_name = payload.name.clone();
+    let audit_slug = payload.slug.clone();
 
     let workspace = state
         .store
         .create_workspace(user.user_id, payload.name, payload.slug)
         .await?
         .into_workspace();
+    try_record_audit_event(
+        &state,
+        Some(workspace.id),
+        Some(user.user_id),
+        AuditEventType::AdminAction,
+        "workspace",
+        workspace.id.to_string(),
+        Some(serde_json::json!({
+            "action": "create",
+            "name": audit_name,
+            "slug": audit_slug,
+        })),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(WorkspaceEnvelope { workspace })))
 }
@@ -71,6 +92,8 @@ pub(super) async fn update_workspace(
     if let Some(slug) = payload.slug.as_deref() {
         validate_slug(slug)?;
     }
+    let audit_name = payload.name.clone();
+    let audit_slug = payload.slug.clone();
 
     let if_match = extract_if_match(&headers)?;
     let workspace = state
@@ -78,6 +101,20 @@ pub(super) async fn update_workspace(
         .update_workspace(user.user_id, workspace_id, if_match, payload)
         .await?
         .into_workspace();
+    try_record_audit_event(
+        &state,
+        Some(workspace_id),
+        Some(user.user_id),
+        AuditEventType::AdminAction,
+        "workspace",
+        workspace.id.to_string(),
+        Some(serde_json::json!({
+            "action": "update",
+            "name": audit_name,
+            "slug": audit_slug,
+        })),
+    )
+    .await;
 
     Ok(Json(WorkspaceEnvelope { workspace }))
 }

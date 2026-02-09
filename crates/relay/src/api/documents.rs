@@ -19,6 +19,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::{
     types::chrono::{DateTime, Utc},
     PgPool,
@@ -27,11 +28,12 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::{
+    audit::{self, AuditEventType, NewAuditEvent},
     auth::{
         jwt::JwtAccessTokenService,
         middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
     },
-    error::{ErrorCode, RelayError},
+    error::{current_request_id, ErrorCode, RelayError},
     validation::ValidatedJson,
 };
 
@@ -370,6 +372,21 @@ async fn create_document(
             .await?;
     }
 
+    try_record_document_audit_event(
+        &state,
+        user.user_id,
+        ws_id,
+        AuditEventType::AdminAction,
+        document.id,
+        json!({
+            "action": "create",
+            "path": document.path.clone(),
+            "title": document.title.clone(),
+            "head_seq": document.head_seq,
+        }),
+    )
+    .await;
+
     let etag = document.etag.clone();
 
     Ok((
@@ -429,6 +446,20 @@ async fn update_document(
 
     let if_match = extract_if_match(&headers)?;
     let document = state.store.update(ws_id, doc_id, if_match, &payload).await?;
+    try_record_document_audit_event(
+        &state,
+        user.user_id,
+        ws_id,
+        AuditEventType::AdminAction,
+        document.id,
+        json!({
+            "action": "update",
+            "path": document.path.clone(),
+            "title": document.title.clone(),
+            "head_seq": document.head_seq,
+        }),
+    )
+    .await;
 
     Ok(Json(DocumentEnvelope { document }))
 }
@@ -449,6 +480,18 @@ async fn delete_document(
 
     let hard = query.hard_delete.or(query.hard).unwrap_or(false);
     state.store.delete(ws_id, doc_id, hard).await?;
+    try_record_document_audit_event(
+        &state,
+        user.user_id,
+        ws_id,
+        AuditEventType::Delete,
+        doc_id,
+        json!({
+            "action": "delete",
+            "hard_delete": hard,
+        }),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -492,6 +535,13 @@ async fn delete_acl_override(
 // ── Store implementation ───────────────────────────────────────────
 
 impl DocumentStore {
+    fn postgres_pool(&self) -> Option<&PgPool> {
+        match self {
+            Self::Postgres(pool) => Some(pool),
+            Self::Memory(_) => None,
+        }
+    }
+
     async fn create(
         &self,
         workspace_id: Uuid,
@@ -1303,6 +1353,35 @@ fn mem_to_document(doc: &MemoryDocument) -> Document {
         created_at: doc.created_at,
         updated_at: doc.updated_at,
         archived_at: doc.archived_at,
+    }
+}
+
+async fn try_record_document_audit_event(
+    state: &DocApiState,
+    actor_user_id: Uuid,
+    workspace_id: Uuid,
+    event_type: AuditEventType,
+    document_id: Uuid,
+    details: serde_json::Value,
+) {
+    let Some(pool) = state.store.postgres_pool() else {
+        return;
+    };
+    let event = NewAuditEvent {
+        workspace_id: Some(workspace_id),
+        actor_user_id: Some(actor_user_id),
+        actor_agent_id: None,
+        event_type,
+        entity_type: "document".to_owned(),
+        entity_id: document_id.to_string(),
+        request_id: current_request_id(),
+        ip_address: None,
+        user_agent: None,
+        details: Some(details),
+    };
+
+    if let Err(error) = audit::record_event(pool, event).await {
+        tracing::warn!(error = ?error, "failed to record document audit event");
     }
 }
 

@@ -4,7 +4,9 @@ const API_MOD_SOURCE: &str = include_str!("../src/api/mod.rs");
 const AUTH_SOURCE: &str = include_str!("../src/auth/oauth.rs");
 const DOCUMENTS_SOURCE: &str = include_str!("../src/api/documents.rs");
 const COMMENTS_SOURCE: &str = include_str!("../src/api/comments.rs");
+const MEMBERS_SOURCE: &str = include_str!("../src/api/members.rs");
 const SEARCH_SOURCE: &str = include_str!("../src/api/search.rs");
+const WORKSPACES_SOURCE: &str = include_str!("../src/api/workspaces.rs");
 const WS_SOURCE: &str = include_str!("../src/ws/mod.rs");
 const WS_HANDLER_SOURCE: &str = include_str!("../src/ws/handler.rs");
 
@@ -199,5 +201,25 @@ fn rest_contract_applies_idempotency_middleware_for_api_posts() {
     assert!(
         API_MOD_SOURCE.contains("idempotency::idempotency_db_middleware"),
         "build_router_from_env must layer idempotency middleware to protect POST mutations",
+    );
+}
+
+#[test]
+fn rest_contract_sources_emit_audit_events_for_mutations() {
+    assert!(
+        DOCUMENTS_SOURCE.contains("try_record_document_audit_event("),
+        "documents mutation handlers must record audit events",
+    );
+    assert!(
+        WORKSPACES_SOURCE.contains("try_record_audit_event("),
+        "workspace mutation handlers must record audit events",
+    );
+    assert!(
+        MEMBERS_SOURCE.contains("try_record_audit_event("),
+        "membership mutation handlers must record audit events",
+    );
+    assert!(
+        API_MOD_SOURCE.contains("AuditEventType::ShareLinkOperation"),
+        "share-link mutation handlers must record share-link audit events",
     );
 }
