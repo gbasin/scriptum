@@ -29,7 +29,7 @@ use uuid::Uuid;
 use crate::{
     auth::{
         jwt::JwtAccessTokenService,
-        middleware::{require_bearer_auth, AuthenticatedUser},
+        middleware::{require_bearer_auth, AuthenticatedUser, WorkspaceRole},
     },
     error::{ErrorCode, RelayError},
     validation::ValidatedJson,
@@ -204,7 +204,7 @@ enum DocumentStore {
 struct MemoryDocumentStore {
     documents: HashMap<Uuid, MemoryDocument>,
     acl_overrides: HashMap<Uuid, MemoryAclOverride>,
-    workspace_owners: HashSet<(Uuid, Uuid)>,
+    workspace_members: HashMap<(Uuid, Uuid), WorkspaceRole>,
 }
 
 #[derive(Clone)]
@@ -329,6 +329,7 @@ async fn create_document(
     Path(ws_id): Path<Uuid>,
     ValidatedJson(payload): ValidatedJson<CreateDocumentRequest>,
 ) -> Result<(StatusCode, Json<DocumentEnvelope>), DocApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
     validate_path(&payload.path)?;
 
     let document =
@@ -339,10 +340,11 @@ async fn create_document(
 
 async fn list_documents(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path(ws_id): Path<Uuid>,
     Query(query): Query<ListDocumentsQuery>,
 ) -> Result<Json<DocumentsPageEnvelope>, DocApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Viewer).await?;
     let limit = normalize_limit(query.limit);
     let cursor = match query.cursor {
         Some(raw) => Some(parse_cursor(&raw)?),
@@ -359,20 +361,22 @@ async fn list_documents(
 
 async fn get_document(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Viewer).await?;
     let document = state.store.get(ws_id, doc_id).await?;
     Ok(Json(DocumentEnvelope { document }))
 }
 
 async fn update_document(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     ValidatedJson(payload): ValidatedJson<UpdateDocumentRequest>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
     if let Some(path) = payload.path.as_deref() {
         validate_path(path)?;
     }
@@ -385,10 +389,11 @@ async fn update_document(
 
 async fn delete_document(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<DeleteDocumentQuery>,
 ) -> Result<StatusCode, DocApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
     let hard = query.hard.unwrap_or(false);
     state.store.delete(ws_id, doc_id, hard).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -396,10 +401,11 @@ async fn delete_document(
 
 async fn update_document_tags(
     State(state): State<DocApiState>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<UpdateDocumentTagsRequest>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
     let tags = normalize_tag_names(&payload.tags)?;
     let document = state.store.update_tags(ws_id, doc_id, payload.op, &tags).await?;
     Ok(Json(DocumentEnvelope { document }))
@@ -411,10 +417,7 @@ async fn create_acl_override(
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     ValidatedJson(payload): ValidatedJson<CreateAclOverrideRequest>,
 ) -> Result<(StatusCode, Json<AclOverrideEnvelope>), DocApiError> {
-    if ws_id != user.workspace_id {
-        return Err(DocApiError::Forbidden);
-    }
-    ensure_acl_override_manager_access(&state.store, ws_id, doc_id, user.user_id).await?;
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
 
     validate_acl_override_request(&payload)?;
 
@@ -427,10 +430,7 @@ async fn delete_acl_override(
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id, override_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<StatusCode, DocApiError> {
-    if ws_id != user.workspace_id {
-        return Err(DocApiError::Forbidden);
-    }
-    ensure_acl_override_manager_access(&state.store, ws_id, doc_id, user.user_id).await?;
+    require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
 
     state.store.delete_acl_override(ws_id, doc_id, override_id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -544,6 +544,29 @@ impl DocumentStore {
             Self::Memory(store) => {
                 delete_acl_override_mem(store, workspace_id, doc_id, override_id).await
             }
+        }
+    }
+
+    async fn workspace_role_for_user(
+        &self,
+        user_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<WorkspaceRole>, DocApiError> {
+        match self {
+            Self::Postgres(pool) => workspace_role_for_user_pg(pool, user_id, workspace_id).await,
+            Self::Memory(store) => workspace_role_for_user_mem(store, user_id, workspace_id).await,
+        }
+    }
+
+    #[cfg(test)]
+    async fn grant_workspace_role_for_tests(
+        &self,
+        workspace_id: Uuid,
+        user_id: Uuid,
+        role: WorkspaceRole,
+    ) {
+        if let Self::Memory(store) = self {
+            store.write().await.workspace_members.insert((workspace_id, user_id), role);
         }
     }
 }
@@ -919,6 +942,35 @@ async fn delete_acl_override_pg(
     Ok(())
 }
 
+async fn workspace_role_for_user_pg(
+    pool: &PgPool,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, DocApiError> {
+    let role = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT role
+        FROM workspace_members
+        WHERE workspace_id = $1
+          AND user_id = $2
+          AND status = 'active'
+        LIMIT 1
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlx_error)?;
+
+    role.map(|value| {
+        WorkspaceRole::from_db_value(&value).ok_or_else(|| {
+            DocApiError::internal(anyhow::anyhow!("invalid workspace role '{value}' in database"))
+        })
+    })
+    .transpose()
+}
+
 // ── Memory implementations (for testing) ───────────────────────────
 
 async fn create_mem(
@@ -931,12 +983,8 @@ async fn create_mem(
     let mut store = store.write().await;
     let path_norm = normalize_doc_path(path);
 
-    if !store
-        .workspace_owners
-        .iter()
-        .any(|(existing_workspace_id, _)| *existing_workspace_id == workspace_id)
-    {
-        store.workspace_owners.insert((workspace_id, created_by));
+    if !store.workspace_members.keys().any(|(existing_workspace_id, _)| *existing_workspace_id == workspace_id) {
+        store.workspace_members.insert((workspace_id, created_by), WorkspaceRole::Owner);
     }
 
     // Check uniqueness.
@@ -1168,6 +1216,28 @@ async fn delete_acl_override_mem(
     Ok(())
 }
 
+async fn workspace_role_for_user_mem(
+    store: &RwLock<MemoryDocumentStore>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<WorkspaceRole>, DocApiError> {
+    let store = store.read().await;
+
+    if let Some(role) = store.workspace_members.get(&(workspace_id, user_id)).copied() {
+        return Ok(Some(role));
+    }
+
+    let has_members = store.workspace_members.keys().any(|(existing_workspace_id, _)| {
+        *existing_workspace_id == workspace_id
+    });
+    if !has_members {
+        // Memory tests bootstrap the first caller in a workspace as owner.
+        return Ok(Some(WorkspaceRole::Owner));
+    }
+
+    Ok(None)
+}
+
 fn mem_to_document(doc: &MemoryDocument) -> Document {
     Document {
         id: doc.id,
@@ -1183,83 +1253,24 @@ fn mem_to_document(doc: &MemoryDocument) -> Document {
     }
 }
 
-async fn ensure_acl_override_manager_access(
+async fn require_workspace_role(
     store: &DocumentStore,
+    user: &AuthenticatedUser,
     workspace_id: Uuid,
-    doc_id: Uuid,
-    user_id: Uuid,
+    required_role: WorkspaceRole,
 ) -> Result<(), DocApiError> {
-    match store {
-        DocumentStore::Postgres(pool) => {
-            ensure_acl_override_manager_access_pg(pool, workspace_id, doc_id, user_id).await
-        }
-        DocumentStore::Memory(store) => {
-            ensure_acl_override_manager_access_mem(store, workspace_id, doc_id, user_id).await
-        }
+    if user.workspace_id != workspace_id {
+        return Err(DocApiError::Forbidden);
     }
-}
 
-async fn ensure_acl_override_manager_access_pg(
-    pool: &PgPool,
-    workspace_id: Uuid,
-    doc_id: Uuid,
-    user_id: Uuid,
-) -> Result<(), DocApiError> {
-    let row = sqlx::query_as::<_, (bool, bool)>(
-        r#"
-        SELECT
-            d.created_by = $3 AS is_document_owner,
-            EXISTS(
-                SELECT 1
-                FROM workspace_members AS wm
-                WHERE wm.workspace_id = $1
-                  AND wm.user_id = $3
-                  AND wm.status = 'active'
-                  AND wm.role = 'owner'
-            ) AS is_workspace_owner
-        FROM documents AS d
-        WHERE d.workspace_id = $1
-          AND d.id = $2
-          AND d.deleted_at IS NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(doc_id)
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(map_sqlx_error)?;
-
-    let Some((is_document_owner, is_workspace_owner)) = row else {
-        return Err(DocApiError::NotFound);
+    let role = store.workspace_role_for_user(user.user_id, workspace_id).await?;
+    let Some(role) = role else {
+        return Err(DocApiError::Forbidden);
     };
-
-    if is_document_owner || is_workspace_owner {
-        Ok(())
-    } else {
-        Err(DocApiError::Forbidden)
+    if !role.allows(required_role) {
+        return Err(DocApiError::Forbidden);
     }
-}
-
-async fn ensure_acl_override_manager_access_mem(
-    store: &RwLock<MemoryDocumentStore>,
-    workspace_id: Uuid,
-    doc_id: Uuid,
-    user_id: Uuid,
-) -> Result<(), DocApiError> {
-    let store = store.read().await;
-    let doc = store.documents.get(&doc_id).ok_or(DocApiError::NotFound)?;
-    if doc.workspace_id != workspace_id || doc.deleted_at.is_some() {
-        return Err(DocApiError::NotFound);
-    }
-
-    let is_document_owner = doc.created_by == user_id;
-    let is_workspace_owner = store.workspace_owners.contains(&(workspace_id, user_id));
-    if is_document_owner || is_workspace_owner {
-        Ok(())
-    } else {
-        Err(DocApiError::Forbidden)
-    }
+    Ok(())
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -1892,12 +1903,14 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_owner_can_manage_acl_overrides_for_other_document_owner() {
-        let app = test_router();
+        let store = test_store();
+        let app = build_router_with_store(store.clone(), test_jwt_service());
         let jwt = test_jwt_service();
         let ws_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let owner_token = auth_token(&jwt, owner_id, ws_id);
-        let other_author_token = auth_token(&jwt, Uuid::new_v4(), ws_id);
+        let other_author_id = Uuid::new_v4();
+        let other_author_token = auth_token(&jwt, other_author_id, ws_id);
 
         // First document creation seeds owner_id as workspace owner in memory store.
         let _ = app
@@ -1910,6 +1923,10 @@ mod tests {
             ))
             .await
             .unwrap();
+
+        store
+            .grant_workspace_role_for_tests(ws_id, other_author_id, WorkspaceRole::Editor)
+            .await;
 
         let create_doc_resp = app
             .clone()
@@ -2041,6 +2058,180 @@ mod tests {
             .unwrap();
         let body = body_json(resp).await;
         assert_eq!(body["items"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn viewer_role_can_read_but_cannot_mutate_documents() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store.clone(), jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let viewer_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let viewer_token = auth_token(&jwt, viewer_id, ws_id);
+
+        let create_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "rbac.md"}),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_resp.status(), StatusCode::CREATED);
+        let create_body = body_json(create_resp).await;
+        let doc_id = create_body["document"]["id"].as_str().unwrap();
+        let etag = create_body["document"]["etag"].as_str().unwrap().to_string();
+
+        store
+            .grant_workspace_role_for_tests(ws_id, viewer_id, WorkspaceRole::Viewer)
+            .await;
+
+        let list_resp = app
+            .clone()
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents"), &viewer_token))
+            .await
+            .unwrap();
+        assert_eq!(list_resp.status(), StatusCode::OK);
+
+        let get_resp = app
+            .clone()
+            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &viewer_token))
+            .await
+            .unwrap();
+        assert_eq!(get_resp.status(), StatusCode::OK);
+
+        let create_forbidden = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "viewer-write.md"}),
+                &viewer_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_forbidden.status(), StatusCode::FORBIDDEN);
+
+        let patch_forbidden = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {viewer_token}"))
+                    .header("If-Match", etag)
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({"title": "nope"})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patch_forbidden.status(), StatusCode::FORBIDDEN);
+
+        let tags_forbidden = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/tags"),
+                serde_json::json!({"op": "add", "tags": ["restricted"]}),
+                &viewer_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(tags_forbidden.status(), StatusCode::FORBIDDEN);
+
+        let delete_forbidden = app
+            .clone()
+            .oneshot(delete_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &viewer_token))
+            .await
+            .unwrap();
+        assert_eq!(delete_forbidden.status(), StatusCode::FORBIDDEN);
+
+        let acl_forbidden = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "agent",
+                    "subject_id": "cursor",
+                    "role": "viewer"
+                }),
+                &viewer_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(acl_forbidden.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn editor_role_can_manage_acl_overrides_for_other_users_documents() {
+        let store = test_store();
+        let jwt = test_jwt_service();
+        let app = build_router_with_store(store.clone(), jwt.clone());
+
+        let ws_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let editor_id = Uuid::new_v4();
+        let owner_token = auth_token(&jwt, owner_id, ws_id);
+        let editor_token = auth_token(&jwt, editor_id, ws_id);
+
+        let create_doc_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents"),
+                serde_json::json!({"path": "acl-rbac.md"}),
+                &owner_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_doc_resp.status(), StatusCode::CREATED);
+        let create_doc_body = body_json(create_doc_resp).await;
+        let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
+
+        store
+            .grant_workspace_role_for_tests(ws_id, editor_id, WorkspaceRole::Editor)
+            .await;
+
+        let create_override_resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides"),
+                serde_json::json!({
+                    "subject_type": "agent",
+                    "subject_id": "cursor",
+                    "role": "editor"
+                }),
+                &editor_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_override_resp.status(), StatusCode::CREATED);
+        let create_override_body = body_json(create_override_resp).await;
+        let override_id = create_override_body["acl_override"]["id"].as_str().unwrap();
+
+        let delete_override_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!(
+                        "/v1/workspaces/{ws_id}/documents/{doc_id}/acl-overrides/{override_id}"
+                    ))
+                    .header("Authorization", format!("Bearer {editor_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_override_resp.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
