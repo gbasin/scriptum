@@ -5,6 +5,52 @@ import { type IdbCrdtStore, openIdbCrdtStore } from "./idb-store";
 
 let dbCounter = 0;
 
+function createOpenFailureFactory(message: string): IDBFactory {
+  return {
+    open: () => {
+      const request = {} as IDBOpenDBRequest;
+      queueMicrotask(() => {
+        (request as unknown as { error: DOMException | null }).error =
+          new DOMException(message, "AbortError");
+        request.onerror?.(new Event("error"));
+      });
+      return request;
+    },
+  } as unknown as IDBFactory;
+}
+
+function createAbortTransactionFactory(error: DOMException): IDBFactory {
+  return {
+    open: () => {
+      const request = {} as IDBOpenDBRequest;
+      queueMicrotask(() => {
+        const mutableTransaction = {
+          error: null as DOMException | null,
+          onabort: null as ((event: Event) => void) | null,
+          oncomplete: null as ((event: Event) => void) | null,
+          onerror: null as ((event: Event) => void) | null,
+          objectStore: () => ({
+            put: () => {
+              queueMicrotask(() => {
+                mutableTransaction.error = error;
+                mutableTransaction.onabort?.(new Event("abort"));
+              });
+            },
+          }),
+        };
+        const transaction = mutableTransaction as unknown as IDBTransaction;
+        const db = {
+          close: () => undefined,
+          transaction: () => transaction,
+        } as unknown as IDBDatabase;
+        (request as IDBOpenDBRequest & { result: IDBDatabase }).result = db;
+        request.onsuccess?.(new Event("success"));
+      });
+      return request;
+    },
+  } as unknown as IDBFactory;
+}
+
 describe("IdbCrdtStore", () => {
   let store: IdbCrdtStore;
 
@@ -127,5 +173,59 @@ describe("IdbCrdtStore", () => {
 
   it("deleteDocument is a no-op for nonexistent documents", async () => {
     await store.deleteDocument("nonexistent");
+  });
+
+  it("supports concurrent access from multiple store instances", async () => {
+    dbCounter += 1;
+    const dbName = `test-crdt-concurrent-${dbCounter}`;
+    const storeA = await openIdbCrdtStore({
+      idbFactory: indexedDB,
+      dbName,
+    });
+    const storeB = await openIdbCrdtStore({
+      idbFactory: indexedDB,
+      dbName,
+    });
+
+    try {
+      await storeA.saveSnapshot("doc-a", new Uint8Array([9, 9]));
+      expect(await storeB.loadSnapshot("doc-a")).toEqual(new Uint8Array([9, 9]));
+
+      await Promise.all([
+        storeA.queueUpdate("doc-a", new Uint8Array([1])),
+        storeB.queueUpdate("doc-a", new Uint8Array([2])),
+      ]);
+      const queuedPayloads = (await storeA.getQueuedUpdates("doc-a"))
+        .map((update) => Array.from(update).join(","))
+        .sort();
+      expect(queuedPayloads).toEqual(["1", "2"]);
+
+      await storeB.clearQueuedUpdates("doc-a");
+      expect(await storeA.getQueuedUpdates("doc-a")).toEqual([]);
+    } finally {
+      storeA.close();
+      storeB.close();
+    }
+  });
+
+  it("surfaces IndexedDB open failures", async () => {
+    const idbFactory = createOpenFailureFactory("blocked");
+    await expect(
+      openIdbCrdtStore({ idbFactory, dbName: "test-crdt-open-failure" }),
+    ).rejects.toThrow("Failed to open IndexedDB: blocked");
+  });
+
+  it("propagates transaction abort errors such as quota exceeded", async () => {
+    const quotaError = new DOMException("Quota exceeded", "QuotaExceededError");
+    const idbFactory = createAbortTransactionFactory(quotaError);
+    const failingStore = await openIdbCrdtStore({
+      idbFactory,
+      dbName: "test-crdt-transaction-abort",
+    });
+
+    await expect(
+      failingStore.saveSnapshot("doc-a", new Uint8Array([1])),
+    ).rejects.toBe(quotaError);
+    failingStore.close();
   });
 });
