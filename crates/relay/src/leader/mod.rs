@@ -1,12 +1,13 @@
 // Git leader-election lease coordination.
 //
 // One daemon per workspace holds the git-push lease at a time.
-// Lease-based: TTL 60s, auto-renew on heartbeat, one leader per workspace.
-// Daemons acquire leases via the relay; the relay manages lease state.
+// Lease state is persisted in Postgres so leadership survives relay restarts
+// and can coordinate safely across relay replicas.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use chrono::{DateTime, Utc};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Default lease duration.
@@ -22,29 +23,28 @@ pub struct Lease {
     /// Unique lease identifier (for release/renew).
     pub lease_id: Uuid,
     /// When the lease was granted.
-    pub granted_at: Instant,
+    pub granted_at: DateTime<Utc>,
     /// When the lease expires (unless renewed).
-    pub expires_at: Instant,
+    pub expires_at: DateTime<Utc>,
 }
 
 impl Lease {
     /// Whether this lease has expired.
     pub fn is_expired(&self) -> bool {
-        self.is_expired_at(Instant::now())
+        self.is_expired_at(Utc::now())
     }
 
-    fn is_expired_at(&self, now: Instant) -> bool {
+    fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
         now >= self.expires_at
     }
 
     /// Remaining time on the lease.
     pub fn remaining(&self) -> Duration {
-        let now = Instant::now();
-        if now >= self.expires_at {
-            Duration::ZERO
-        } else {
-            self.expires_at - now
+        if self.is_expired() {
+            return Duration::ZERO;
         }
+
+        (self.expires_at - Utc::now()).to_std().unwrap_or(Duration::ZERO)
     }
 }
 
@@ -81,21 +81,20 @@ pub enum ReleaseResult {
     WrongHolder,
 }
 
-/// Manages git leader-election leases for workspaces.
-///
-/// Thread-safe: expects external synchronization (e.g. Mutex).
+/// Manages git leader-election leases for workspaces using Postgres.
+#[derive(Clone)]
 pub struct LeaseManager {
-    leases: HashMap<Uuid, Lease>,
+    pool: PgPool,
     ttl: Duration,
 }
 
 impl LeaseManager {
-    pub fn new() -> Self {
-        Self { leases: HashMap::new(), ttl: DEFAULT_LEASE_TTL }
+    pub fn new(pool: PgPool) -> Self {
+        Self::with_ttl(pool, DEFAULT_LEASE_TTL)
     }
 
-    pub fn with_ttl(ttl: Duration) -> Self {
-        Self { leases: HashMap::new(), ttl }
+    pub fn with_ttl(pool: PgPool, ttl: Duration) -> Self {
+        Self { pool, ttl }
     }
 
     /// Try to acquire the git leader lease for a workspace.
@@ -103,428 +102,500 @@ impl LeaseManager {
     /// - If no active lease exists, grants a new one.
     /// - If the caller already holds the lease, renews it.
     /// - If another daemon holds an active lease, denies.
-    pub fn acquire(&mut self, workspace_id: Uuid, client_id: Uuid) -> AcquireResult {
-        self.acquire_at(workspace_id, client_id, Instant::now())
-    }
+    pub async fn acquire(
+        &self,
+        workspace_id: Uuid,
+        client_id: Uuid,
+    ) -> Result<AcquireResult, sqlx::Error> {
+        let now = Utc::now();
+        let expires_at = expires_at_with_ttl(now, self.ttl);
+        let proposed_lease_id = Uuid::new_v4();
 
-    fn acquire_at(&mut self, workspace_id: Uuid, client_id: Uuid, now: Instant) -> AcquireResult {
-        // Check existing lease.
-        if let Some(lease) = self.leases.get_mut(&workspace_id) {
-            if !lease.is_expired_at(now) {
-                if lease.holder_id == client_id {
-                    // Re-acquire = renew.
-                    lease.expires_at = now + self.ttl;
-                    return AcquireResult::Renewed { lease_id: lease.lease_id };
-                } else {
-                    // Active lease held by someone else.
-                    return AcquireResult::Denied { current_holder: lease.holder_id };
-                }
-            }
-            // Expired — remove and grant new.
+        let (holder_id, lease_id) = sqlx::query_as::<_, (Uuid, Uuid)>(
+            r#"
+INSERT INTO git_leader_leases (workspace_id, daemon_id, lease_id, acquired_at, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (workspace_id) DO UPDATE
+SET daemon_id = CASE
+        WHEN git_leader_leases.expires_at <= $4 THEN EXCLUDED.daemon_id
+        ELSE git_leader_leases.daemon_id
+    END,
+    lease_id = CASE
+        WHEN git_leader_leases.expires_at <= $4 THEN EXCLUDED.lease_id
+        ELSE git_leader_leases.lease_id
+    END,
+    acquired_at = CASE
+        WHEN git_leader_leases.expires_at <= $4 THEN EXCLUDED.acquired_at
+        ELSE git_leader_leases.acquired_at
+    END,
+    expires_at = CASE
+        WHEN git_leader_leases.expires_at <= $4
+            OR git_leader_leases.daemon_id = EXCLUDED.daemon_id
+            THEN EXCLUDED.expires_at
+        ELSE git_leader_leases.expires_at
+    END
+RETURNING daemon_id, lease_id
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(client_id)
+        .bind(proposed_lease_id)
+        .bind(now)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await?;
+
+        if holder_id != client_id {
+            return Ok(AcquireResult::Denied { current_holder: holder_id });
         }
 
-        // Grant new lease.
-        let lease_id = Uuid::new_v4();
-        let lease = Lease {
-            workspace_id,
-            holder_id: client_id,
-            lease_id,
-            granted_at: now,
-            expires_at: now + self.ttl,
-        };
-        self.leases.insert(workspace_id, lease);
-
-        AcquireResult::Granted { lease_id }
+        if lease_id == proposed_lease_id {
+            Ok(AcquireResult::Granted { lease_id })
+        } else {
+            Ok(AcquireResult::Renewed { lease_id })
+        }
     }
 
     /// Renew an existing lease (heartbeat).
-    pub fn renew(&mut self, workspace_id: Uuid, client_id: Uuid, lease_id: Uuid) -> RenewResult {
-        self.renew_at(workspace_id, client_id, lease_id, Instant::now())
-    }
-
-    fn renew_at(
-        &mut self,
+    pub async fn renew(
+        &self,
         workspace_id: Uuid,
         client_id: Uuid,
         lease_id: Uuid,
-        now: Instant,
-    ) -> RenewResult {
-        let Some(lease) = self.leases.get_mut(&workspace_id) else {
-            return RenewResult::NotFound;
-        };
+    ) -> Result<RenewResult, sqlx::Error> {
+        let now = Utc::now();
+        let expires_at = expires_at_with_ttl(now, self.ttl);
 
-        if lease.is_expired_at(now) {
-            self.leases.remove(&workspace_id);
-            return RenewResult::NotFound;
+        let updated = sqlx::query(
+            r#"
+UPDATE git_leader_leases
+SET expires_at = $4
+WHERE workspace_id = $1
+  AND daemon_id = $2
+  AND lease_id = $3
+  AND expires_at > $5
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(client_id)
+        .bind(lease_id)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        if updated == 1 {
+            return Ok(RenewResult::Renewed);
         }
 
-        if lease.lease_id != lease_id || lease.holder_id != client_id {
-            return RenewResult::WrongHolder;
-        }
+        let active_holder = sqlx::query_scalar::<_, Uuid>(
+            r#"
+SELECT daemon_id
+FROM git_leader_leases
+WHERE workspace_id = $1
+  AND expires_at > $2
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await?;
 
-        lease.expires_at = now + self.ttl;
-        RenewResult::Renewed
+        Ok(match active_holder {
+            Some(_) => RenewResult::WrongHolder,
+            None => RenewResult::NotFound,
+        })
     }
 
     /// Release a lease voluntarily (daemon shutting down or done pushing).
-    pub fn release(&mut self, workspace_id: Uuid, client_id: Uuid) -> ReleaseResult {
-        self.release_at(workspace_id, client_id, Instant::now())
-    }
+    pub async fn release(
+        &self,
+        workspace_id: Uuid,
+        client_id: Uuid,
+    ) -> Result<ReleaseResult, sqlx::Error> {
+        let now = Utc::now();
 
-    fn release_at(&mut self, workspace_id: Uuid, client_id: Uuid, now: Instant) -> ReleaseResult {
-        let Some(lease) = self.leases.get(&workspace_id) else {
-            return ReleaseResult::NotFound;
-        };
+        let deleted = sqlx::query(
+            r#"
+DELETE FROM git_leader_leases
+WHERE workspace_id = $1
+  AND daemon_id = $2
+  AND expires_at > $3
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(client_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
 
-        if lease.is_expired_at(now) {
-            self.leases.remove(&workspace_id);
-            return ReleaseResult::NotFound;
+        if deleted == 1 {
+            return Ok(ReleaseResult::Released);
         }
 
-        if lease.holder_id != client_id {
-            return ReleaseResult::WrongHolder;
-        }
+        let active_holder = sqlx::query_scalar::<_, Uuid>(
+            r#"
+SELECT daemon_id
+FROM git_leader_leases
+WHERE workspace_id = $1
+  AND expires_at > $2
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await?;
 
-        self.leases.remove(&workspace_id);
-        ReleaseResult::Released
+        Ok(match active_holder {
+            Some(_) => ReleaseResult::WrongHolder,
+            None => ReleaseResult::NotFound,
+        })
     }
 
     /// Get the current leader for a workspace (if any active lease exists).
-    pub fn current_leader(&self, workspace_id: Uuid) -> Option<Uuid> {
-        self.current_leader_at(workspace_id, Instant::now())
+    pub async fn current_leader(&self, workspace_id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+        sqlx::query_scalar::<_, Uuid>(
+            r#"
+SELECT daemon_id
+FROM git_leader_leases
+WHERE workspace_id = $1
+  AND expires_at > $2
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(Utc::now())
+        .fetch_optional(&self.pool)
+        .await
     }
 
-    fn current_leader_at(&self, workspace_id: Uuid, now: Instant) -> Option<Uuid> {
-        self.leases
-            .get(&workspace_id)
-            .filter(|lease| !lease.is_expired_at(now))
-            .map(|lease| lease.holder_id)
+    /// Return the active lease details for a workspace.
+    pub async fn current_lease(&self, workspace_id: Uuid) -> Result<Option<Lease>, sqlx::Error> {
+        let row = sqlx::query_as::<_, (Uuid, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>(
+            r#"
+SELECT workspace_id, daemon_id, lease_id, acquired_at, expires_at
+FROM git_leader_leases
+WHERE workspace_id = $1
+  AND expires_at > $2
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(Utc::now())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|(workspace_id, holder_id, lease_id, granted_at, expires_at)| Lease {
+            workspace_id,
+            holder_id,
+            lease_id,
+            granted_at,
+            expires_at,
+        }))
     }
 
     /// Evict all expired leases. Returns the count of evicted leases.
-    pub fn evict_expired(&mut self) -> usize {
-        self.evict_expired_at(Instant::now())
-    }
+    pub async fn evict_expired(&self) -> Result<usize, sqlx::Error> {
+        let deleted = sqlx::query(
+            r#"
+DELETE FROM git_leader_leases
+WHERE expires_at <= $1
+            "#,
+        )
+        .bind(Utc::now())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
 
-    fn evict_expired_at(&mut self, now: Instant) -> usize {
-        let before = self.leases.len();
-        self.leases.retain(|_, lease| !lease.is_expired_at(now));
-        before - self.leases.len()
+        Ok(deleted as usize)
     }
 
     /// Number of active (non-expired) leases.
-    pub fn active_count(&self) -> usize {
-        self.active_count_at(Instant::now())
-    }
+    pub async fn active_count(&self) -> Result<usize, sqlx::Error> {
+        let count = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM git_leader_leases
+WHERE expires_at > $1
+            "#,
+        )
+        .bind(Utc::now())
+        .fetch_one(&self.pool)
+        .await?;
 
-    fn active_count_at(&self, now: Instant) -> usize {
-        self.leases.values().filter(|l| !l.is_expired_at(now)).count()
+        Ok(count as usize)
     }
 }
 
 impl Default for LeaseManager {
     fn default() -> Self {
-        Self::new()
+        panic!("LeaseManager::default is not supported; construct with LeaseManager::new(pool)")
     }
+}
+
+fn expires_at_with_ttl(now: DateTime<Utc>, ttl: Duration) -> DateTime<Utc> {
+    now + chrono::Duration::from_std(ttl).expect("lease ttl should fit within chrono::Duration")
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
-    use uuid::Uuid;
-
     use super::*;
+    use crate::db::{
+        migrations::run_migrations,
+        pool::{create_pg_pool, PoolConfig},
+    };
 
-    fn ids() -> (Uuid, Uuid, Uuid) {
-        (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4())
+    async fn test_pool() -> Option<PgPool> {
+        let Some(database_url) = std::env::var("SCRIPTUM_RELAY_TEST_DATABASE_URL").ok() else {
+            eprintln!("skipping leader postgres test: set SCRIPTUM_RELAY_TEST_DATABASE_URL");
+            return None;
+        };
+
+        let pool = create_pg_pool(&database_url, PoolConfig::from_env())
+            .await
+            .expect("test postgres pool should connect");
+        run_migrations(&pool).await.expect("relay migrations should apply");
+
+        Some(pool)
     }
 
-    // ── Acquire ────────────────────────────────────────────────────
-
-    #[test]
-    fn acquire_grants_when_no_lease() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client, _) = ids();
-
-        let result = mgr.acquire(ws, client);
-        assert!(matches!(result, AcquireResult::Granted { .. }));
+    async fn manager_with_ttl(ttl: Duration) -> Option<LeaseManager> {
+        let pool = test_pool().await?;
+        Some(LeaseManager::with_ttl(pool, ttl))
     }
 
-    #[test]
-    fn acquire_denies_when_another_holds() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client1, client2) = ids();
+    #[tokio::test]
+    async fn acquire_persists_leader_and_denies_other_holder() {
+        let Some(manager) = manager_with_ttl(DEFAULT_LEASE_TTL).await else {
+            return;
+        };
 
-        mgr.acquire(ws, client1);
-        let result = mgr.acquire(ws, client2);
+        let workspace_id = Uuid::new_v4();
+        let daemon_a = Uuid::new_v4();
+        let daemon_b = Uuid::new_v4();
 
-        match result {
-            AcquireResult::Denied { current_holder } => {
-                assert_eq!(current_holder, client1);
-            }
-            _ => panic!("expected Denied"),
-        }
-    }
-
-    #[test]
-    fn acquire_renews_when_same_holder() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client, _) = ids();
-
-        let first = mgr.acquire(ws, client);
+        let first =
+            manager.acquire(workspace_id, daemon_a).await.expect("first acquire should succeed");
         let lease_id = match first {
             AcquireResult::Granted { lease_id } => lease_id,
-            _ => panic!("expected Granted"),
+            other => panic!("expected Granted, got {other:?}"),
         };
 
-        let second = mgr.acquire(ws, client);
-        match second {
-            AcquireResult::Renewed { lease_id: renewed_id } => {
-                assert_eq!(renewed_id, lease_id);
-            }
-            _ => panic!("expected Renewed"),
-        }
+        let lease = manager
+            .current_lease(workspace_id)
+            .await
+            .expect("current lease query should succeed")
+            .expect("lease should exist after acquire");
+        assert_eq!(lease.workspace_id, workspace_id);
+        assert_eq!(lease.holder_id, daemon_a);
+        assert_eq!(lease.lease_id, lease_id);
+
+        let denied = manager
+            .acquire(workspace_id, daemon_b)
+            .await
+            .expect("second acquire should return denial");
+        assert_eq!(denied, AcquireResult::Denied { current_holder: daemon_a });
     }
 
-    #[test]
-    fn acquire_grants_after_expiry() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(1));
-        let (ws, client1, client2) = ids();
+    #[tokio::test]
+    async fn acquire_by_same_holder_renews_existing_lease() {
+        let Some(manager) = manager_with_ttl(DEFAULT_LEASE_TTL).await else {
+            return;
+        };
 
-        let now = Instant::now();
-        mgr.acquire_at(ws, client1, now);
+        let workspace_id = Uuid::new_v4();
+        let daemon_id = Uuid::new_v4();
 
-        // After TTL expires, another client can acquire.
-        let later = now + Duration::from_secs(2);
-        let result = mgr.acquire_at(ws, client2, later);
-        assert!(matches!(result, AcquireResult::Granted { .. }));
-    }
-
-    // ── Renew ──────────────────────────────────────────────────────
-
-    #[test]
-    fn renew_extends_lease() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(5));
-        let (ws, client, _) = ids();
-
-        let now = Instant::now();
-        let lease_id = match mgr.acquire_at(ws, client, now) {
+        let first_lease = match manager
+            .acquire(workspace_id, daemon_id)
+            .await
+            .expect("initial acquire should succeed")
+        {
             AcquireResult::Granted { lease_id } => lease_id,
-            _ => panic!("expected Granted"),
+            other => panic!("expected Granted, got {other:?}"),
         };
 
-        // Renew at 3s — should extend to 8s from start.
-        let at_3s = now + Duration::from_secs(3);
-        assert_eq!(mgr.renew_at(ws, client, lease_id, at_3s), RenewResult::Renewed);
-
-        // Still active at 7s (would have expired at 5s without renewal).
-        let at_7s = now + Duration::from_secs(7);
-        assert!(mgr.current_leader_at(ws, at_7s).is_some());
+        let second =
+            manager.acquire(workspace_id, daemon_id).await.expect("re-acquire should succeed");
+        assert_eq!(second, AcquireResult::Renewed { lease_id: first_lease });
     }
 
-    #[test]
-    fn renew_not_found_for_unknown_workspace() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client, _) = ids();
-        let fake_lease = Uuid::new_v4();
+    #[tokio::test]
+    async fn expired_lease_can_be_reacquired_by_new_holder() {
+        let Some(manager) = manager_with_ttl(DEFAULT_LEASE_TTL).await else {
+            return;
+        };
 
-        assert_eq!(mgr.renew(ws, client, fake_lease), RenewResult::NotFound);
-    }
+        let workspace_id = Uuid::new_v4();
+        let daemon_a = Uuid::new_v4();
+        let daemon_b = Uuid::new_v4();
 
-    #[test]
-    fn renew_wrong_holder() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client1, client2) = ids();
-
-        let lease_id = match mgr.acquire(ws, client1) {
+        let first_lease = match manager
+            .acquire(workspace_id, daemon_a)
+            .await
+            .expect("initial acquire should succeed")
+        {
             AcquireResult::Granted { lease_id } => lease_id,
-            _ => panic!("expected Granted"),
+            other => panic!("expected Granted, got {other:?}"),
         };
 
-        assert_eq!(mgr.renew(ws, client2, lease_id), RenewResult::WrongHolder);
-    }
+        sqlx::query(
+            r#"
+UPDATE git_leader_leases
+SET expires_at = now() - interval '1 second'
+WHERE workspace_id = $1
+            "#,
+        )
+        .bind(workspace_id)
+        .execute(&manager.pool)
+        .await
+        .expect("forced expiry update should succeed");
 
-    #[test]
-    fn renew_fails_after_expiry() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(1));
-        let (ws, client, _) = ids();
-
-        let now = Instant::now();
-        let lease_id = match mgr.acquire_at(ws, client, now) {
+        let second_lease = match manager
+            .acquire(workspace_id, daemon_b)
+            .await
+            .expect("acquire after expiry should succeed")
+        {
             AcquireResult::Granted { lease_id } => lease_id,
-            _ => panic!("expected Granted"),
+            other => panic!("expected Granted after expiry, got {other:?}"),
         };
 
-        let later = now + Duration::from_secs(2);
-        assert_eq!(mgr.renew_at(ws, client, lease_id, later), RenewResult::NotFound);
+        assert_ne!(first_lease, second_lease);
+        assert_eq!(
+            manager
+                .current_leader(workspace_id)
+                .await
+                .expect("current leader query should succeed"),
+            Some(daemon_b)
+        );
     }
 
-    // ── Release ────────────────────────────────────────────────────
+    #[tokio::test]
+    async fn renew_and_release_enforce_holder_identity() {
+        let Some(manager) = manager_with_ttl(DEFAULT_LEASE_TTL).await else {
+            return;
+        };
 
-    #[test]
-    fn release_frees_lease() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client, _) = ids();
+        let workspace_id = Uuid::new_v4();
+        let daemon_a = Uuid::new_v4();
+        let daemon_b = Uuid::new_v4();
 
-        mgr.acquire(ws, client);
-        assert_eq!(mgr.release(ws, client), ReleaseResult::Released);
-        assert!(mgr.current_leader(ws).is_none());
+        let lease_id = match manager
+            .acquire(workspace_id, daemon_a)
+            .await
+            .expect("initial acquire should succeed")
+        {
+            AcquireResult::Granted { lease_id } => lease_id,
+            other => panic!("expected Granted, got {other:?}"),
+        };
+
+        assert_eq!(
+            manager.renew(workspace_id, daemon_a, lease_id).await.expect("renew should succeed"),
+            RenewResult::Renewed
+        );
+        assert_eq!(
+            manager
+                .renew(workspace_id, daemon_b, lease_id)
+                .await
+                .expect("renew by different holder should not fail query"),
+            RenewResult::WrongHolder
+        );
+        assert_eq!(
+            manager
+                .renew(workspace_id, daemon_a, Uuid::new_v4())
+                .await
+                .expect("renew with stale lease id should not fail query"),
+            RenewResult::WrongHolder
+        );
+
+        assert_eq!(
+            manager
+                .release(workspace_id, daemon_b)
+                .await
+                .expect("release by different holder should not fail query"),
+            ReleaseResult::WrongHolder
+        );
+        assert_eq!(
+            manager.release(workspace_id, daemon_a).await.expect("release should succeed"),
+            ReleaseResult::Released
+        );
+        assert_eq!(
+            manager
+                .release(workspace_id, daemon_a)
+                .await
+                .expect("double release should not fail query"),
+            ReleaseResult::NotFound
+        );
     }
 
-    #[test]
-    fn release_wrong_holder() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client1, client2) = ids();
+    #[tokio::test]
+    async fn lease_state_is_visible_across_manager_instances() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
 
-        mgr.acquire(ws, client1);
-        assert_eq!(mgr.release(ws, client2), ReleaseResult::WrongHolder);
+        let manager_a = LeaseManager::new(pool.clone());
+        let manager_b = LeaseManager::new(pool);
+
+        let workspace_id = Uuid::new_v4();
+        let daemon_id = Uuid::new_v4();
+
+        let acquire =
+            manager_a.acquire(workspace_id, daemon_id).await.expect("acquire should succeed");
+        assert!(matches!(acquire, AcquireResult::Granted { .. }));
+
+        assert_eq!(
+            manager_b
+                .current_leader(workspace_id)
+                .await
+                .expect("cross-instance current leader query should succeed"),
+            Some(daemon_id)
+        );
+        assert_eq!(manager_b.active_count().await.expect("active count query should succeed"), 1);
     }
 
-    #[test]
-    fn release_not_found() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client, _) = ids();
+    #[tokio::test]
+    async fn evict_expired_removes_only_expired_rows() {
+        let Some(manager) = manager_with_ttl(DEFAULT_LEASE_TTL).await else {
+            return;
+        };
 
-        assert_eq!(mgr.release(ws, client), ReleaseResult::NotFound);
-    }
+        let workspace_expired = Uuid::new_v4();
+        let workspace_active = Uuid::new_v4();
+        let daemon_a = Uuid::new_v4();
+        let daemon_b = Uuid::new_v4();
 
-    #[test]
-    fn release_not_found_after_expiry() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(1));
-        let (ws, client, _) = ids();
+        manager.acquire(workspace_expired, daemon_a).await.expect("first acquire should succeed");
+        manager.acquire(workspace_active, daemon_b).await.expect("second acquire should succeed");
 
-        let now = Instant::now();
-        mgr.acquire_at(ws, client, now);
+        sqlx::query(
+            r#"
+UPDATE git_leader_leases
+SET expires_at = now() - interval '1 second'
+WHERE workspace_id = $1
+            "#,
+        )
+        .bind(workspace_expired)
+        .execute(&manager.pool)
+        .await
+        .expect("forced expiry update should succeed");
 
-        let later = now + Duration::from_secs(2);
-        assert_eq!(mgr.release_at(ws, client, later), ReleaseResult::NotFound);
-    }
-
-    // ── Current leader ─────────────────────────────────────────────
-
-    #[test]
-    fn current_leader_returns_holder() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client, _) = ids();
-
-        mgr.acquire(ws, client);
-        assert_eq!(mgr.current_leader(ws), Some(client));
-    }
-
-    #[test]
-    fn current_leader_none_when_no_lease() {
-        let mgr = LeaseManager::new();
-        assert!(mgr.current_leader(Uuid::new_v4()).is_none());
-    }
-
-    #[test]
-    fn current_leader_none_after_expiry() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(1));
-        let (ws, client, _) = ids();
-
-        let now = Instant::now();
-        mgr.acquire_at(ws, client, now);
-
-        let later = now + Duration::from_secs(2);
-        assert!(mgr.current_leader_at(ws, later).is_none());
-    }
-
-    // ── Eviction ───────────────────────────────────────────────────
-
-    #[test]
-    fn evict_removes_expired_leases() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(1));
-        let ws1 = Uuid::new_v4();
-        let ws2 = Uuid::new_v4();
-        let client = Uuid::new_v4();
-
-        let now = Instant::now();
-        mgr.acquire_at(ws1, client, now);
-        mgr.acquire_at(ws2, client, now);
-
-        assert_eq!(mgr.active_count_at(now), 2);
-
-        let later = now + Duration::from_secs(2);
-        let evicted = mgr.evict_expired_at(later);
-        assert_eq!(evicted, 2);
-        assert_eq!(mgr.active_count_at(later), 0);
-    }
-
-    #[test]
-    fn evict_preserves_active_leases() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_secs(10));
-        let ws1 = Uuid::new_v4();
-        let ws2 = Uuid::new_v4();
-        let client = Uuid::new_v4();
-
-        let now = Instant::now();
-        mgr.acquire_at(ws1, client, now);
-        mgr.acquire_at(ws2, client, now + Duration::from_secs(5));
-
-        // At 8s: ws1 lease still active (expires at 10s), ws2 active (expires at 15s).
-        let at_8s = now + Duration::from_secs(8);
-        let evicted = mgr.evict_expired_at(at_8s);
-        assert_eq!(evicted, 0);
-
-        // At 12s: ws1 expired, ws2 still active.
-        let at_12s = now + Duration::from_secs(12);
-        let evicted = mgr.evict_expired_at(at_12s);
+        let evicted = manager.evict_expired().await.expect("evict query should succeed");
         assert_eq!(evicted, 1);
-        assert_eq!(mgr.active_count_at(at_12s), 1);
-    }
-
-    // ── Multi-workspace ────────────────────────────────────────────
-
-    #[test]
-    fn different_workspaces_independent() {
-        let mut mgr = LeaseManager::new();
-        let ws1 = Uuid::new_v4();
-        let ws2 = Uuid::new_v4();
-        let client1 = Uuid::new_v4();
-        let client2 = Uuid::new_v4();
-
-        assert!(matches!(mgr.acquire(ws1, client1), AcquireResult::Granted { .. }));
-        assert!(matches!(mgr.acquire(ws2, client2), AcquireResult::Granted { .. }));
-
-        assert_eq!(mgr.current_leader(ws1), Some(client1));
-        assert_eq!(mgr.current_leader(ws2), Some(client2));
-    }
-
-    // ── TTL configuration ──────────────────────────────────────────
-
-    #[test]
-    fn custom_ttl_respected() {
-        let mut mgr = LeaseManager::with_ttl(Duration::from_millis(500));
-        let (ws, client, _) = ids();
-
-        let now = Instant::now();
-        mgr.acquire_at(ws, client, now);
-
-        // Active at 400ms.
-        assert!(mgr.current_leader_at(ws, now + Duration::from_millis(400)).is_some());
-        // Expired at 600ms.
-        assert!(mgr.current_leader_at(ws, now + Duration::from_millis(600)).is_none());
-    }
-
-    #[test]
-    fn default_ttl_is_60s() {
-        let mgr = LeaseManager::new();
-        assert_eq!(mgr.ttl, Duration::from_secs(60));
-    }
-
-    // ── After release, new client can acquire ──────────────────────
-
-    #[test]
-    fn new_client_acquires_after_release() {
-        let mut mgr = LeaseManager::new();
-        let (ws, client1, client2) = ids();
-
-        mgr.acquire(ws, client1);
-        mgr.release(ws, client1);
-
-        let result = mgr.acquire(ws, client2);
-        assert!(matches!(result, AcquireResult::Granted { .. }));
-        assert_eq!(mgr.current_leader(ws), Some(client2));
+        assert_eq!(manager.active_count().await.expect("active count query should succeed"), 1);
+        assert_eq!(
+            manager
+                .current_leader(workspace_expired)
+                .await
+                .expect("expired leader query should succeed"),
+            None
+        );
+        assert_eq!(
+            manager
+                .current_leader(workspace_active)
+                .await
+                .expect("active leader query should succeed"),
+            Some(daemon_b)
+        );
     }
 }
