@@ -15,6 +15,7 @@
     "test:ui:smoke": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --grep @smoke",
     "test:ui": "pnpm exec playwright test -c tests/e2e/playwright.config.mts",
     "test:desktop:webdriver": "pnpm exec playwright test -c tests/e2e/desktop-webdriver.config.mts --grep @desktop",
+    "test:ui:auth": "pnpm exec playwright test -c tests/e2e/playwright.auth.config.mts",
     "test:ui:update": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --update-snapshots",
     "lint": "biome lint .",
     "format": "biome format --write .",

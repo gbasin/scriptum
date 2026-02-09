@@ -15,6 +15,7 @@ declare global {
 type MockAuth = {
   getStoredSession: ReturnType<typeof vi.fn>;
   startGitHubOAuth: ReturnType<typeof vi.fn>;
+  handleOAuthCallback: ReturnType<typeof vi.fn>;
   refreshAccessToken: ReturnType<typeof vi.fn>;
   logout: ReturnType<typeof vi.fn>;
 };
@@ -23,6 +24,7 @@ function createMockAuth(): MockAuth {
   return {
     getStoredSession: vi.fn(),
     startGitHubOAuth: vi.fn(),
+    handleOAuthCallback: vi.fn(),
     refreshAccessToken: vi.fn(),
     logout: vi.fn(),
   };
@@ -31,7 +33,11 @@ function createMockAuth(): MockAuth {
 function authOptions(auth: MockAuth): UseAuthOptions["auth"] {
   return auth as unknown as Pick<
     AuthService,
-    "getStoredSession" | "startGitHubOAuth" | "refreshAccessToken" | "logout"
+    | "getStoredSession"
+    | "startGitHubOAuth"
+    | "handleOAuthCallback"
+    | "refreshAccessToken"
+    | "logout"
   >;
 }
 

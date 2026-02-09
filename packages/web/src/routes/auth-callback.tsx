@@ -1,6 +1,6 @@
 // OAuth callback handler — exchanges authorization code for tokens.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AuthClient } from "../auth/client";
 import { useAuthStore } from "../store/auth";
@@ -18,7 +18,6 @@ export function AuthCallbackRoute() {
   const status = useAuthStore((s) => s.status);
   const error = useAuthStore((s) => s.error);
   const fixtureModeEnabled = isFixtureModeEnabled();
-  const startedAttempt = useRef<number | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [timedOut, setTimedOut] = useState(false);
 
@@ -26,10 +25,6 @@ export function AuthCallbackRoute() {
     if (fixtureModeEnabled) {
       return;
     }
-    if (startedAttempt.current === attempt) {
-      return;
-    }
-    startedAttempt.current = attempt;
 
     const code = searchParams.get("code");
     const state = searchParams.get("state");
@@ -40,9 +35,12 @@ export function AuthCallbackRoute() {
     }
 
     setTimedOut(false);
+    let cancelled = false;
     const client = new AuthClient({ baseUrl: RELAY_URL });
     const timeoutHandle = window.setTimeout(() => {
-      setTimedOut(true);
+      if (!cancelled) {
+        setTimedOut(true);
+      }
     }, AUTH_CALLBACK_TIMEOUT_MS);
 
     void handleCallback(client, code, state).finally(() => {
@@ -50,6 +48,7 @@ export function AuthCallbackRoute() {
     });
 
     return () => {
+      cancelled = true;
       window.clearTimeout(timeoutHandle);
     };
   }, [attempt, fixtureModeEnabled, handleCallback, navigate, searchParams]);

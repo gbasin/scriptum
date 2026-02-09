@@ -6,10 +6,12 @@ import type {
 } from "../lib/auth";
 import {
   getStoredSession as getStoredSessionFromAuth,
+  handleOAuthCallback as handleOAuthCallbackFromAuth,
   logout as logoutFromAuth,
   refreshAccessToken as refreshAccessTokenFromAuth,
   startGitHubOAuth as startGitHubOAuthFromAuth,
 } from "../lib/auth";
+import { isTauri } from "../lib/tauri-auth";
 import { type AuthStatus, type AuthStore, useAuthStore } from "../store/auth";
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
@@ -21,7 +23,11 @@ type UseAuthLocation = Pick<Location, "assign" | "origin">;
 export interface UseAuthOptions {
   auth?: Pick<
     AuthService,
-    "getStoredSession" | "startGitHubOAuth" | "refreshAccessToken" | "logout"
+    | "getStoredSession"
+    | "startGitHubOAuth"
+    | "handleOAuthCallback"
+    | "refreshAccessToken"
+    | "logout"
   >;
   store?: AuthStore;
   refreshBufferMs?: number;
@@ -95,13 +101,16 @@ function resolveLocationRef(
   };
 }
 
+const defaultAuth = {
+  getStoredSession: getStoredSessionFromAuth,
+  startGitHubOAuth: startGitHubOAuthFromAuth,
+  handleOAuthCallback: handleOAuthCallbackFromAuth,
+  refreshAccessToken: refreshAccessTokenFromAuth,
+  logout: logoutFromAuth,
+};
+
 export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
-  const auth = options.auth ?? {
-    getStoredSession: getStoredSessionFromAuth,
-    startGitHubOAuth: startGitHubOAuthFromAuth,
-    refreshAccessToken: refreshAccessTokenFromAuth,
-    logout: logoutFromAuth,
-  };
+  const auth = options.auth ?? defaultAuth;
   const store = options.store ?? useAuthStore;
   const refreshBufferMs = options.refreshBufferMs ?? DEFAULT_REFRESH_BUFFER_MS;
   const loginPath = options.loginPath ?? DEFAULT_LOGIN_PATH;
@@ -167,6 +176,13 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   const login = useCallback(
     async (startOptions: StartGitHubOAuthOptions = {}) => {
       try {
+        if (isTauri()) {
+          const { performTauriLogin } = await import("../lib/tauri-auth");
+          const session = await performTauriLogin(auth);
+          setAuthenticated(store, session);
+          return;
+        }
+
         const redirectUri =
           startOptions.redirectUri ??
           new URL("/auth-callback", locationRef.origin).toString();
