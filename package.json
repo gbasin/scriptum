@@ -13,6 +13,7 @@
     "coverage:ts": "pnpm --filter @scriptum/web run coverage && pnpm --filter @scriptum/editor run coverage && pnpm --filter @scriptum/shared run coverage && pnpm --filter @scriptum/mcp-server run coverage",
     "coverage:rust": "scripts/ci/rust-coverage.sh",
     "ci:job": "scripts/ci/pipeline.sh",
+    "ci:precommit": "scripts/ci/pipeline.sh precommit",
     "ci:fast": "scripts/ci/pipeline.sh fast",
     "ci:full": "scripts/ci/pipeline.sh full",
     "test:ui:smoke": "pnpm exec playwright test -c tests/e2e/playwright.config.mts --grep @smoke",

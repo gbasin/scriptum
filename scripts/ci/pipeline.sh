@@ -23,6 +23,7 @@ Targets:
   compatibility-websocket
   compatibility-json-rpc
   load-relay-websocket
+  precommit
   fast
   full
 USAGE
@@ -136,6 +137,42 @@ case "$target" in
 
   load-relay-websocket)
     run tests/load/run-relay-load.sh pre-release
+    ;;
+
+  precommit)
+    log "Running pre-commit checks (3 parallel lanes)"
+    fail=0
+
+    # Lane A: lint (~1.4s) — pnpm check then cargo fmt
+    ( run pnpm check && run cargo fmt --all -- --check ) &
+    pid_a=$!
+
+    # Lane B: TS (~14s) — typecheck and test concurrently
+    (
+      b_fail=0
+      run pnpm -r --if-present run typecheck &
+      pid_tc=$!
+      run pnpm test &
+      pid_tt=$!
+      wait "$pid_tc" || b_fail=1
+      wait "$pid_tt" || b_fail=1
+      exit $b_fail
+    ) &
+    pid_b=$!
+
+    # Lane C: Rust (~33s) — clippy then test (sequential due to cargo lock)
+    ( run cargo clippy --workspace --all-targets && run_rust_test_suite ) &
+    pid_c=$!
+
+    wait "$pid_a" || fail=1
+    wait "$pid_b" || fail=1
+    wait "$pid_c" || fail=1
+
+    if [[ $fail -ne 0 ]]; then
+      log "Pre-commit checks FAILED"
+      exit 1
+    fi
+    log "Pre-commit checks passed"
     ;;
 
   fast)

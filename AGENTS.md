@@ -29,6 +29,8 @@
 - Never destructive ops (`reset --hard`, `force push`, `checkout .`, `stash`, `restore`) without explicit consent — other agents may be editing the same worktree
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`
 - Never use git add. Always commit with explicit paths: git commit -m "feat: ..." -- file1 file2
+- Before every commit, run `pnpm run ci:precommit` (lint + typecheck + tests for TS and Rust, parallelized) and fix any failures.
+- Commit early and often — make small, incremental commits as you work rather than one large commit at the end.
 
 ## Critical Thinking
 
