@@ -1,7 +1,7 @@
 import type { Document } from "@scriptum/shared";
+import clsx from "clsx";
 import { useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { cn } from "../lib/cn";
 import { buildUntitledPath, titleFromPath } from "../lib/document-utils";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
@@ -103,7 +103,7 @@ export function WorkspaceRoute() {
           <h1 className={styles.title}>Workspace: {workspaceLabel}</h1>
         </div>
         <Link
-          className={cn(styles.linkButton, styles.settingsButton)}
+          className={clsx(styles.linkButton, styles.settingsButton)}
           data-testid="workspace-settings-link"
           to="/settings"
         >
@@ -118,7 +118,7 @@ export function WorkspaceRoute() {
             Create your first document to start writing in this workspace.
           </p>
           <button
-            className={cn(styles.linkButton, styles.primaryButton)}
+            className={clsx(styles.linkButton, styles.primaryButton)}
             data-testid="workspace-create-first-document"
             onClick={createFirstDocument}
             type="button"

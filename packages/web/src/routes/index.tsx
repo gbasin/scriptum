@@ -1,8 +1,8 @@
 import type { Document, Workspace } from "@scriptum/shared";
+import clsx from "clsx";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { cn } from "../lib/cn";
 import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
 import styles from "./index.module.css";
@@ -121,7 +121,7 @@ export function IndexRoute() {
             git on your terms.
           </p>
           <button
-            className={cn(styles.button, styles.primaryButton)}
+            className={clsx(styles.button, styles.primaryButton)}
             data-testid="index-login-button"
             onClick={() => {
               void login();
@@ -159,7 +159,7 @@ export function IndexRoute() {
           <h1 className={styles.title}>Choose a workspace</h1>
         </div>
         <button
-          className={cn(styles.button, styles.primaryButton)}
+          className={clsx(styles.button, styles.primaryButton)}
           data-testid="index-create-workspace-button"
           onClick={createWorkspace}
           type="button"
@@ -179,7 +179,7 @@ export function IndexRoute() {
             {workspaces.map((workspace) => (
               <li key={workspace.id}>
                 <button
-                  className={cn(styles.listButton, {
+                  className={clsx(styles.listButton, {
                     [styles.listButtonActive]:
                       workspace.id === activeWorkspaceId,
                   })}
