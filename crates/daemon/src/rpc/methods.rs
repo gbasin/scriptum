@@ -1,12 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use crate::agent::lease::{LeaseClaim, LeaseMode, LeaseStore};
 use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus, SessionStore};
+use crate::config::{RedactionPolicy as ConfigRedactionPolicy, WorkspaceConfig};
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
+use crate::git::commit::{
+    fallback_commit_message, generate_commit_message_with_fallback, AiCommitClient,
+    AnthropicCommitClient, RedactionPolicy as AiRedactionPolicy,
+};
+use crate::git::triggers::{ChangeType, ChangedFile};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
 use crate::rpc::trace::{trace_id_from_raw_request, with_trace_id_scope};
 use crate::search::indexer::extract_title;
@@ -66,25 +74,119 @@ pub struct GitState<E: CommandExecutor = ProcessCommandExecutor> {
     worker: Arc<GitWorker<E>>,
     policy: Arc<RwLock<GitSyncPolicy>>,
     last_sync_at: Arc<RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+    ai_client: Arc<dyn AiCommitClient>,
+    ai_enabled: bool,
+    ai_redaction_policy: AiRedactionPolicy,
 }
 
 impl GitState<ProcessCommandExecutor> {
     pub fn new(repo_path: impl Into<PathBuf>) -> Self {
-        Self {
-            worker: Arc::new(GitWorker::new(repo_path)),
-            policy: Arc::new(RwLock::new(GitSyncPolicy::default())),
-            last_sync_at: Arc::new(RwLock::new(None)),
-        }
+        Self::with_executor(repo_path, ProcessCommandExecutor)
     }
 }
 
 impl<E: CommandExecutor> GitState<E> {
     pub fn with_executor(repo_path: impl Into<PathBuf>, executor: E) -> Self {
+        let repo_path = repo_path.into();
+        let workspace_config = WorkspaceConfig::load(&repo_path);
+
+        Self::with_executor_and_ai(
+            repo_path,
+            executor,
+            Arc::new(AnthropicCommitClient::new()),
+            workspace_config.git.ai_commit,
+            map_workspace_redaction_policy(workspace_config.git.redaction_policy),
+        )
+    }
+
+    pub fn with_executor_and_ai(
+        repo_path: impl Into<PathBuf>,
+        executor: E,
+        ai_client: Arc<dyn AiCommitClient>,
+        ai_enabled: bool,
+        ai_redaction_policy: AiRedactionPolicy,
+    ) -> Self {
+        let repo_path = repo_path.into();
         Self {
             worker: Arc::new(GitWorker::with_executor(repo_path, executor)),
             policy: Arc::new(RwLock::new(GitSyncPolicy::default())),
             last_sync_at: Arc::new(RwLock::new(None)),
+            ai_client,
+            ai_enabled,
+            ai_redaction_policy,
         }
+    }
+
+    async fn commit_with_generated_message(&self, semantic_hint: &str) -> Result<(), String> {
+        let _ = self.worker.add(&["."]).map_err(|e| e.to_string())?;
+
+        let staged_diff = self.worker.diff_cached().map_err(|e| e.to_string())?;
+        let staged_name_status =
+            self.worker.diff_cached_name_status().map_err(|e| e.to_string())?;
+        let changed_files = parse_changed_files_from_name_status(&staged_name_status.stdout);
+
+        let commit_message = if self.ai_enabled {
+            let mut prompt = String::new();
+            let trimmed_hint = semantic_hint.trim();
+            if !trimmed_hint.is_empty() {
+                prompt.push_str("Trigger summary:\n");
+                prompt.push_str(trimmed_hint);
+                prompt.push_str("\n\n");
+            }
+            prompt.push_str("Staged diff:\n");
+            prompt.push_str(&staged_diff.stdout);
+
+            generate_commit_message_with_fallback(
+                self.ai_client.as_ref(),
+                &prompt,
+                &changed_files,
+                self.ai_redaction_policy,
+            )
+            .await
+        } else {
+            fallback_commit_message(&changed_files)
+        };
+
+        self.worker.commit(&commit_message).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+fn map_workspace_redaction_policy(value: ConfigRedactionPolicy) -> AiRedactionPolicy {
+    match value {
+        ConfigRedactionPolicy::Disabled => AiRedactionPolicy::Disabled,
+        ConfigRedactionPolicy::Redacted => AiRedactionPolicy::Redacted,
+        ConfigRedactionPolicy::Full => AiRedactionPolicy::Full,
+    }
+}
+
+fn parse_changed_files_from_name_status(output: &str) -> Vec<ChangedFile> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            let mut parts = trimmed.split_whitespace();
+            let status = parts.next()?;
+            let path = parts.next_back().or_else(|| parts.next())?;
+
+            Some(ChangedFile {
+                path: path.to_string(),
+                doc_id: None,
+                change_type: parse_change_type(status),
+            })
+        })
+        .collect()
+}
+
+fn parse_change_type(status: &str) -> ChangeType {
+    match status.chars().next() {
+        Some('A') => ChangeType::Added,
+        Some('D') => ChangeType::Deleted,
+        _ => ChangeType::Modified,
     }
 }
 
@@ -106,7 +208,10 @@ pub struct RpcServerState {
 /// Trait to abstract git operations for testability via dynamic dispatch.
 trait GitOps: Send + Sync {
     fn status_info(&self) -> Result<GitStatusInfo, String>;
-    fn sync(&self, action: GitSyncAction) -> Result<Uuid, String>;
+    fn sync(
+        &self,
+        action: GitSyncAction,
+    ) -> Pin<Box<dyn Future<Output = Result<Uuid, String>> + Send + '_>>;
     fn get_policy(&self) -> GitSyncPolicy;
     fn set_policy(&self, policy: GitSyncPolicy);
     fn last_sync_at(&self) -> Option<chrono::DateTime<chrono::Utc>>;
@@ -130,24 +235,26 @@ impl<E: CommandExecutor + 'static> GitOps for GitState<E> {
         })
     }
 
-    fn sync(&self, action: GitSyncAction) -> Result<Uuid, String> {
-        let job_id = Uuid::new_v4();
+    fn sync(
+        &self,
+        action: GitSyncAction,
+    ) -> Pin<Box<dyn Future<Output = Result<Uuid, String>> + Send + '_>> {
+        Box::pin(async move {
+            let job_id = Uuid::new_v4();
 
-        match action {
-            GitSyncAction::Commit { message } => {
-                // Stage all tracked changes.
-                let _ = self.worker.add(&["."]).map_err(|e| e.to_string())?;
-                self.worker.commit(&message).map_err(|e| e.to_string())?;
+            match action {
+                GitSyncAction::Commit { message } => {
+                    self.commit_with_generated_message(&message).await?;
+                }
+                GitSyncAction::CommitAndPush { message } => {
+                    self.commit_with_generated_message(&message).await?;
+                    self.worker.push().map_err(|e| e.to_string())?;
+                }
             }
-            GitSyncAction::CommitAndPush { message } => {
-                let _ = self.worker.add(&["."]).map_err(|e| e.to_string())?;
-                self.worker.commit(&message).map_err(|e| e.to_string())?;
-                self.worker.push().map_err(|e| e.to_string())?;
-            }
-        }
 
-        self.mark_synced();
-        Ok(job_id)
+            self.mark_synced();
+            Ok(job_id)
+        })
     }
 
     fn get_policy(&self) -> GitSyncPolicy {
@@ -2122,7 +2229,7 @@ pub async fn dispatch_request(request: Request, state: &RpcServerState) -> Respo
         "workspace.open" => handle_workspace_open(request, state).await,
         "workspace.create" => handle_workspace_create(request, state).await,
         "git.status" => handle_git_status(request, state),
-        "git.sync" => handle_git_sync(request, state),
+        "git.sync" => handle_git_sync(request, state).await,
         "git.configure" => handle_git_configure(request, state),
         "rpc.internal_error" => Response::error(
             request.id,
@@ -3004,7 +3111,7 @@ fn handle_git_status(request: Request, state: &RpcServerState) -> Response {
     }
 }
 
-fn handle_git_sync(request: Request, state: &RpcServerState) -> Response {
+async fn handle_git_sync(request: Request, state: &RpcServerState) -> Response {
     let Some(git) = &state.git_state else {
         return Response::error(
             request.id,
@@ -3030,7 +3137,7 @@ fn handle_git_sync(request: Request, state: &RpcServerState) -> Response {
         }
     };
 
-    match git.sync(params.action) {
+    match git.sync(params.action).await {
         Ok(job_id) => Response::success(request.id, json!({ "job_id": job_id })),
         Err(e) => Response::error(
             request.id,
@@ -3105,6 +3212,10 @@ fn metadata_to_rpc_document(metadata: &DocMetadataRecord) -> RpcDocument {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::path::{Path, PathBuf};
+    use std::pin::Pin;
     use std::sync::{Arc, Mutex};
 
     use base64::Engine;
@@ -3116,11 +3227,14 @@ mod tests {
     use uuid::Uuid;
 
     use crate::engine::ydoc::YDoc;
+    use crate::git::commit::{AiCommitClient, AiCommitError, RedactionPolicy as AiRedactionPolicy};
+    use crate::git::worker::{CommandExecutor, CommandResult};
     use crate::search::{BacklinkStore, ResolvedBacklink};
 
     use super::{
         apply_bundle_token_budget_with, dispatch_request, BacklinkContext, CommentThreadContext,
-        DocBundleContext, GitOps, GitStatusInfo, GitSyncAction, GitSyncPolicy, RpcServerState,
+        DocBundleContext, GitOps, GitState, GitStatusInfo, GitSyncAction, GitSyncPolicy,
+        RpcServerState,
     };
 
     // ── Mock GitOps ────────────────────────────────────────────────────
@@ -3166,13 +3280,17 @@ mod tests {
             self.status_result.lock().unwrap().clone()
         }
 
-        fn sync(&self, action: GitSyncAction) -> Result<Uuid, String> {
+        fn sync(
+            &self,
+            action: GitSyncAction,
+        ) -> Pin<Box<dyn Future<Output = Result<Uuid, String>> + Send + '_>> {
             let label = match &action {
                 GitSyncAction::Commit { message } => format!("commit:{message}"),
                 GitSyncAction::CommitAndPush { message } => format!("commit_and_push:{message}"),
             };
             self.sync_calls.lock().unwrap().push(label);
-            self.sync_result.lock().unwrap().clone()
+            let result = self.sync_result.lock().unwrap().clone();
+            Box::pin(async move { result })
         }
 
         fn get_policy(&self) -> GitSyncPolicy {
@@ -3198,10 +3316,91 @@ mod tests {
         state
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct GitInvocation {
+        program: String,
+        args: Vec<String>,
+        cwd: PathBuf,
+    }
+
+    #[derive(Clone)]
+    struct MockCommandExecutor {
+        calls: Arc<Mutex<Vec<GitInvocation>>>,
+        responses: Arc<Mutex<VecDeque<Result<CommandResult, std::io::Error>>>>,
+    }
+
+    impl MockCommandExecutor {
+        fn new(responses: Vec<Result<CommandResult, std::io::Error>>) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                responses: Arc::new(Mutex::new(VecDeque::from(responses))),
+            }
+        }
+
+        fn calls(&self) -> Vec<GitInvocation> {
+            self.calls.lock().expect("mock calls lock poisoned").clone()
+        }
+    }
+
+    impl CommandExecutor for MockCommandExecutor {
+        fn execute(
+            &self,
+            program: &str,
+            args: &[String],
+            cwd: &Path,
+        ) -> Result<CommandResult, std::io::Error> {
+            self.calls.lock().expect("mock calls lock poisoned").push(GitInvocation {
+                program: program.to_string(),
+                args: args.to_vec(),
+                cwd: cwd.to_path_buf(),
+            });
+
+            self.responses
+                .lock()
+                .expect("mock responses lock poisoned")
+                .pop_front()
+                .expect("missing mock response")
+        }
+    }
+
+    struct MockAiClient {
+        response: Arc<Mutex<Result<String, AiCommitError>>>,
+    }
+
+    impl MockAiClient {
+        fn success(message: &str) -> Self {
+            Self { response: Arc::new(Mutex::new(Ok(message.to_string()))) }
+        }
+
+        fn failure(error: AiCommitError) -> Self {
+            Self { response: Arc::new(Mutex::new(Err(error))) }
+        }
+    }
+
+    impl AiCommitClient for MockAiClient {
+        fn generate(
+            &self,
+            _system: &str,
+            _user_prompt: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, AiCommitError>> + Send>> {
+            let response = self.response.lock().expect("mock ai response lock poisoned").clone();
+            Box::pin(async move { response })
+        }
+    }
+
     fn encoded_doc_ops(content: &str) -> String {
         let source = YDoc::new();
         source.insert_text("content", 0, content);
         base64::engine::general_purpose::STANDARD.encode(source.encode_state())
+    }
+
+    fn ok_command(stdout: &str) -> Result<CommandResult, std::io::Error> {
+        Ok(CommandResult {
+            success: true,
+            code: Some(0),
+            stdout: stdout.to_string(),
+            stderr: String::new(),
+        })
     }
 
     #[tokio::test]
@@ -4201,6 +4400,63 @@ mod tests {
         let error = response.error.expect("error should be present");
         assert_eq!(error.code, INTERNAL_ERROR);
         assert!(error.message.contains("nothing to commit"));
+    }
+
+    #[tokio::test]
+    async fn git_state_sync_uses_ai_generated_message_when_enabled() {
+        let executor = MockCommandExecutor::new(vec![
+            ok_command(""),
+            ok_command("diff --git a/docs/readme.md b/docs/readme.md\n"),
+            ok_command("M\tdocs/readme.md\n"),
+            ok_command("[main abc123] commit\n"),
+        ]);
+        let ai_client = Arc::new(MockAiClient::success("feat: ai generated commit"));
+        let git = GitState::with_executor_and_ai(
+            "/tmp/repo",
+            executor.clone(),
+            ai_client,
+            true,
+            AiRedactionPolicy::Full,
+        );
+
+        let _ = git
+            .sync(GitSyncAction::Commit { message: "docs: semantic trigger".to_string() })
+            .await
+            .expect("git sync should succeed");
+
+        let calls = executor.calls();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0].args, vec!["add", "."]);
+        assert_eq!(calls[1].args, vec!["diff", "--cached", "--no-color"]);
+        assert_eq!(calls[2].args, vec!["diff", "--cached", "--name-status"]);
+        assert_eq!(calls[3].args, vec!["commit", "-m", "feat: ai generated commit"]);
+    }
+
+    #[tokio::test]
+    async fn git_state_sync_falls_back_when_ai_generation_fails() {
+        let executor = MockCommandExecutor::new(vec![
+            ok_command(""),
+            ok_command("diff --git a/docs/readme.md b/docs/readme.md\n"),
+            ok_command("M\tdocs/readme.md\n"),
+            ok_command("[main abc123] commit\n"),
+        ]);
+        let ai_client =
+            Arc::new(MockAiClient::failure(AiCommitError::ClientError("timeout".into())));
+        let git = GitState::with_executor_and_ai(
+            "/tmp/repo",
+            executor.clone(),
+            ai_client,
+            true,
+            AiRedactionPolicy::Redacted,
+        );
+
+        let _ = git
+            .sync(GitSyncAction::Commit { message: "docs: semantic trigger".to_string() })
+            .await
+            .expect("git sync should succeed");
+
+        let calls = executor.calls();
+        assert_eq!(calls[3].args, vec!["commit", "-m", "Update 1 file(s): docs/readme.md"]);
     }
 
     // ── git.configure tests ────────────────────────────────────────────

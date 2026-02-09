@@ -104,6 +104,14 @@ impl<E: CommandExecutor> GitWorker<E> {
         self.run(vec!["commit".to_string(), "-m".to_string(), message.to_string()])
     }
 
+    pub fn diff_cached(&self) -> Result<GitCommandOutput, GitWorkerError> {
+        self.run(vec!["diff".to_string(), "--cached".to_string(), "--no-color".to_string()])
+    }
+
+    pub fn diff_cached_name_status(&self) -> Result<GitCommandOutput, GitWorkerError> {
+        self.run(vec!["diff".to_string(), "--cached".to_string(), "--name-status".to_string()])
+    }
+
     pub fn push(&self) -> Result<GitCommandOutput, GitWorkerError> {
         self.run(vec!["push".to_string()])
     }
@@ -248,5 +256,31 @@ mod tests {
 
         let calls = mock.calls();
         assert_eq!(calls[0].args, vec!["commit", "-m", "docs: update readme section"]);
+    }
+
+    #[test]
+    fn diff_commands_use_cached_flags() {
+        let mock = MockExecutor::new(vec![
+            Ok(CommandResult {
+                success: true,
+                code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            Ok(CommandResult {
+                success: true,
+                code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        ]);
+        let worker = GitWorker::with_executor("/tmp/repo", mock.clone());
+
+        let _ = worker.diff_cached().expect("diff --cached should succeed");
+        let _ = worker.diff_cached_name_status().expect("diff --name-status should succeed");
+
+        let calls = mock.calls();
+        assert_eq!(calls[0].args, vec!["diff", "--cached", "--no-color"]);
+        assert_eq!(calls[1].args, vec!["diff", "--cached", "--name-status"]);
     }
 }
