@@ -49,6 +49,7 @@ export interface ScriptumApiClientOptions {
   fetchImpl?: typeof fetch;
   tokenProvider?: (() => Promise<string | null>) | (() => string | null);
   idempotencyKeyFactory?: () => string;
+  maxRetries?: number;
 }
 
 export interface RelayErrorEnvelope {
@@ -208,6 +209,7 @@ export interface CreateShareLinkRequest {
   permission: "view" | "edit";
   expires_at?: string | null;
   max_uses?: number | null;
+  password?: string;
 }
 
 export interface UpdateShareLinkRequest {
@@ -239,6 +241,11 @@ interface RequestOptions {
   ifMatch?: string;
   includeAuth?: boolean;
 }
+
+const DEFAULT_MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 200;
+const RETRY_MAX_DELAY_MS = 5_000;
+const RETRY_JITTER_MS = 100;
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -294,6 +301,34 @@ async function parseJsonMaybe(response: Response): Promise<unknown> {
   return JSON.parse(text);
 }
 
+function normalizeMaxRetries(maxRetries: number | undefined): number {
+  if (maxRetries === undefined) {
+    return DEFAULT_MAX_RETRIES;
+  }
+  if (!Number.isFinite(maxRetries) || maxRetries < 0) {
+    throw new RangeError("maxRetries must be a non-negative finite number");
+  }
+  return Math.trunc(maxRetries);
+}
+
+function parseRetryAfterMs(retryAfter: string | null): number | null {
+  if (!retryAfter) {
+    return null;
+  }
+
+  const asSeconds = Number(retryAfter);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return Math.trunc(asSeconds * 1000);
+  }
+
+  const asDate = Date.parse(retryAfter);
+  if (Number.isNaN(asDate)) {
+    return null;
+  }
+
+  return Math.max(0, asDate - Date.now());
+}
+
 export class ScriptumApiClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -301,6 +336,7 @@ export class ScriptumApiClient {
     | (() => Promise<string | null>)
     | (() => string | null);
   private readonly idempotencyKeyFactory: () => string;
+  private readonly maxRetries: number;
 
   constructor(options: ScriptumApiClientOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
@@ -308,6 +344,7 @@ export class ScriptumApiClient {
     this.tokenProvider = options.tokenProvider ?? (() => null);
     this.idempotencyKeyFactory =
       options.idempotencyKeyFactory ?? (() => crypto.randomUUID());
+    this.maxRetries = normalizeMaxRetries(options.maxRetries);
   }
 
   private buildUrl(path: string, query?: QueryParams): URL {
@@ -387,18 +424,67 @@ export class ScriptumApiClient {
       headers.set("Idempotency-Key", this.idempotencyKeyFactory());
     }
 
-    const response = await this.fetchImpl(url.toString(), {
-      method,
-      headers,
-      body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const response = await this.fetchImpl(url.toString(), {
+          method,
+          headers,
+          body:
+            options.body === undefined ? undefined : JSON.stringify(options.body),
+        });
 
-    if (!response.ok) {
-      throw await this.parseError(response, method, url.toString());
+        if (response.ok) {
+          return (await parseJsonMaybe(response)) as T;
+        }
+
+        const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
+        const apiError = await this.parseError(response, method, url.toString());
+        if (
+          attempt < this.maxRetries &&
+          apiError.retryable &&
+          (response.status === 429 || response.status >= 500)
+        ) {
+          await this.sleep(this.computeRetryDelayMs(attempt, retryAfterMs));
+          continue;
+        }
+        throw apiError;
+      } catch (error) {
+        if (error instanceof ScriptumApiError) {
+          throw error;
+        }
+        if (
+          attempt < this.maxRetries &&
+          error instanceof TypeError &&
+          !(error instanceof DOMException && error.name === "AbortError")
+        ) {
+          await this.sleep(this.computeRetryDelayMs(attempt));
+          continue;
+        }
+        throw error;
+      }
     }
+  }
 
-    return (await parseJsonMaybe(response)) as T;
+  private computeRetryDelayMs(
+    attempt: number,
+    retryAfterMs: number | null = null,
+  ): number {
+    const exponentialDelay = Math.min(
+      RETRY_BASE_DELAY_MS * 2 ** attempt,
+      RETRY_MAX_DELAY_MS,
+    );
+    const jitter = Math.floor(Math.random() * (RETRY_JITTER_MS + 1));
+    const computedDelay = exponentialDelay + jitter;
+    return retryAfterMs === null ? computedDelay : Math.max(computedDelay, retryAfterMs);
+  }
+
+  private async sleep(delayMs: number): Promise<void> {
+    if (delayMs <= 0) {
+      return;
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
   }
 
   authOAuthStart(body: OAuthStartRequest): Promise<OAuthStartResponse> {

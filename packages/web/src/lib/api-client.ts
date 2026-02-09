@@ -84,6 +84,7 @@ export interface ApiClientOptions {
   fetch?: typeof fetch;
   getAccessToken?: () => Promise<string | null>;
   createIdempotencyKey?: () => string;
+  maxRetries?: number;
 }
 
 interface ApiClient {
@@ -402,6 +403,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     ...(options.createIdempotencyKey
       ? { idempotencyKeyFactory: options.createIdempotencyKey }
       : {}),
+    ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
   });
 
   return {

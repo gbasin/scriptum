@@ -324,6 +324,69 @@ describe("api-client", () => {
     });
   });
 
+  it("retries transient retryable responses", async () => {
+    vi.useFakeTimers();
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse(503, {
+            error: {
+              code: "TEMP",
+              message: "temporary outage",
+              retryable: true,
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse(200, {
+            items: [
+              {
+                id: "w1",
+                slug: "alpha",
+                name: "Alpha",
+                role: "editor",
+                created_at: "2026-02-07T00:00:00.000Z",
+                updated_at: "2026-02-07T00:01:00.000Z",
+                etag: "etag-w1",
+              },
+            ],
+            next_cursor: null,
+          }),
+        );
+
+      const client = createApiClient({
+        baseUrl: "https://relay.scriptum.dev",
+        fetch: fetchMock,
+        getAccessToken: async () => null,
+        maxRetries: 2,
+      });
+
+      const request = client.listWorkspaces();
+      await vi.runAllTimersAsync();
+      await expect(request).resolves.toEqual({
+        items: [
+          {
+            id: "w1",
+            slug: "alpha",
+            name: "Alpha",
+            role: "editor",
+            createdAt: "2026-02-07T00:00:00.000Z",
+            updatedAt: "2026-02-07T00:01:00.000Z",
+            etag: "etag-w1",
+          },
+        ],
+        nextCursor: null,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      randomSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("parses relay error envelope into ApiClientError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(409, {
