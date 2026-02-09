@@ -20,6 +20,21 @@
   --color-accent-soft: oklch(0.47 0.12 283);
   --color-selection-bg: var(--color-accent);
   --color-selection-text: var(--color-bg-canvas);
+  --color-scrollbar-track: color-mix(
+    in oklab,
+    var(--color-bg-surface-1) 72%,
+    var(--color-bg-canvas)
+  );
+  --color-scrollbar-thumb: color-mix(
+    in oklab,
+    var(--color-border-strong) 64%,
+    var(--color-bg-surface-2)
+  );
+  --color-scrollbar-thumb-hover: color-mix(
+    in oklab,
+    var(--color-accent-soft) 38%,
+    var(--color-border-strong)
+  );
 
   --color-danger: oklch(0.55 0.22 28);
   --color-danger-soft: oklch(0.49 0.21 28);
