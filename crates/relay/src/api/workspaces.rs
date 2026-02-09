@@ -4,7 +4,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::auth::middleware::AuthenticatedUser;
+use crate::{auth::middleware::AuthenticatedUser, validation::ValidatedJson};
 
 use super::{
     extract_if_match, normalize_limit, parse_cursor, validate_name, validate_slug, ApiError,
@@ -15,7 +15,7 @@ use super::{
 pub(super) async fn create_workspace(
     State(state): State<ApiState>,
     Extension(user): Extension<AuthenticatedUser>,
-    Json(payload): Json<CreateWorkspaceRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<WorkspaceEnvelope>), ApiError> {
     validate_name(&payload.name)?;
     validate_slug(&payload.slug)?;
@@ -63,7 +63,7 @@ pub(super) async fn update_workspace(
     Extension(user): Extension<AuthenticatedUser>,
     Path(workspace_id): Path<Uuid>,
     headers: HeaderMap,
-    Json(payload): Json<UpdateWorkspaceRequest>,
+    ValidatedJson(payload): ValidatedJson<UpdateWorkspaceRequest>,
 ) -> Result<Json<WorkspaceEnvelope>, ApiError> {
     if let Some(name) = payload.name.as_deref() {
         validate_name(name)?;

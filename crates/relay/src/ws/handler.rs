@@ -15,6 +15,7 @@ use crate::error::{
 };
 use crate::metrics;
 use crate::protocol;
+use crate::validation::ValidatedJson;
 use axum::{
     extract::{
         ws::{close_code, CloseFrame, Message, WebSocket, WebSocketUpgrade},
@@ -64,7 +65,7 @@ pub async fn create_sync_session(
     Path(workspace_id): Path<Uuid>,
     Extension(user): Extension<AuthenticatedUser>,
     State(state): State<SyncSessionRouterState>,
-    Json(payload): Json<CreateSyncSessionRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateSyncSessionRequest>,
 ) -> impl IntoResponse {
     if let Err(upgrade_error) = protocol::require_supported(&payload.protocol) {
         return upgrade_error.into_response();

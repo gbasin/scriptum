@@ -45,6 +45,7 @@ use crate::{
     },
     db::pool::{check_pool_health, create_pg_pool, PoolConfig},
     error::{ErrorCode, RelayError},
+    validation::ValidatedJson,
 };
 
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -728,7 +729,7 @@ async fn create_share_link(
     State(state): State<ApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path(workspace_id): Path<Uuid>,
-    Json(mut payload): Json<CreateShareLinkRequest>,
+    ValidatedJson(mut payload): ValidatedJson<CreateShareLinkRequest>,
 ) -> Result<(StatusCode, Json<ShareLinkEnvelope>), ApiError> {
     validate_share_link_request(workspace_id, &payload)?;
 
@@ -770,7 +771,7 @@ async fn update_share_link(
     State(state): State<ApiState>,
     Path((workspace_id, share_link_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
-    Json(payload): Json<UpdateShareLinkRequest>,
+    ValidatedJson(payload): ValidatedJson<UpdateShareLinkRequest>,
 ) -> Result<Json<ShareLinkEnvelope>, ApiError> {
     validate_share_link_update_request(&payload)?;
     let if_match = extract_if_match(&headers)?;
@@ -792,7 +793,7 @@ async fn revoke_share_link(
 
 async fn redeem_share_link(
     State(state): State<ApiState>,
-    Json(payload): Json<RedeemShareLinkRequest>,
+    ValidatedJson(payload): ValidatedJson<RedeemShareLinkRequest>,
 ) -> Result<Json<RedeemShareLinkResponse>, ApiError> {
     if payload.token.trim().is_empty() {
         return Err(ApiError::bad_request("VALIDATION_ERROR", "token is required"));

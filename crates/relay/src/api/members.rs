@@ -5,7 +5,7 @@ use axum::{
 use sqlx::types::chrono::Utc;
 use uuid::Uuid;
 
-use crate::auth::middleware::AuthenticatedUser;
+use crate::{auth::middleware::AuthenticatedUser, validation::ValidatedJson};
 
 use super::{
     extract_if_match, generate_share_link_token, hash_share_link_token, normalize_limit,
@@ -38,7 +38,7 @@ pub(super) async fn update_member(
     Extension(user): Extension<AuthenticatedUser>,
     Path((workspace_id, member_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
-    Json(payload): Json<UpdateMemberRequest>,
+    ValidatedJson(payload): ValidatedJson<UpdateMemberRequest>,
 ) -> Result<Json<MemberEnvelope>, ApiError> {
     validate_member_update(&payload)?;
 
@@ -72,7 +72,7 @@ pub(super) async fn create_invite(
     State(state): State<ApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path(workspace_id): Path<Uuid>,
-    Json(payload): Json<CreateInviteRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateInviteRequest>,
 ) -> Result<(StatusCode, Json<InviteEnvelope>), ApiError> {
     validate_invite_request(&payload)?;
 

@@ -32,6 +32,7 @@ use crate::{
         middleware::{require_bearer_auth, AuthenticatedUser},
     },
     error::{ErrorCode, RelayError},
+    validation::ValidatedJson,
 };
 
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -322,7 +323,7 @@ async fn create_comment_thread(
     State(state): State<CommentsApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
-    Json(payload): Json<CreateCommentThreadRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateCommentThreadRequest>,
 ) -> Result<(StatusCode, Json<CreateThreadResponse>), CommentsApiError> {
     validate_anchor(&payload.anchor)?;
     validate_markdown_body("message", &payload.message)?;
@@ -339,7 +340,7 @@ async fn create_comment_message(
     State(state): State<CommentsApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, thread_id)): Path<(Uuid, Uuid)>,
-    Json(payload): Json<CreateCommentMessageRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateCommentMessageRequest>,
 ) -> Result<(StatusCode, Json<CreateMessageResponse>), CommentsApiError> {
     validate_markdown_body("body_md", &payload.body_md)?;
 
@@ -353,7 +354,7 @@ async fn resolve_comment_thread(
     State(state): State<CommentsApiState>,
     Extension(_user): Extension<AuthenticatedUser>,
     Path((ws_id, thread_id)): Path<(Uuid, Uuid)>,
-    Json(payload): Json<SetCommentStatusRequest>,
+    ValidatedJson(payload): ValidatedJson<SetCommentStatusRequest>,
 ) -> Result<Json<ThreadResponse>, CommentsApiError> {
     if payload.if_version < 1 {
         return Err(CommentsApiError::bad_request("if_version must be >= 1"));
@@ -371,7 +372,7 @@ async fn reopen_comment_thread(
     State(state): State<CommentsApiState>,
     Extension(_user): Extension<AuthenticatedUser>,
     Path((ws_id, thread_id)): Path<(Uuid, Uuid)>,
-    Json(payload): Json<SetCommentStatusRequest>,
+    ValidatedJson(payload): ValidatedJson<SetCommentStatusRequest>,
 ) -> Result<Json<ThreadResponse>, CommentsApiError> {
     if payload.if_version < 1 {
         return Err(CommentsApiError::bad_request("if_version must be >= 1"));

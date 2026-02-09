@@ -32,6 +32,7 @@ use crate::{
         middleware::{require_bearer_auth, AuthenticatedUser},
     },
     error::{ErrorCode, RelayError},
+    validation::ValidatedJson,
 };
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -326,7 +327,7 @@ async fn create_document(
     State(state): State<DocApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path(ws_id): Path<Uuid>,
-    Json(payload): Json<CreateDocumentRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateDocumentRequest>,
 ) -> Result<(StatusCode, Json<DocumentEnvelope>), DocApiError> {
     validate_path(&payload.path)?;
 
@@ -370,7 +371,7 @@ async fn update_document(
     Extension(_user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
-    Json(payload): Json<UpdateDocumentRequest>,
+    ValidatedJson(payload): ValidatedJson<UpdateDocumentRequest>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
     if let Some(path) = payload.path.as_deref() {
         validate_path(path)?;
@@ -397,7 +398,7 @@ async fn update_document_tags(
     State(state): State<DocApiState>,
     Extension(_user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
-    Json(payload): Json<UpdateDocumentTagsRequest>,
+    ValidatedJson(payload): ValidatedJson<UpdateDocumentTagsRequest>,
 ) -> Result<Json<DocumentEnvelope>, DocApiError> {
     let tags = normalize_tag_names(&payload.tags)?;
     let document = state.store.update_tags(ws_id, doc_id, payload.op, &tags).await?;
@@ -408,7 +409,7 @@ async fn create_acl_override(
     State(state): State<DocApiState>,
     Extension(user): Extension<AuthenticatedUser>,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
-    Json(payload): Json<CreateAclOverrideRequest>,
+    ValidatedJson(payload): ValidatedJson<CreateAclOverrideRequest>,
 ) -> Result<(StatusCode, Json<AclOverrideEnvelope>), DocApiError> {
     if ws_id != user.workspace_id {
         return Err(DocApiError::Forbidden);

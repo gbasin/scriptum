@@ -30,7 +30,10 @@ use tokio::sync::RwLock;
 use url::Url;
 use uuid::Uuid;
 
-use crate::error::{ErrorCode, RelayError};
+use crate::{
+    error::{ErrorCode, RelayError},
+    validation::ValidatedJson,
+};
 
 const DEFAULT_GITHUB_AUTH_URL: &str = "https://github.com/login/oauth/authorize";
 const DEFAULT_GITHUB_SCOPE: &str = "read:user user:email";
@@ -499,7 +502,7 @@ impl IntoResponse for OAuthStartError {
 
 async fn start_github_oauth(
     State(state): State<OAuthState>,
-    Json(payload): Json<OAuthGithubStartRequest>,
+    ValidatedJson(payload): ValidatedJson<OAuthGithubStartRequest>,
 ) -> Result<Json<OAuthGithubStartResponse>, OAuthStartError> {
     match state.rate_limiter.check().await {
         RateLimitDecision::Allowed => {}
@@ -691,7 +694,7 @@ struct AuthSessionResponse {
 
 async fn register_password_user(
     State(state): State<OAuthState>,
-    Json(payload): Json<PasswordRegisterRequest>,
+    ValidatedJson(payload): ValidatedJson<PasswordRegisterRequest>,
 ) -> Result<Json<AuthSessionResponse>, RelayError> {
     let email = normalize_email(&payload.email)?;
     let display_name = payload.display_name.trim().to_string();
@@ -711,7 +714,7 @@ async fn register_password_user(
 
 async fn login_password_user(
     State(state): State<OAuthState>,
-    Json(payload): Json<PasswordLoginRequest>,
+    ValidatedJson(payload): ValidatedJson<PasswordLoginRequest>,
 ) -> Result<Json<AuthSessionResponse>, RelayError> {
     let email = normalize_email(&payload.email)?;
     let user =
@@ -730,7 +733,7 @@ async fn login_password_user(
 async fn change_password(
     State(state): State<OAuthState>,
     headers: HeaderMap,
-    Json(payload): Json<PasswordChangeRequest>,
+    ValidatedJson(payload): ValidatedJson<PasswordChangeRequest>,
 ) -> Result<StatusCode, RelayError> {
     let user_id = extract_user_id_from_bearer(&state, &headers)?;
     let user = state.password_store.find_by_user_id(user_id).await.ok_or_else(|| {
@@ -883,7 +886,7 @@ impl From<RelayError> for OAuthCallbackError {
 
 async fn callback_github_oauth(
     State(state): State<OAuthState>,
-    Json(payload): Json<OAuthGithubCallbackRequest>,
+    ValidatedJson(payload): ValidatedJson<OAuthGithubCallbackRequest>,
 ) -> Result<Json<AuthSessionResponse>, OAuthCallbackError> {
     // 1. Consume the flow (one-time use)
     let flow =
@@ -964,7 +967,7 @@ struct RefreshTokenResponse {
 
 async fn handle_token_refresh(
     State(state): State<OAuthState>,
-    Json(payload): Json<RefreshTokenRequest>,
+    ValidatedJson(payload): ValidatedJson<RefreshTokenRequest>,
 ) -> Result<Json<RefreshTokenResponse>, RelayError> {
     let token_hash = Sha256::digest(payload.refresh_token.as_bytes()).to_vec();
 
@@ -1028,7 +1031,7 @@ async fn handle_token_refresh(
 async fn handle_logout(
     State(state): State<OAuthState>,
     headers: HeaderMap,
-    Json(payload): Json<RefreshTokenRequest>,
+    ValidatedJson(payload): ValidatedJson<RefreshTokenRequest>,
 ) -> Result<StatusCode, RelayError> {
     extract_user_id_from_bearer(&state, &headers)?;
 

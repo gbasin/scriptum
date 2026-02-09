@@ -435,6 +435,7 @@ mod tests {
         auth::jwt::JwtAccessTokenService,
         error::{ErrorCode, REQUEST_ID_HEADER, TRACE_ID_HEADER},
         metrics::RelayMetrics,
+        validation::ValidatedJson,
         ws::{DocSyncStore, SyncSessionStore, WorkspaceMembershipStore},
     };
 
@@ -668,6 +669,84 @@ mod tests {
         assert_eq!(parsed["error"]["retryable"], false);
         assert_eq!(parsed["error"]["request_id"], "req-auth-123");
         assert!(parsed["error"]["details"].is_object());
+    }
+
+    #[tokio::test]
+    async fn invalid_json_uses_structured_error_envelope_with_request_id() {
+        async fn validated_endpoint(ValidatedJson(_): ValidatedJson<Value>) -> StatusCode {
+            StatusCode::NO_CONTENT
+        }
+
+        let app = apply_middleware(
+            Router::new().route("/validated", post(validated_endpoint)),
+            Arc::new(RelayMetrics::default()),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/validated")
+                    .header(REQUEST_ID_HEADER, "req-invalid-json-123")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{\"email\":"))
+                    .expect("validated request should build"),
+            )
+            .await
+            .expect("validated request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers().get(REQUEST_ID_HEADER).unwrap(), "req-invalid-json-123");
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("invalid json response body should read");
+        let parsed: Value =
+            serde_json::from_slice(&body).expect("invalid json response should be valid json");
+        assert_eq!(parsed["error"]["code"], "VALIDATION_FAILED");
+        assert_eq!(parsed["error"]["retryable"], false);
+        assert_eq!(parsed["error"]["request_id"], "req-invalid-json-123");
+        assert_eq!(parsed["error"]["details"]["kind"], "syntax_error");
+    }
+
+    #[tokio::test]
+    async fn missing_content_type_uses_structured_error_envelope_with_details() {
+        async fn validated_endpoint(ValidatedJson(_): ValidatedJson<Value>) -> StatusCode {
+            StatusCode::NO_CONTENT
+        }
+
+        let app = apply_middleware(
+            Router::new().route("/validated", post(validated_endpoint)),
+            Arc::new(RelayMetrics::default()),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/validated")
+                    .header(REQUEST_ID_HEADER, "req-missing-content-type-123")
+                    .body(Body::from("{\"ok\":true}"))
+                    .expect("validated request should build"),
+            )
+            .await
+            .expect("validated request should return response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(REQUEST_ID_HEADER).unwrap(),
+            "req-missing-content-type-123"
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("missing content-type response body should read");
+        let parsed: Value = serde_json::from_slice(&body)
+            .expect("missing content-type response should be valid json");
+        assert_eq!(parsed["error"]["code"], "VALIDATION_FAILED");
+        assert_eq!(parsed["error"]["retryable"], false);
+        assert_eq!(parsed["error"]["request_id"], "req-missing-content-type-123");
+        assert_eq!(parsed["error"]["details"]["kind"], "missing_content_type");
     }
 
     #[test]
