@@ -3,8 +3,9 @@ use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::agent::lease::{LeaseClaim, LeaseMode, LeaseStore};
 use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus, SessionStore};
@@ -14,7 +15,7 @@ use crate::git::commit::{
     fallback_commit_message, generate_commit_message_with_fallback, AiCommitClient,
     AnthropicCommitClient, RedactionPolicy as AiRedactionPolicy,
 };
-use crate::git::triggers::{ChangeType, ChangedFile};
+use crate::git::triggers::{ChangeType, ChangedFile, TriggerCollector, TriggerConfig, TriggerEvent};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
 use crate::rpc::trace::{trace_id_from_raw_request, with_trace_id_scope};
 use crate::search::indexer::extract_title;
@@ -142,7 +143,11 @@ impl<E: CommandExecutor> GitState<E> {
         }
     }
 
-    async fn commit_with_generated_message(&self, semantic_hint: &str) -> Result<(), String> {
+    async fn commit_with_generated_message(
+        &self,
+        semantic_hint: &str,
+        trigger_type: Option<&str>,
+    ) -> Result<(), String> {
         let _ = self.worker.add(&["."]).map_err(|e| e.to_string())?;
 
         let staged_diff = self.worker.diff_cached().map_err(|e| e.to_string())?;
@@ -172,6 +177,7 @@ impl<E: CommandExecutor> GitState<E> {
             fallback_commit_message(&changed_files)
         };
 
+        let commit_message = append_trigger_metadata(commit_message, trigger_type);
         self.worker.commit(&commit_message).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -215,6 +221,17 @@ fn parse_change_type(status: &str) -> ChangeType {
     }
 }
 
+fn append_trigger_metadata(message: String, trigger_type: Option<&str>) -> String {
+    let Some(trigger_type) = trigger_type.map(str::trim).filter(|value| !value.is_empty()) else {
+        return message;
+    };
+
+    let mut composed = message.trim_end().to_string();
+    composed.push_str("\n\nScriptum-Trigger: ");
+    composed.push_str(trigger_type);
+    composed
+}
+
 const HISTORY_SYSTEM_AUTHOR_ID: &str = "system";
 const HISTORY_LOCAL_HUMAN_AUTHOR_ID: &str = "local-user";
 
@@ -237,6 +254,8 @@ pub struct RpcServerState {
     workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
     shutdown_notifier: Option<broadcast::Sender<()>>,
     git_state: Option<Arc<dyn GitOps + Send + Sync>>,
+    git_triggers: Arc<Mutex<TriggerCollector>>,
+    git_idle_timer_epoch: Arc<AtomicU64>,
     agent_db: Arc<Mutex<MetaDb>>,
     lease_store: Arc<Mutex<LeaseStore>>,
     agent_id: Arc<String>,
@@ -281,11 +300,11 @@ impl<E: CommandExecutor + 'static> GitOps for GitState<E> {
             let job_id = Uuid::new_v4();
 
             match action {
-                GitSyncAction::Commit { message } => {
-                    self.commit_with_generated_message(&message).await?;
+                GitSyncAction::Commit { message, trigger_type } => {
+                    self.commit_with_generated_message(&message, trigger_type.as_deref()).await?;
                 }
-                GitSyncAction::CommitAndPush { message } => {
-                    self.commit_with_generated_message(&message).await?;
+                GitSyncAction::CommitAndPush { message, trigger_type } => {
+                    self.commit_with_generated_message(&message, trigger_type.as_deref()).await?;
                     self.worker.push().map_err(|e| e.to_string())?;
                 }
             }
@@ -980,6 +999,8 @@ impl Default for RpcServerState {
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notifier: None,
             git_state: None,
+            git_triggers: Arc::new(Mutex::new(TriggerCollector::new(TriggerConfig::default()))),
+            git_idle_timer_epoch: Arc::new(AtomicU64::new(0)),
             agent_db: Arc::new(Mutex::new(meta_db)),
             lease_store: Arc::new(Mutex::new(lease_store)),
             agent_id: Arc::new("local-agent".to_string()),
@@ -1026,6 +1047,12 @@ impl RpcServerState {
         self
     }
 
+    #[cfg(test)]
+    fn with_git_trigger_config(mut self, config: TriggerConfig) -> Self {
+        self.git_triggers = Arc::new(Mutex::new(TriggerCollector::new(config)));
+        self
+    }
+
     pub fn with_agent_identity(mut self, agent_id: impl Into<String>) -> Self {
         self.agent_id = Arc::new(agent_id.into());
         self
@@ -1044,6 +1071,221 @@ impl RpcServerState {
         let mut leases =
             self.lease_store.lock().map_err(|_| "agent lease store lock poisoned".to_string())?;
         f(db.connection(), &mut leases)
+    }
+
+    fn register_git_change(&self, path: &str) {
+        if self.git_state.is_none() {
+            return;
+        }
+        let normalized = path.trim();
+        if normalized.is_empty() {
+            return;
+        }
+
+        if let Ok(mut collector) = self.git_triggers.lock() {
+            collector.mark_changed(normalized);
+        }
+        self.schedule_idle_fallback_commit();
+    }
+
+    fn enqueue_git_trigger(&self, trigger: TriggerEvent) {
+        if self.git_state.is_none() {
+            return;
+        }
+        if let Ok(mut collector) = self.git_triggers.lock() {
+            collector.push_trigger(trigger);
+        }
+    }
+
+    fn clear_trigger_state_after_commit(&self) {
+        let Ok(mut collector) = self.git_triggers.lock() else {
+            return;
+        };
+        let tracked = collector.tracked_changed_files();
+        let _ = collector.take_commit_context_at(Instant::now(), tracked);
+    }
+
+    async fn run_triggered_auto_commit(&self) -> Result<Option<Uuid>, String> {
+        let Some(git) = &self.git_state else {
+            return Ok(None);
+        };
+
+        let policy = git.get_policy();
+        if matches!(policy, GitSyncPolicy::Disabled) {
+            return Ok(None);
+        }
+
+        let (message, trigger_type) = {
+            let mut collector = self
+                .git_triggers
+                .lock()
+                .map_err(|_| "git trigger collector lock poisoned".to_string())?;
+            let now = Instant::now();
+            if !collector.should_commit(now) {
+                return Ok(None);
+            }
+
+            let changed_files = collector.tracked_changed_files();
+            if changed_files.is_empty() {
+                return Ok(None);
+            }
+
+            let Some(context) = collector.take_commit_context_at(now, changed_files) else {
+                return Ok(None);
+            };
+            (context.generate_message(), context.trigger.kind().to_string())
+        };
+
+        let action = match policy {
+            GitSyncPolicy::Disabled => return Ok(None),
+            GitSyncPolicy::Manual => GitSyncAction::Commit {
+                message,
+                trigger_type: Some(trigger_type),
+            },
+            GitSyncPolicy::AutoRebase => GitSyncAction::CommitAndPush {
+                message,
+                trigger_type: Some(trigger_type),
+            },
+        };
+
+        git.sync(action).await.map(Some)
+    }
+
+    fn schedule_idle_fallback_commit(&self) {
+        if self.git_state.is_none() {
+            return;
+        }
+
+        let idle_timeout = self
+            .git_triggers
+            .lock()
+            .ok()
+            .map(|collector| collector.idle_fallback_timeout())
+            .unwrap_or_else(|| Duration::from_secs(30));
+
+        let epoch = self.git_idle_timer_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        let state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(idle_timeout).await;
+            if state.git_idle_timer_epoch.load(Ordering::SeqCst) != epoch {
+                return;
+            }
+            if let Err(error) = state.run_triggered_auto_commit().await {
+                warn!(error = %error, "idle fallback trigger auto-commit failed");
+            }
+        });
+    }
+
+    fn schedule_lease_expiry_trigger(
+        &self,
+        workspace_id: Uuid,
+        doc_id: Uuid,
+        section_id: String,
+        agent_id: String,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) {
+        if self.git_state.is_none() {
+            return;
+        }
+
+        let doc_path = self
+            .doc_metadata
+            .try_read()
+            .ok()
+            .and_then(|metadata| {
+                metadata.get(&(workspace_id, doc_id)).map(|record| record.path.clone())
+            })
+            .unwrap_or_else(|| format!("{doc_id}.md"));
+
+        let workspace_key = workspace_id.to_string();
+        let doc_key = doc_id.to_string();
+        let delay = expires_at
+            .signed_duration_since(chrono::Utc::now())
+            .to_std()
+            .unwrap_or_else(|_| Duration::from_secs(0));
+
+        let state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+
+            let agent_id_for_check = agent_id.clone();
+            let should_trigger = state.with_agent_storage(|conn, lease_store| {
+                let active = lease_store
+                    .active_leases_for_section(
+                        conn,
+                        workspace_key.as_str(),
+                        doc_key.as_str(),
+                        section_id.as_str(),
+                        chrono::Utc::now(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(!active.iter().any(|lease| lease.agent_id == agent_id_for_check))
+            });
+
+            match should_trigger {
+                Ok(true) => {
+                    state.enqueue_git_trigger(TriggerEvent::LeaseReleased {
+                        agent: agent_id.clone(),
+                        doc_path: doc_path.clone(),
+                        section_heading: section_id.clone(),
+                    });
+                    if let Err(error) = state.run_triggered_auto_commit().await {
+                        warn!(error = %error, "lease expiry trigger auto-commit failed");
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(error = %error, "failed to evaluate lease expiry trigger");
+                }
+            }
+        });
+    }
+
+    fn maybe_enqueue_comment_resolved_trigger(
+        &self,
+        client_update_id: &str,
+        doc_path: &str,
+        section_id: &str,
+        agent_id: Option<&str>,
+    ) {
+        if self.git_state.is_none() {
+            return;
+        }
+
+        let thread_id = client_update_id
+            .strip_prefix("comment.resolve:")
+            .or_else(|| client_update_id.strip_prefix("comment_resolved:"))
+            .or_else(|| client_update_id.strip_prefix("comment:resolve:"));
+
+        let Some(thread_id) = thread_id.map(str::trim).filter(|id| !id.is_empty()) else {
+            return;
+        };
+
+        let agent = agent_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| self.agent_id.as_ref().as_str())
+            .to_string();
+        let section_hint = section_id.trim();
+        let doc_path = doc_path.to_string();
+        let thread_id = thread_id.to_string();
+
+        self.enqueue_git_trigger(TriggerEvent::CommentResolved {
+            agent,
+            doc_path: doc_path.clone(),
+            thread_id,
+        });
+
+        if !section_hint.is_empty() {
+            self.register_git_change(doc_path.as_str());
+        }
+
+        let state = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = state.run_triggered_auto_commit().await {
+                warn!(error = %error, "comment resolution trigger auto-commit failed");
+            }
+        });
     }
 
     fn ensure_search_index<'a>(conn: &'a rusqlite::Connection) -> Result<Fts5Index<'a>, String> {
@@ -1412,7 +1654,8 @@ impl RpcServerState {
             AgentClaimMode::Shared => LeaseMode::Shared,
         };
 
-        self.with_agent_storage(|conn, lease_store| {
+        let (result, claimed_section_id, claimed_agent_id, claimed_expires_at) =
+            self.with_agent_storage(|conn, lease_store| {
             Self::ensure_active_session(conn, workspace_id, &agent_id, now)?;
 
             let claim = LeaseClaim {
@@ -1437,15 +1680,30 @@ impl RpcServerState {
                 })
                 .collect::<Vec<_>>();
 
-            Ok(AgentClaimResult {
-                lease_id: format!(
-                    "{}:{}:{}:{}",
-                    workspace_id, doc_id, lease.section_id, lease.agent_id
-                ),
-                expires_at: lease.expires_at,
-                conflicts,
-            })
-        })
+            Ok((
+                AgentClaimResult {
+                    lease_id: format!(
+                        "{}:{}:{}:{}",
+                        workspace_id, doc_id, lease.section_id, lease.agent_id
+                    ),
+                    expires_at: lease.expires_at,
+                    conflicts,
+                },
+                lease.section_id,
+                lease.agent_id,
+                lease.expires_at,
+            ))
+        })?;
+
+        self.schedule_lease_expiry_trigger(
+            workspace_id,
+            doc_id,
+            claimed_section_id,
+            claimed_agent_id,
+            claimed_expires_at,
+        );
+
+        Ok(result)
     }
 
     pub async fn seed_doc(
@@ -1897,7 +2155,7 @@ impl RpcServerState {
                 .map_err(|error| format!("failed to apply staged Yjs update: {error}"))?;
 
             let updated_content = doc.get_text_string("content");
-            let (result, updated_seq, updated_title) = {
+            let (result, updated_seq, updated_title, updated_path) = {
                 let mut metadata = self.doc_metadata.write().await;
                 let record = metadata
                     .entry((params.workspace_id, params.doc_id))
@@ -1911,6 +2169,7 @@ impl RpcServerState {
                     DocEditResult { etag: record.etag.clone(), head_seq: record.head_seq },
                     record.head_seq,
                     normalized_title,
+                    record.path.clone(),
                 )
             };
             let snapshot_author_id = params
@@ -1971,6 +2230,14 @@ impl RpcServerState {
                     "failed to update persistent search/backlink indexes after doc.edit"
                 );
             }
+
+            self.register_git_change(updated_path.as_str());
+            self.maybe_enqueue_comment_resolved_trigger(
+                params.client_update_id.as_str(),
+                updated_path.as_str(),
+                "",
+                params.agent_id.as_deref(),
+            );
 
             Ok(result)
         }
@@ -3350,8 +3617,28 @@ struct GitStatusInfo {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum GitSyncAction {
-    Commit { message: String },
-    CommitAndPush { message: String },
+    Commit {
+        message: String,
+        #[serde(default)]
+        trigger_type: Option<String>,
+    },
+    CommitAndPush {
+        message: String,
+        #[serde(default)]
+        trigger_type: Option<String>,
+    },
+}
+
+impl GitSyncAction {
+    fn with_trigger_type(self, trigger_type: impl Into<String>) -> Self {
+        let trigger_type = Some(trigger_type.into());
+        match self {
+            GitSyncAction::Commit { message, .. } => GitSyncAction::Commit { message, trigger_type },
+            GitSyncAction::CommitAndPush { message, .. } => {
+                GitSyncAction::CommitAndPush { message, trigger_type }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3495,8 +3782,21 @@ async fn handle_git_sync(request: Request, state: &RpcServerState) -> Response {
         }
     };
 
-    match git.sync(params.action).await {
-        Ok(job_id) => Response::success(request.id, json!({ "job_id": job_id })),
+    let checkpoint_message = match &params.action {
+        GitSyncAction::Commit { message, .. } => message.clone(),
+        GitSyncAction::CommitAndPush { message, .. } => message.clone(),
+    };
+    state.enqueue_git_trigger(TriggerEvent::ExplicitCheckpoint {
+        agent: state.agent_id.as_ref().clone(),
+        message: Some(checkpoint_message),
+    });
+
+    let action = params.action.with_trigger_type("checkpoint");
+    match git.sync(action).await {
+        Ok(job_id) => {
+            state.clear_trigger_state_after_commit();
+            Response::success(request.id, json!({ "job_id": job_id }))
+        }
         Err(e) => Response::error(
             request.id,
             RpcError { code: INTERNAL_ERROR, message: format!("git sync failed: {e}"), data: None },
@@ -3575,6 +3875,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use base64::Engine;
     use chrono::Utc;
@@ -3592,7 +3893,7 @@ mod tests {
     use super::{
         apply_bundle_token_budget_with, dispatch_request, BacklinkContext, CommentThreadContext,
         DocBundleContext, GitOps, GitState, GitStatusInfo, GitSyncAction, GitSyncPolicy,
-        RpcServerState,
+        RpcServerState, TriggerConfig,
     };
 
     // ── Mock GitOps ────────────────────────────────────────────────────
@@ -3644,8 +3945,14 @@ mod tests {
             action: GitSyncAction,
         ) -> Pin<Box<dyn Future<Output = Result<Uuid, String>> + Send + '_>> {
             let label = match &action {
-                GitSyncAction::Commit { message } => format!("commit:{message}"),
-                GitSyncAction::CommitAndPush { message } => format!("commit_and_push:{message}"),
+                GitSyncAction::Commit { message, trigger_type } => match trigger_type {
+                    Some(trigger) => format!("commit:{message}|trigger:{trigger}"),
+                    None => format!("commit:{message}"),
+                },
+                GitSyncAction::CommitAndPush { message, trigger_type } => match trigger_type {
+                    Some(trigger) => format!("commit_and_push:{message}|trigger:{trigger}"),
+                    None => format!("commit_and_push:{message}"),
+                },
             };
             self.sync_calls.lock().unwrap().push(label);
             let result = self.sync_result.lock().unwrap().clone();
@@ -4954,7 +5261,7 @@ mod tests {
 
         let calls = mock.sync_calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0], "commit:docs: update");
+        assert_eq!(calls[0], "commit:docs: update|trigger:checkpoint");
     }
 
     #[tokio::test]
@@ -4976,7 +5283,7 @@ mod tests {
         assert_eq!(result["job_id"], json!(job_id));
 
         let calls = mock.sync_calls.lock().unwrap();
-        assert_eq!(calls[0], "commit_and_push:feat: add X");
+        assert_eq!(calls[0], "commit_and_push:feat: add X|trigger:checkpoint");
     }
 
     #[tokio::test]
@@ -5032,6 +5339,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn idle_fallback_trigger_commits_after_inactivity() {
+        let mock = MockGitOps::new().with_sync_result(Ok(Uuid::new_v4()));
+        let state = state_with_git(mock.clone()).with_git_trigger_config(TriggerConfig {
+            min_commit_interval: Duration::from_millis(25),
+            idle_fallback_timeout: Duration::from_millis(40),
+            max_batch_size: 10,
+        });
+
+        state.register_git_change("docs/idle.md");
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        let calls = mock.sync_calls.lock().expect("sync calls lock should be available");
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].starts_with("commit:chore: idle fallback checkpoint"));
+        assert!(
+            calls[0].contains("|trigger:idle_fallback"),
+            "expected trigger metadata in call: {}",
+            calls[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_expiry_trigger_commits_after_claim_ttl_expires() {
+        let mock = MockGitOps::new().with_sync_result(Ok(Uuid::new_v4()));
+        let state = state_with_git(mock.clone()).with_git_trigger_config(TriggerConfig {
+            min_commit_interval: Duration::from_millis(25),
+            idle_fallback_timeout: Duration::from_secs(5),
+            max_batch_size: 10,
+        });
+
+        let workspace_id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        state.seed_doc(workspace_id, doc_id, "docs/lease.md", "Lease", "# Lease\n").await;
+
+        let edit_request = Request::new(
+            "doc.edit",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "client_update_id": "lease-upd-1",
+                "content_md": "# Lease\nupdated\n"
+            })),
+            RequestId::Number(251),
+        );
+        let edit_response = dispatch_request(edit_request, &state).await;
+        assert!(edit_response.error.is_none(), "edit should succeed: {edit_response:?}");
+
+        let claim_request = Request::new(
+            "agent.claim",
+            Some(json!({
+                "workspace_id": workspace_id,
+                "doc_id": doc_id,
+                "section_id": "root/lease",
+                "ttl_sec": 1,
+                "mode": "exclusive",
+                "agent_id": "claude-1"
+            })),
+            RequestId::Number(252),
+        );
+        let claim_response = dispatch_request(claim_request, &state).await;
+        assert!(claim_response.error.is_none(), "claim should succeed: {claim_response:?}");
+
+        tokio::time::sleep(Duration::from_millis(1250)).await;
+
+        let calls = mock.sync_calls.lock().expect("sync calls lock should be available");
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].contains("|trigger:lease_released"),
+            "expected lease trigger metadata in call: {}",
+            calls[0]
+        );
+    }
+
+    #[tokio::test]
     async fn git_state_sync_uses_ai_generated_message_when_enabled() {
         let executor = MockCommandExecutor::new(vec![
             ok_command(""),
@@ -5049,7 +5430,10 @@ mod tests {
         );
 
         let _ = git
-            .sync(GitSyncAction::Commit { message: "docs: semantic trigger".to_string() })
+            .sync(GitSyncAction::Commit {
+                message: "docs: semantic trigger".to_string(),
+                trigger_type: None,
+            })
             .await
             .expect("git sync should succeed");
 
@@ -5080,12 +5464,51 @@ mod tests {
         );
 
         let _ = git
-            .sync(GitSyncAction::Commit { message: "docs: semantic trigger".to_string() })
+            .sync(GitSyncAction::Commit {
+                message: "docs: semantic trigger".to_string(),
+                trigger_type: None,
+            })
             .await
             .expect("git sync should succeed");
 
         let calls = executor.calls();
         assert_eq!(calls[3].args, vec!["commit", "-m", "Update 1 file(s): docs/readme.md"]);
+    }
+
+    #[tokio::test]
+    async fn git_state_sync_appends_trigger_metadata_trailer() {
+        let executor = MockCommandExecutor::new(vec![
+            ok_command(""),
+            ok_command("diff --git a/docs/readme.md b/docs/readme.md\n"),
+            ok_command("M\tdocs/readme.md\n"),
+            ok_command("[main abc123] commit\n"),
+        ]);
+        let ai_client = Arc::new(MockAiClient::failure(AiCommitError::ClientError("disabled".into())));
+        let git = GitState::with_executor_and_ai(
+            "/tmp/repo",
+            executor.clone(),
+            ai_client,
+            false,
+            AiRedactionPolicy::Disabled,
+        );
+
+        let _ = git
+            .sync(GitSyncAction::Commit {
+                message: "docs: semantic trigger".to_string(),
+                trigger_type: Some("checkpoint".to_string()),
+            })
+            .await
+            .expect("git sync should succeed");
+
+        let calls = executor.calls();
+        assert_eq!(
+            calls[3].args,
+            vec![
+                "commit",
+                "-m",
+                "Update 1 file(s): docs/readme.md\n\nScriptum-Trigger: checkpoint",
+            ]
+        );
     }
 
     // ── git.configure tests ────────────────────────────────────────────

@@ -282,6 +282,29 @@ impl TriggerCollector {
         self.changed_paths.len()
     }
 
+    /// Build a synthetic changed-file set from tracked changed paths.
+    ///
+    /// This is used by RPC trigger wiring where file-level status is known but
+    /// staged git status is not yet available.
+    pub fn tracked_changed_files(&self) -> Vec<ChangedFile> {
+        let mut paths: Vec<String> = self.changed_paths.iter().cloned().collect();
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .map(|path| ChangedFile {
+                path,
+                doc_id: None,
+                change_type: ChangeType::Modified,
+            })
+            .collect()
+    }
+
+    /// Current idle fallback timeout.
+    pub fn idle_fallback_timeout(&self) -> Duration {
+        self.config.idle_fallback_timeout
+    }
+
     fn should_idle_fallback_commit(&self, now: Instant) -> bool {
         if self.changed_paths.is_empty() {
             return false;
@@ -705,5 +728,27 @@ mod tests {
         collector.mark_changed_at("docs/b.md", t0 + Duration::from_secs(31));
         assert!(!collector.should_commit(t0 + Duration::from_secs(61)));
         assert!(collector.should_commit(t0 + Duration::from_secs(75)));
+    }
+
+    #[test]
+    fn collector_tracked_changed_files_are_sorted_and_unique() {
+        let mut collector = TriggerCollector::new(TriggerConfig::default());
+        collector.mark_changed("docs/b.md");
+        collector.mark_changed("docs/a.md");
+        collector.mark_changed("docs/b.md");
+
+        let tracked = collector.tracked_changed_files();
+        assert_eq!(tracked.len(), 2);
+        assert_eq!(tracked[0].path, "docs/a.md");
+        assert_eq!(tracked[1].path, "docs/b.md");
+        assert!(tracked.iter().all(|file| file.change_type == ChangeType::Modified));
+    }
+
+    #[test]
+    fn trigger_config_defaults_match_spec() {
+        let config = TriggerConfig::default();
+        assert_eq!(config.min_commit_interval, Duration::from_secs(30));
+        assert_eq!(config.idle_fallback_timeout, Duration::from_secs(30));
+        assert_eq!(config.max_batch_size, 10);
     }
 }
