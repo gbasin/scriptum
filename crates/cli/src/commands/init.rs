@@ -8,6 +8,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::daemon_launcher;
 use crate::output::{self, OutputFormat};
@@ -96,7 +98,7 @@ async fn initialize_workspace_with_client(
     let root_path_text = root_path.to_string_lossy().to_string();
     let rpc_result: WorkspaceCreateRpcResult = client
         .call(
-            "workspace.create",
+            rpc_methods::WORKSPACE_CREATE,
             json!({
                 "name": workspace_name,
                 "root_path": root_path_text,
@@ -316,7 +318,7 @@ mod tests {
                 let id = request["id"].clone();
 
                 let response = match method {
-                    "workspace.create" => {
+                    rpc_methods::WORKSPACE_CREATE => {
                         assert_eq!(request["params"]["name"], workspace_name_for_server);
                         assert_eq!(request["params"]["root_path"], workspace_root_for_server);
                         json!({
@@ -329,7 +331,7 @@ mod tests {
                             }
                         })
                     }
-                    "workspace.list" => json!({
+                    rpc_methods::WORKSPACE_LIST => json!({
                         "jsonrpc": "2.0",
                         "id": id,
                         "result": {
@@ -366,7 +368,7 @@ mod tests {
         assert_eq!(init_result.root_path, workspace_root_str);
 
         let list: WorkspaceListResult = client
-            .call("workspace.list", json!({ "offset": 0, "limit": 20 }))
+            .call(rpc_methods::WORKSPACE_LIST, json!({ "offset": 0, "limit": 20 }))
             .await
             .expect("workspace.list should succeed after init");
         assert_eq!(list.total, 1);

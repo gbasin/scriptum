@@ -173,4 +173,48 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    // ── Contract tests ─────────────────────────────────────────────
+
+    fn load_roles_contract() -> serde_json::Value {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../contracts/roles.json");
+        let content = std::fs::read_to_string(path).expect("contract file should be readable");
+        serde_json::from_str(&content).expect("contract file should be valid JSON")
+    }
+
+    #[test]
+    fn roles_from_db_value_matches_contract() {
+        let contract = load_roles_contract();
+        let roles = contract["roles"].as_array().expect("roles should be an array");
+
+        for role_value in roles {
+            let role_str = role_value.as_str().expect("role should be a string");
+            assert!(
+                super::WorkspaceRole::from_db_value(role_str).is_some(),
+                "WorkspaceRole::from_db_value should recognize contract role: {role_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_assignable_roles_are_valid_roles() {
+        let contract = load_roles_contract();
+        let roles: Vec<&str> = contract["roles"]
+            .as_array()
+            .expect("roles should be an array")
+            .iter()
+            .map(|v| v.as_str().expect("role should be a string"))
+            .collect();
+
+        let defaults =
+            contract["default_assignable_roles"].as_array().expect("defaults should be an array");
+
+        for default_role in defaults {
+            let role_str = default_role.as_str().expect("role should be a string");
+            assert!(
+                roles.contains(&role_str),
+                "default assignable role '{role_str}' is not in roles list"
+            );
+        }
+    }
 }

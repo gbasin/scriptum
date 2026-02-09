@@ -198,6 +198,23 @@ async fn start_local_yjs_ws_server() -> Result<JoinHandle<()>> {
     }))
 }
 
+#[cfg(test)]
+mod contract_tests {
+    #[test]
+    fn daemon_bind_address_matches_contract() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../contracts/daemon-ports.json");
+        let content = std::fs::read_to_string(path).expect("contract file should be readable");
+        let contract: serde_json::Value =
+            serde_json::from_str(&content).expect("contract file should be valid JSON");
+
+        let host = contract["host"].as_str().expect("host should be a string");
+        let port = contract["port"].as_u64().expect("port should be a number");
+        let expected_addr = format!("{host}:{port}");
+
+        assert_eq!(super::LOCAL_YJS_WS_ADDR, expected_addr);
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use std::path::PathBuf;

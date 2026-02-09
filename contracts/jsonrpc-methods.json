@@ -1,0 +1,51 @@
+{
+  "_comment": "JSON-RPC method names — single source of truth. Validated by Rust (rpc_methods_contract.rs) and TypeScript (jsonrpc-methods.contract.test.ts).",
+  "version": 1,
+  "rpc_protocol_versions": ["scriptum-rpc.v1", "scriptum-rpc.v0"],
+  "implemented_methods": [
+    "rpc.ping",
+    "daemon.shutdown",
+    "doc.read",
+    "doc.edit",
+    "doc.edit_section",
+    "doc.bundle",
+    "doc.sections",
+    "doc.diff",
+    "doc.history",
+    "doc.search",
+    "doc.tree",
+    "agent.whoami",
+    "agent.status",
+    "agent.conflicts",
+    "agent.list",
+    "agent.claim",
+    "workspace.list",
+    "workspace.open",
+    "workspace.create",
+    "git.status",
+    "git.sync",
+    "git.configure"
+  ],
+  "planned_methods": [
+    "doc.read_section",
+    "doc.peek",
+    "doc.blame",
+    "workspace.ls",
+    "workspace.diff",
+    "workspace.search",
+    "lease.claim"
+  ],
+  "mcp_to_daemon": {
+    "scriptum_status": "agent.status",
+    "scriptum_subscribe": "agent.status",
+    "scriptum_read": "doc.read",
+    "scriptum_edit": "doc.edit",
+    "scriptum_list": "doc.tree",
+    "scriptum_tree": "doc.sections",
+    "scriptum_conflicts": "agent.conflicts",
+    "scriptum_history": "doc.diff",
+    "scriptum_agents": "agent.list",
+    "scriptum_claim": "agent.claim",
+    "scriptum_bundle": "doc.bundle"
+  }
+}

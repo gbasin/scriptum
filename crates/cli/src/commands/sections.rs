@@ -4,6 +4,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::output::{self, OutputFormat};
 
@@ -62,7 +64,7 @@ pub fn run(args: SectionsArgs) -> anyhow::Result<()> {
 
 async fn call_sections(doc: String) -> anyhow::Result<SectionsResult> {
     let client = DaemonClient::default();
-    client.call("doc.sections", json!({ "doc": doc })).await
+    client.call(rpc_methods::DOC_SECTIONS, json!({ "doc": doc })).await
 }
 
 fn format_human(result: &SectionsResult) -> String {

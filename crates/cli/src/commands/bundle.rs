@@ -4,6 +4,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::output::{self, OutputFormat};
 
@@ -89,7 +91,7 @@ async fn call_bundle(params: BundleParams) -> anyhow::Result<BundleResult> {
     if !params.sections.is_empty() {
         rpc_params["sections"] = json!(params.sections);
     }
-    client.call("doc.bundle", rpc_params).await
+    client.call(rpc_methods::DOC_BUNDLE, rpc_params).await
 }
 
 fn format_human(result: &BundleResult) -> String {

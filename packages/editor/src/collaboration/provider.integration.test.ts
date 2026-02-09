@@ -38,7 +38,7 @@ class FakeProvider {
 function createEditorWithProvider() {
   const doc = new Y.Doc();
   const provider = createCollaborationProvider({
-    url: "ws://localhost:39091/yjs",
+    url: "ws://127.0.0.1:39091/yjs",
     room: "workspace:document",
     doc,
     connectOnCreate: false,

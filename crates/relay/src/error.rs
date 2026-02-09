@@ -41,6 +41,27 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// All variants, for contract test iteration.
+    pub const ALL: &[Self] = &[
+        Self::ValidationFailed,
+        Self::AuthInvalidToken,
+        Self::AuthInvalidRedirect,
+        Self::AuthStateMismatch,
+        Self::AuthCodeInvalid,
+        Self::AuthTokenRevoked,
+        Self::AuthForbidden,
+        Self::NotFound,
+        Self::DocPathConflict,
+        Self::EditPreconditionFailed,
+        Self::YjsUpdateTooLarge,
+        Self::PreconditionRequired,
+        Self::RateLimited,
+        Self::InternalError,
+        Self::AiCommitUnavailable,
+        Self::DiskWriteFailed,
+        Self::UpgradeRequired,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ValidationFailed => "VALIDATION_FAILED",
@@ -366,5 +387,74 @@ mod tests {
 
         assert_eq!(request_id_from_headers_or_generate(&headers), "req-header-1");
         assert_eq!(trace_id_from_headers_or_generate(&headers), "trace-header-1");
+    }
+
+    // ── Contract tests ─────────────────────────────────────────────
+
+    fn load_error_codes_contract() -> serde_json::Value {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../contracts/error-codes.json");
+        let content = std::fs::read_to_string(path).expect("contract file should be readable");
+        serde_json::from_str(&content).expect("contract file should be valid JSON")
+    }
+
+    #[test]
+    fn error_codes_match_contract() {
+        let contract = load_error_codes_contract();
+        let entries = contract["codes"].as_array().expect("codes should be an array");
+
+        let mut contract_codes: Vec<&str> =
+            entries.iter().map(|e| e["code"].as_str().expect("code should be a string")).collect();
+        contract_codes.sort();
+
+        let mut rust_codes: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
+        rust_codes.sort();
+
+        assert_eq!(rust_codes, contract_codes, "ErrorCode::ALL diverged from contract");
+    }
+
+    #[test]
+    fn error_code_retryability_matches_contract() {
+        let contract = load_error_codes_contract();
+        let entries = contract["codes"].as_array().expect("codes should be an array");
+
+        for entry in entries {
+            let code_str = entry["code"].as_str().expect("code should be a string");
+            let expected_retryable =
+                entry["retryable"].as_bool().expect("retryable should be a bool");
+
+            let error_code = ErrorCode::ALL
+                .iter()
+                .find(|c| c.as_str() == code_str)
+                .unwrap_or_else(|| panic!("ErrorCode not found for contract code: {code_str}"));
+
+            assert_eq!(
+                error_code.retryable(),
+                expected_retryable,
+                "retryable mismatch for {code_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn error_code_http_status_matches_contract() {
+        let contract = load_error_codes_contract();
+        let entries = contract["codes"].as_array().expect("codes should be an array");
+
+        for entry in entries {
+            let code_str = entry["code"].as_str().expect("code should be a string");
+            let expected_status =
+                entry["http_status"].as_u64().expect("http_status should be a number") as u16;
+
+            let error_code = ErrorCode::ALL
+                .iter()
+                .find(|c| c.as_str() == code_str)
+                .unwrap_or_else(|| panic!("ErrorCode not found for contract code: {code_str}"));
+
+            assert_eq!(
+                error_code.status().as_u16(),
+                expected_status,
+                "HTTP status mismatch for {code_str}"
+            );
+        }
     }
 }

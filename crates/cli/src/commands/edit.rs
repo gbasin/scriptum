@@ -4,6 +4,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::output::{self, OutputFormat};
 
@@ -107,7 +109,7 @@ async fn call_edit(params: EditParams) -> anyhow::Result<EditResult> {
     if let Some(summary) = &params.summary {
         rpc_params["summary"] = json!(summary);
     }
-    client.call("doc.edit_section", rpc_params).await
+    client.call(rpc_methods::DOC_EDIT_SECTION, rpc_params).await
 }
 
 fn format_human(result: &EditResult) -> String {

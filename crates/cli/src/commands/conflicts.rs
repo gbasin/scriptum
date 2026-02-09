@@ -4,6 +4,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::output::{self, OutputFormat};
 
@@ -70,7 +72,7 @@ async fn call_conflicts(doc: Option<String>) -> anyhow::Result<ConflictsResult> 
         Some(d) => json!({ "doc": d }),
         None => json!({}),
     };
-    client.call("agent.conflicts", params).await
+    client.call(rpc_methods::AGENT_CONFLICTS, params).await
 }
 
 fn format_human(result: &ConflictsResult) -> String {

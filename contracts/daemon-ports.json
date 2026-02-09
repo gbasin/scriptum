@@ -1,0 +1,10 @@
+{
+  "_comment": "Daemon local server — single source of truth. Validated by Rust (daemon_ports_contract.rs) and TypeScript (daemon-ports.contract.test.ts).",
+  "version": 1,
+  "host": "127.0.0.1",
+  "port": 39091,
+  "yjs_ws_path": "/yjs",
+  "whoami_path": "/whoami",
+  "yjs_ws_url": "ws://127.0.0.1:39091/yjs",
+  "whoami_url": "http://127.0.0.1:39091/whoami"
+}

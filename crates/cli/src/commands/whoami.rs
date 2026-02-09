@@ -4,6 +4,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::output::{self, OutputFormat};
 
@@ -54,7 +56,7 @@ pub fn run(args: WhoamiArgs) -> anyhow::Result<()> {
 
 async fn call_whoami() -> anyhow::Result<WhoamiResult> {
     let client = DaemonClient::default();
-    client.call("agent.whoami", json!({})).await
+    client.call(rpc_methods::AGENT_WHOAMI, json!({})).await
 }
 
 fn format_human(result: &WhoamiResult) -> String {

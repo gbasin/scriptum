@@ -1,0 +1,15 @@
+{
+  "_comment": "localStorage keys — single source of truth. Validated by TypeScript (storage-keys.contract.test.ts).",
+  "version": 1,
+  "prefix": "scriptum:",
+  "keys": {
+    "access_token": "scriptum:access_token",
+    "access_expires_at": "scriptum:access_expires_at",
+    "refresh_token": "scriptum:refresh_token",
+    "refresh_expires_at": "scriptum:refresh_expires_at",
+    "user": "scriptum:user",
+    "oauth_state": "scriptum:oauth_state",
+    "code_verifier": "scriptum:code_verifier",
+    "flow_id": "scriptum:flow_id"
+  }
+}

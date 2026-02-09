@@ -1,0 +1,6 @@
+{
+  "_comment": "Workspace roles — single source of truth. Validated by Rust (roles_contract.rs) and TypeScript (roles.contract.test.ts).",
+  "version": 1,
+  "roles": ["viewer", "editor", "owner"],
+  "default_assignable_roles": ["viewer", "editor"]
+}

@@ -4,12 +4,13 @@ import {
   type ProviderFactory,
   type WebRtcProviderFactory,
 } from "@scriptum/editor";
+import { DAEMON_YJS_WS_URL } from "@scriptum/shared";
 import { useEffect, useMemo, useState } from "react";
 import * as Y from "yjs";
 import { type IdbCrdtStore, openIdbCrdtStore } from "../lib/idb-store";
 import { useRuntimeStore } from "../store/runtime";
 
-const DEFAULT_DAEMON_WS_URL = "ws://127.0.0.1:39091/yjs";
+const DEFAULT_DAEMON_WS_URL = DAEMON_YJS_WS_URL;
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 const PERSISTENCE_REPLAY_ORIGIN = "idb-persistence-replay";
 

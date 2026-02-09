@@ -1,6 +1,19 @@
 // Shared auth test helpers — mock data, relay interceptor, session injection.
 
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Page, Route } from "@playwright/test";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const storageContract = JSON.parse(
+  readFileSync(
+    resolve(__dirname, "../../../contracts/storage-keys.json"),
+    "utf-8",
+  ),
+) as { keys: Record<string, string> };
+
+const SK = storageContract.keys;
 
 // --- Test data ---
 
@@ -141,20 +154,17 @@ export async function injectSession(
   user = MOCK_USER,
 ) {
   await page.evaluate(
-    ({ tokens, user }) => {
-      localStorage.setItem("scriptum:access_token", tokens.access_token);
+    ({ tokens, user, keys }) => {
+      localStorage.setItem(keys.access_token, tokens.access_token);
+      localStorage.setItem(keys.access_expires_at, tokens.access_expires_at);
+      localStorage.setItem(keys.refresh_token, tokens.refresh_token);
       localStorage.setItem(
-        "scriptum:access_expires_at",
-        tokens.access_expires_at,
-      );
-      localStorage.setItem("scriptum:refresh_token", tokens.refresh_token);
-      localStorage.setItem(
-        "scriptum:refresh_expires_at",
+        keys.refresh_expires_at,
         tokens.refresh_expires_at,
       );
-      localStorage.setItem("scriptum:user", JSON.stringify(user));
+      localStorage.setItem(keys.user, JSON.stringify(user));
     },
-    { tokens, user },
+    { tokens, user, keys: SK },
   );
 }
 

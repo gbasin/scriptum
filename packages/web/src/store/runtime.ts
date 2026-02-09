@@ -1,3 +1,4 @@
+import { DAEMON_WHOAMI_URL } from "@scriptum/shared";
 import { create } from "zustand";
 
 export type RuntimeMode = "relay" | "local";
@@ -25,7 +26,7 @@ const DEFAULT_RELAY_URL =
   "http://localhost:8080";
 const DEFAULT_DAEMON_WHOAMI_URL =
   (import.meta.env.VITE_SCRIPTUM_DAEMON_WHOAMI_URL as string | undefined) ??
-  "http://127.0.0.1:39091/whoami";
+  DAEMON_WHOAMI_URL;
 
 export const DEFAULT_LOCAL_IDENTITY: LocalIdentity = {
   id: "local-user",

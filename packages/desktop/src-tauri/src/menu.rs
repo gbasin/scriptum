@@ -265,4 +265,106 @@ mod tests {
         assert_eq!(MenuAction::ToggleFullscreen.id(), "menu.toggle-fullscreen");
         assert_eq!(MenuAction::QuitApp.id(), "menu.quit-app");
     }
+
+    // ── Contract tests ─────────────────────────────────────────────
+
+    fn load_menu_contract() -> serde_json::Value {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../contracts/desktop-menu.json");
+        let content = std::fs::read_to_string(path).expect("contract file should be readable");
+        serde_json::from_str(&content).expect("contract file should be valid JSON")
+    }
+
+    #[test]
+    fn menu_ids_match_contract() {
+        let contract = load_menu_contract();
+        let items = contract["items"].as_array().expect("items should be an array");
+
+        let all_actions = [
+            MenuAction::NewDocument,
+            MenuAction::SaveDocument,
+            MenuAction::ImportMarkdown,
+            MenuAction::ExportMarkdown,
+            MenuAction::CloseWindow,
+            MenuAction::QuitApp,
+            MenuAction::ToggleFullscreen,
+            MenuAction::OpenHelp,
+            MenuAction::OpenAbout,
+        ];
+
+        let mut rust_ids: Vec<&str> = all_actions.iter().map(|a| a.id()).collect();
+        rust_ids.sort();
+
+        let mut contract_ids: Vec<&str> =
+            items.iter().map(|i| i["id"].as_str().expect("id should be a string")).collect();
+        contract_ids.sort();
+
+        assert_eq!(rust_ids, contract_ids, "menu IDs diverged from contract");
+    }
+
+    #[test]
+    fn frontend_actions_match_contract() {
+        let contract = load_menu_contract();
+        let items = contract["items"].as_array().expect("items should be an array");
+
+        for item in items {
+            let menu_id = item["id"].as_str().expect("id should be a string");
+            let expected_action =
+                item["frontend_action"].as_str().expect("frontend_action should be a string");
+            let action = MenuAction::from_menu_id(menu_id)
+                .unwrap_or_else(|| panic!("MenuAction should recognize contract id: {menu_id}"));
+            assert_eq!(
+                action.frontend_action(),
+                expected_action,
+                "frontend action mismatch for {menu_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_constants_match_contract() {
+        let contract = load_menu_contract();
+        let items = contract["items"].as_array().expect("items should be an array");
+
+        let shortcut_map: std::collections::HashMap<&str, &str> = [
+            (super::MENU_ID_NEW_DOCUMENT, super::MENU_SHORTCUT_NEW_DOCUMENT),
+            (super::MENU_ID_SAVE_DOCUMENT, super::MENU_SHORTCUT_SAVE_DOCUMENT),
+            (super::MENU_ID_CLOSE_WINDOW, super::MENU_SHORTCUT_CLOSE_WINDOW),
+            (super::MENU_ID_QUIT_APP, super::MENU_SHORTCUT_QUIT_APP),
+            (super::MENU_ID_TOGGLE_FULLSCREEN, super::MENU_SHORTCUT_TOGGLE_FULLSCREEN),
+        ]
+        .into_iter()
+        .collect();
+
+        for item in items {
+            let menu_id = item["id"].as_str().expect("id should be a string");
+            if let Some(&rust_shortcut) = shortcut_map.get(menu_id) {
+                let contract_shortcut =
+                    item["shortcut"].as_str().expect("shortcut should be a string for this item");
+                assert_eq!(rust_shortcut, contract_shortcut, "shortcut mismatch for {menu_id}");
+            } else {
+                assert!(item["shortcut"].is_null(), "expected no shortcut for {menu_id}");
+            }
+        }
+    }
+
+    #[test]
+    fn event_names_match_contract() {
+        let contract = load_menu_contract();
+        assert_eq!(
+            super::MENU_ACTION_EVENT,
+            contract["action_event"].as_str().expect("action_event should be a string")
+        );
+        assert_eq!(
+            super::IMPORT_DIALOG_SELECTED_EVENT,
+            contract["import_dialog_event"]
+                .as_str()
+                .expect("import_dialog_event should be a string")
+        );
+        assert_eq!(
+            super::EXPORT_DIALOG_SELECTED_EVENT,
+            contract["export_dialog_event"]
+                .as_str()
+                .expect("export_dialog_event should be a string")
+        );
+    }
 }

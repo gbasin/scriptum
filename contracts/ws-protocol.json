@@ -1,0 +1,16 @@
+{
+  "_comment": "WebSocket sync protocol — single source of truth. Validated by Rust (ws_protocol_contract.rs) and TypeScript (ws-protocol.contract.test.ts).",
+  "version": 1,
+  "protocol_versions": ["scriptum-sync.v1", "scriptum-sync.v0"],
+  "current_version": "scriptum-sync.v1",
+  "message_types": [
+    "hello",
+    "hello_ack",
+    "subscribe",
+    "yjs_update",
+    "ack",
+    "snapshot",
+    "awareness_update",
+    "error"
+  ]
+}

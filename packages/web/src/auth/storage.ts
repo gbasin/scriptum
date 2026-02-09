@@ -1,13 +1,15 @@
 // localStorage keys and helpers for auth session persistence.
 
-const STORAGE_KEY_ACCESS_TOKEN = "scriptum:access_token";
-const STORAGE_KEY_ACCESS_EXPIRES_AT = "scriptum:access_expires_at";
-const STORAGE_KEY_REFRESH_TOKEN = "scriptum:refresh_token";
-const STORAGE_KEY_REFRESH_EXPIRES_AT = "scriptum:refresh_expires_at";
-const STORAGE_KEY_USER = "scriptum:user";
-const STORAGE_KEY_OAUTH_STATE = "scriptum:oauth_state";
-const STORAGE_KEY_CODE_VERIFIER = "scriptum:code_verifier";
-const STORAGE_KEY_FLOW_ID = "scriptum:flow_id";
+import { STORAGE_KEYS } from "@scriptum/shared";
+
+const STORAGE_KEY_ACCESS_TOKEN = STORAGE_KEYS.access_token;
+const STORAGE_KEY_ACCESS_EXPIRES_AT = STORAGE_KEYS.access_expires_at;
+const STORAGE_KEY_REFRESH_TOKEN = STORAGE_KEYS.refresh_token;
+const STORAGE_KEY_REFRESH_EXPIRES_AT = STORAGE_KEYS.refresh_expires_at;
+const STORAGE_KEY_USER = STORAGE_KEYS.user;
+const STORAGE_KEY_OAUTH_STATE = STORAGE_KEYS.oauth_state;
+const STORAGE_KEY_CODE_VERIFIER = STORAGE_KEYS.code_verifier;
+const STORAGE_KEY_FLOW_ID = STORAGE_KEYS.flow_id;
 
 export interface StoredSession {
   accessToken: string;

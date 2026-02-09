@@ -1,8 +1,8 @@
+import type { WorkspaceDefaultRole } from "../contracts/roles";
+
 export type WorkspaceTheme = "system" | "light" | "dark";
 
 export type WorkspaceDensity = "compact" | "comfortable" | "spacious";
-
-export type WorkspaceDefaultRole = "viewer" | "editor";
 
 export type WorkspaceEditorFontFamily = "mono" | "sans" | "serif";
 

@@ -1,23 +1,22 @@
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 
-import type { DaemonClient } from "./daemon-client";
-import { createServer } from "./server";
+import type { DaemonClient } from "./daemon-client.js";
+import { createServer } from "./server.js";
 
-const MCP_TO_DAEMON_CONTRACT: Record<string, string> = {
-  scriptum_status: "agent.status",
-  scriptum_subscribe: "agent.status",
-  scriptum_read: "doc.read",
-  scriptum_edit: "doc.edit",
-  scriptum_list: "doc.tree",
-  scriptum_tree: "doc.sections",
-  scriptum_conflicts: "agent.conflicts",
-  scriptum_history: "doc.diff",
-  scriptum_agents: "agent.list",
-  scriptum_claim: "agent.claim",
-  scriptum_bundle: "doc.bundle",
-};
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const contract = JSON.parse(
+  readFileSync(
+    resolve(__dirname, "../../../contracts/jsonrpc-methods.json"),
+    "utf-8",
+  ),
+);
+const MCP_TO_DAEMON_CONTRACT: Record<string, string> =
+  contract.mcp_to_daemon;
 
 describe("mcp tool contract", () => {
   it("exposes the exact tool set expected by the daemon RPC contract", async () => {

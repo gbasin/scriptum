@@ -1,0 +1,23 @@
+{
+  "_comment": "Error codes — single source of truth. Validated by Rust (error_code_contract.rs) and TypeScript (error-codes.contract.test.ts).",
+  "version": 1,
+  "codes": [
+    { "code": "VALIDATION_FAILED",       "http_status": 400, "retryable": false },
+    { "code": "AUTH_INVALID_TOKEN",       "http_status": 401, "retryable": false },
+    { "code": "AUTH_INVALID_REDIRECT",    "http_status": 400, "retryable": false },
+    { "code": "AUTH_STATE_MISMATCH",      "http_status": 401, "retryable": false },
+    { "code": "AUTH_CODE_INVALID",        "http_status": 401, "retryable": false },
+    { "code": "AUTH_TOKEN_REVOKED",       "http_status": 401, "retryable": false },
+    { "code": "AUTH_FORBIDDEN",           "http_status": 403, "retryable": false },
+    { "code": "NOT_FOUND",               "http_status": 404, "retryable": false },
+    { "code": "DOC_PATH_CONFLICT",       "http_status": 409, "retryable": false },
+    { "code": "EDIT_PRECONDITION_FAILED", "http_status": 412, "retryable": false },
+    { "code": "YJS_UPDATE_TOO_LARGE",    "http_status": 413, "retryable": false },
+    { "code": "PRECONDITION_REQUIRED",    "http_status": 428, "retryable": false },
+    { "code": "RATE_LIMITED",             "http_status": 429, "retryable": true  },
+    { "code": "INTERNAL_ERROR",           "http_status": 500, "retryable": true  },
+    { "code": "AI_COMMIT_UNAVAILABLE",    "http_status": 503, "retryable": true  },
+    { "code": "DISK_WRITE_FAILED",        "http_status": 507, "retryable": true  },
+    { "code": "UPGRADE_REQUIRED",         "http_status": 426, "retryable": false }
+  ]
+}
