@@ -130,6 +130,68 @@ Verify daemon health:
 scriptum status
 ```
 
+## Quickstart
+
+1. Install prerequisites:
+   Follow [Prerequisites](#prerequisites) to install Rust, Node.js, and pnpm.
+   Expected result: `cargo`, `rustc`, `node`, and `pnpm` are available in your shell.
+
+2. Clone and install dependencies:
+
+   ```bash
+   git clone https://github.com/garybasin/scriptum.git
+   cd scriptum
+   pnpm install
+   ```
+
+   Expected result: workspace dependencies are installed without lockfile errors.
+
+3. Build all packages:
+
+   ```bash
+   pnpm build
+   ```
+
+   Expected result: Rust crates and TypeScript packages compile successfully.
+
+4. Initialize a workspace:
+
+   ```bash
+   scriptum init ~/my-notes
+   ```
+
+   Expected result: `~/my-notes/.scriptum/` is created and registered as a Scriptum workspace.
+
+5. Start the development stack:
+
+   ```bash
+   pnpm dev
+   ```
+
+   Expected result: web (`:5173`), daemon (`scriptumd`), and relay logs appear in one terminal.
+
+6. Open the app:
+   Browse to `http://localhost:5173`.
+   Expected result: Scriptum web UI loads and connects to the local daemon.
+
+7. Create your first document:
+   Create a new markdown document in the UI and start editing.
+   Expected result: edits persist locally and are reflected in the active workspace.
+
+What just happened?
+`pnpm dev` runs the web app, daemon, and relay together. The web editor connects to `scriptumd` for local-first document state, while the relay enables multi-user sync flows.
+
+### Quickstart Troubleshooting
+
+- `scriptum` or `cargo` command not found:
+  Re-open your terminal after installing rustup/CLI and verify `PATH` includes Cargo binaries (`~/.cargo/bin` on macOS/Linux).
+
+- Daemon fails to start:
+  Check for stale runtime files and remove them before retrying: `rm -f ~/.scriptum/daemon.sock ~/.scriptum/ws.port`.
+
+- Port already in use (`5173` or relay port):
+  Stop conflicting processes or override ports (for web: `pnpm --filter @scriptum/web dev -- --port 5174`).
+
 ## Development
 
 ```bash
