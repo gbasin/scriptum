@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import type { Workspace } from "@scriptum/shared";
+import type { Document, Workspace } from "@scriptum/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseAuthResult } from "../hooks/useAuth";
 import { useAuth } from "../hooks/useAuth";
+import { useDocumentsStore } from "../store/documents";
 import { useWorkspaceStore } from "../store/workspace";
 import { SettingsRoute } from "./settings";
 
@@ -41,6 +42,22 @@ function makeWorkspace(): Workspace {
   };
 }
 
+function makeDocument(id: string, workspaceId: string): Document {
+  return {
+    archivedAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    deletedAt: null,
+    etag: `document-${id}-v1`,
+    headSeq: 0,
+    id,
+    path: `docs/${id}.md`,
+    tags: [],
+    title: id,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    workspaceId,
+  };
+}
+
 function authResult(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
   return {
     status: "authenticated",
@@ -60,6 +77,7 @@ function authResult(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
 
 beforeEach(() => {
   useWorkspaceStore.getState().reset();
+  useDocumentsStore.getState().reset();
   const workspace = makeWorkspace();
   useWorkspaceStore.getState().upsertWorkspace(workspace);
   useWorkspaceStore.getState().setActiveWorkspaceId(workspace.id);
@@ -257,6 +275,104 @@ describe("SettingsRoute", () => {
 
     expect(logout).toHaveBeenCalledTimes(1);
     expect(mockNavigate).toHaveBeenCalledWith("/", { replace: true });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("prevents deleting the last workspace", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <SettingsRoute />
+        </MemoryRouter>,
+      );
+    });
+
+    const deleteButton = container.querySelector(
+      '[data-testid="settings-delete-workspace"]',
+    ) as HTMLButtonElement | null;
+    expect(deleteButton?.disabled).toBe(true);
+    expect(
+      container.querySelector(
+        '[data-testid="settings-delete-workspace-last-warning"]',
+      ),
+    ).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("deletes the active workspace and removes its documents", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const betaWorkspace: Workspace = {
+      ...makeWorkspace(),
+      etag: "workspace-beta-v1",
+      id: "ws-beta",
+      name: "Beta Workspace",
+      slug: "beta",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+    useWorkspaceStore.getState().upsertWorkspace(betaWorkspace);
+    useDocumentsStore
+      .getState()
+      .setDocuments([
+        makeDocument("doc-alpha", "ws-alpha"),
+        makeDocument("doc-beta", "ws-beta"),
+      ]);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <SettingsRoute />
+        </MemoryRouter>,
+      );
+    });
+
+    const deleteButton = container.querySelector(
+      '[data-testid="settings-delete-workspace"]',
+    ) as HTMLButtonElement | null;
+    expect(deleteButton?.disabled).toBe(false);
+    act(() => {
+      deleteButton?.click();
+    });
+
+    expect(
+      container.querySelector(
+        '[data-testid="settings-delete-workspace-confirm"]',
+      ),
+    ).not.toBeNull();
+
+    const confirmDeleteButton = container.querySelector(
+      '[data-testid="settings-delete-workspace-confirm-action"]',
+    ) as HTMLButtonElement | null;
+    act(() => {
+      confirmDeleteButton?.click();
+    });
+
+    expect(
+      useWorkspaceStore.getState().workspaces.map((workspace) => workspace.id),
+    ).toEqual(["ws-beta"]);
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-beta");
+    expect(
+      useDocumentsStore
+        .getState()
+        .documents.map((document) => document.workspaceId),
+    ).toEqual(["ws-beta"]);
+    expect(mockNavigate).toHaveBeenCalledWith("/workspace/ws-beta", {
+      replace: true,
+    });
 
     act(() => {
       root.unmount();

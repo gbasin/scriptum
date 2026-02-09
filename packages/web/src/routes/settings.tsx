@@ -1,8 +1,9 @@
 import type { WorkspaceConfig } from "@scriptum/shared";
 import clsx from "clsx";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { useDocumentsStore } from "../store/documents";
 import { defaultWorkspaceConfig, useWorkspaceStore } from "../store/workspace";
 import controls from "../styles/Controls.module.css";
 import styles from "./settings.module.css";
@@ -39,8 +40,15 @@ export function SettingsRoute() {
     (state) => state.activeWorkspaceId,
   );
   const workspaces = useWorkspaceStore((state) => state.workspaces);
+  const setActiveWorkspaceId = useWorkspaceStore(
+    (state) => state.setActiveWorkspaceId,
+  );
+  const removeWorkspace = useWorkspaceStore((state) => state.removeWorkspace);
   const upsertWorkspace = useWorkspaceStore((state) => state.upsertWorkspace);
+  const documents = useDocumentsStore((state) => state.documents);
+  const setDocuments = useDocumentsStore((state) => state.setDocuments);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
   const activeWorkspace = useMemo(
     () =>
@@ -50,6 +58,10 @@ export function SettingsRoute() {
         : null,
     [activeWorkspaceId, workspaces],
   );
+
+  useEffect(() => {
+    setIsDeleteConfirmOpen(false);
+  }, [activeWorkspaceId]);
 
   if (!activeWorkspace) {
     return (
@@ -102,6 +114,30 @@ export function SettingsRoute() {
     }
   };
 
+  const otherWorkspaces = workspaces.filter(
+    (workspace) => workspace.id !== activeWorkspace.id,
+  );
+  const canDeleteWorkspace = otherWorkspaces.length > 0;
+  const fallbackWorkspace = otherWorkspaces[0] ?? null;
+
+  const handleDeleteWorkspace = () => {
+    if (!fallbackWorkspace) {
+      return;
+    }
+
+    removeWorkspace(activeWorkspace.id);
+    setDocuments(
+      documents.filter(
+        (document) => document.workspaceId !== activeWorkspace.id,
+      ),
+    );
+    setActiveWorkspaceId(fallbackWorkspace.id);
+    setIsDeleteConfirmOpen(false);
+    navigate(`/workspace/${encodeURIComponent(fallbackWorkspace.id)}`, {
+      replace: true,
+    });
+  };
+
   return (
     <section
       aria-label="Settings"
@@ -124,6 +160,65 @@ export function SettingsRoute() {
           Log out
         </button>
       </div>
+      <section className={styles.dangerZone} data-testid="settings-danger-zone">
+        <h2 className={styles.legend}>Danger zone</h2>
+        <p
+          className={styles.dangerMessage}
+          data-testid="settings-delete-workspace-message"
+        >
+          Delete this workspace and all of its local documents.
+        </p>
+        <button
+          className={clsx(controls.buttonBase, controls.buttonDanger)}
+          data-testid="settings-delete-workspace"
+          disabled={!canDeleteWorkspace}
+          onClick={() => {
+            if (!canDeleteWorkspace) {
+              return;
+            }
+            setIsDeleteConfirmOpen((current) => !current);
+          }}
+          type="button"
+        >
+          Delete workspace
+        </button>
+        {!canDeleteWorkspace ? (
+          <p
+            className={styles.warningText}
+            data-testid="settings-delete-workspace-last-warning"
+          >
+            Create another workspace before deleting this one.
+          </p>
+        ) : null}
+        {isDeleteConfirmOpen ? (
+          <div
+            className={styles.confirmActions}
+            data-testid="settings-delete-workspace-confirm"
+          >
+            <p className={styles.warningText}>
+              This action cannot be undone.
+            </p>
+            <div className={styles.accountActions}>
+              <button
+                className={clsx(controls.buttonBase, controls.buttonSecondary)}
+                data-testid="settings-delete-workspace-cancel"
+                onClick={() => setIsDeleteConfirmOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className={clsx(controls.buttonBase, controls.buttonDanger)}
+                data-testid="settings-delete-workspace-confirm-action"
+                onClick={handleDeleteWorkspace}
+                type="button"
+              >
+                Confirm delete
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
 
       <div
         aria-label="Settings tabs"
