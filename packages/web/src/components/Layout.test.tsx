@@ -182,7 +182,9 @@ describe("Layout search panel integration", () => {
       addTagAction?.click();
     });
 
-    expect(document.querySelector('[data-testid="add-tag-dialog"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="add-tag-dialog"]'),
+    ).not.toBeNull();
     const suggestionList = document.getElementById(
       "workspace-tag-suggestions",
     ) as HTMLDataListElement | null;
@@ -306,21 +308,19 @@ describe("Layout search panel integration", () => {
   });
 
   it("toggles archived document view and supports unarchive from context menu", () => {
-    useDocumentsStore
-      .getState()
-      .setDocuments([
-        makeDocument({
-          id: "doc-active",
-          path: "docs/active.md",
-          title: "Active",
-        }),
-        makeDocument({
-          archivedAt: "2026-01-04T00:00:00.000Z",
-          id: "doc-archived",
-          path: "docs/archived.md",
-          title: "Archived",
-        }),
-      ]);
+    useDocumentsStore.getState().setDocuments([
+      makeDocument({
+        id: "doc-active",
+        path: "docs/active.md",
+        title: "Active",
+      }),
+      makeDocument({
+        archivedAt: "2026-01-04T00:00:00.000Z",
+        id: "doc-archived",
+        path: "docs/archived.md",
+        title: "Archived",
+      }),
+    ]);
     useDocumentsStore
       .getState()
       .setActiveDocumentForWorkspace("ws-alpha", "doc-active");
@@ -342,8 +342,9 @@ describe("Layout search panel integration", () => {
       );
     });
 
-    expect(container.querySelector('[data-testid="tree-node-docs/active.md"]'))
-      .not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="tree-node-docs/active.md"]'),
+    ).not.toBeNull();
     expect(
       container.querySelector('[data-testid="tree-node-docs/archived.md"]'),
     ).toBeNull();
@@ -357,8 +358,9 @@ describe("Layout search panel integration", () => {
       archiveToggleButton?.click();
     });
 
-    expect(container.querySelector('[data-testid="tree-node-docs/active.md"]'))
-      .toBeNull();
+    expect(
+      container.querySelector('[data-testid="tree-node-docs/active.md"]'),
+    ).toBeNull();
     const archivedTreeNode = container.querySelector(
       '[data-testid="tree-node-docs/archived.md"]',
     ) as HTMLElement | null;

@@ -2,8 +2,8 @@ use std::{fs, path::PathBuf};
 
 use scriptum_common::protocol::jsonrpc::{
     Request, RequestId, Response, CURRENT_PROTOCOL_VERSION as CURRENT_RPC_PROTOCOL_VERSION,
-    PREVIOUS_PROTOCOL_VERSION as PREVIOUS_RPC_PROTOCOL_VERSION, INVALID_PARAMS, INVALID_REQUEST,
-    METHOD_NOT_FOUND,
+    INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND,
+    PREVIOUS_PROTOCOL_VERSION as PREVIOUS_RPC_PROTOCOL_VERSION,
 };
 use scriptum_daemon::rpc::methods::{handle_raw_request, GitState, RpcServerState};
 use serde_json::{json, Value};
@@ -418,9 +418,8 @@ async fn rpc_protocol_version_matrix_supports_n_and_n_minus_one() {
     let error_data = error.data.expect("unsupported rpc protocol should include error data");
     assert_eq!(error_data["requested_version"], "scriptum-rpc.v999");
     assert_eq!(error_data["current_version"], CURRENT_RPC_PROTOCOL_VERSION);
-    let supported = error_data["supported_versions"]
-        .as_array()
-        .expect("supported_versions should be an array");
+    let supported =
+        error_data["supported_versions"].as_array().expect("supported_versions should be an array");
     assert!(
         supported.iter().any(|value| value == PREVIOUS_RPC_PROTOCOL_VERSION),
         "supported protocol list should include previous version",

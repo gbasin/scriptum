@@ -1,15 +1,12 @@
 import type { Document } from "@scriptum/shared";
 import type { InlineCommentThread } from "../../lib/inline-comments";
 import type { RightPanelTab } from "../../store/ui";
+import styles from "../Layout.module.css";
 import type { BacklinkEntry } from "../right-panel/Backlinks";
 import { Backlinks } from "../right-panel/Backlinks";
 import { CommentsPanel } from "../right-panel/CommentsPanel";
 import { Outline } from "../right-panel/Outline";
-import styles from "../Layout.module.css";
-import {
-  RIGHT_PANEL_TAB_IDS,
-  RIGHT_PANEL_TAB_PANEL_IDS,
-} from "./layoutUtils";
+import { RIGHT_PANEL_TAB_IDS, RIGHT_PANEL_TAB_PANEL_IDS } from "./layoutUtils";
 
 export interface LayoutRightPanelProps {
   activeDocumentId: string | null;
@@ -32,7 +29,9 @@ function panelTabClassName(
   rightPanelTab: RightPanelTab,
   tab: RightPanelTab,
 ): string {
-  return rightPanelTab === tab ? styles.panelTabButtonActive : styles.panelTabButton;
+  return rightPanelTab === tab
+    ? styles.panelTabButtonActive
+    : styles.panelTabButton;
 }
 
 export function LayoutRightPanel({
@@ -83,7 +82,11 @@ export function LayoutRightPanel({
           Hide
         </button>
       </div>
-      <div aria-label="Right panel tabs" className={styles.panelTabs} role="tablist">
+      <div
+        aria-label="Right panel tabs"
+        className={styles.panelTabs}
+        role="tablist"
+      >
         <button
           aria-controls={RIGHT_PANEL_TAB_PANEL_IDS.outline}
           aria-selected={rightPanelTab === "outline"}
@@ -132,7 +135,10 @@ export function LayoutRightPanel({
           id={RIGHT_PANEL_TAB_PANEL_IDS.outline}
           role="tabpanel"
         >
-          <Outline editorContainer={outlineContainer} loading={showOutlineSkeleton} />
+          <Outline
+            editorContainer={outlineContainer}
+            loading={showOutlineSkeleton}
+          />
         </section>
       ) : null}
 

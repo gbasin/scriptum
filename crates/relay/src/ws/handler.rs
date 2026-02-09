@@ -216,32 +216,30 @@ async fn handle_socket(
             }
 
             match ws_protocol::decode_message(&raw_message) {
-                Ok(WsMessage::Hello {
-                    protocol_version,
-                    session_token,
-                    resume_token,
-                }) => match handle_hello_message(
-                    &session_store,
-                    session_id,
-                    protocol_version,
-                    session_token,
-                    resume_token,
-                )
-                .await
-                {
-                    Ok(hello_ack) => hello_ack,
-                    Err(error_message) => {
-                        metrics::record_ws_request(
-                            "hello",
-                            true,
-                            hello_started_at.elapsed().as_millis() as u64,
-                        );
-                        let _ = ws_protocol::send_ws_message(&mut socket, &error_message).await;
-                        let _ = socket.send(Message::Close(None)).await;
-                        session_store.mark_disconnected(session_id).await;
-                        return;
+                Ok(WsMessage::Hello { protocol_version, session_token, resume_token }) => {
+                    match handle_hello_message(
+                        &session_store,
+                        session_id,
+                        protocol_version,
+                        session_token,
+                        resume_token,
+                    )
+                    .await
+                    {
+                        Ok(hello_ack) => hello_ack,
+                        Err(error_message) => {
+                            metrics::record_ws_request(
+                                "hello",
+                                true,
+                                hello_started_at.elapsed().as_millis() as u64,
+                            );
+                            let _ = ws_protocol::send_ws_message(&mut socket, &error_message).await;
+                            let _ = socket.send(Message::Close(None)).await;
+                            session_store.mark_disconnected(session_id).await;
+                            return;
+                        }
                     }
-                },
+                }
                 _ => {
                     metrics::record_ws_request(
                         "hello",

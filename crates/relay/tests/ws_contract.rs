@@ -1,4 +1,4 @@
-use scriptum_common::protocol::ws::{CURRENT_PROTOCOL_VERSION, WsMessage};
+use scriptum_common::protocol::ws::{WsMessage, CURRENT_PROTOCOL_VERSION};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -117,12 +117,11 @@ fn websocket_contract_message_shapes_match_spec() {
 
 #[test]
 fn websocket_contract_optional_fields_are_omitted_when_absent() {
-    let hello_without_resume =
-        WsMessage::Hello {
-            protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
-            session_token: "session-token".to_string(),
-            resume_token: None,
-        };
+    let hello_without_resume = WsMessage::Hello {
+        protocol_version: CURRENT_PROTOCOL_VERSION.to_string(),
+        session_token: "session-token".to_string(),
+        resume_token: None,
+    };
     let error_without_doc = WsMessage::Error {
         code: "AUTH_INVALID_TOKEN".to_string(),
         message: "invalid token".to_string(),

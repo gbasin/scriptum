@@ -112,7 +112,8 @@ export function CommentsPanel({
         threadsByDocumentKey,
       ).sort((left, right) => {
         const leftTimestamp = parseTimestamp(
-          left.thread.messages[left.thread.messages.length - 1]?.createdAt ?? "",
+          left.thread.messages[left.thread.messages.length - 1]?.createdAt ??
+            "",
         );
         const rightTimestamp = parseTimestamp(
           right.thread.messages[right.thread.messages.length - 1]?.createdAt ??
@@ -151,10 +152,13 @@ export function CommentsPanel({
                   </strong>
                   <span>{latestAuthor(entry.thread)}</span>
                   <span>
-                    {entry.thread.startOffsetUtf16}-{entry.thread.endOffsetUtf16}
+                    {entry.thread.startOffsetUtf16}-
+                    {entry.thread.endOffsetUtf16}
                   </span>
                 </div>
-                <p className={styles.threadPreview}>{messagePreview(entry.thread)}</p>
+                <p className={styles.threadPreview}>
+                  {messagePreview(entry.thread)}
+                </p>
                 <p className={styles.threadDocument}>
                   {entry.documentTitle} · {entry.documentPath}
                 </p>

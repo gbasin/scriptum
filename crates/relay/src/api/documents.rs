@@ -357,19 +357,13 @@ async fn create_document(
     require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor).await?;
     validate_path(&payload.path)?;
 
-    let normalized_tags = if payload.tags.is_empty() {
-        None
-    } else {
-        Some(normalize_tag_names(&payload.tags)?)
-    };
+    let normalized_tags =
+        if payload.tags.is_empty() { None } else { Some(normalize_tag_names(&payload.tags)?) };
 
     let mut document =
         state.store.create(ws_id, user.user_id, &payload.path, payload.title.as_deref()).await?;
     if let Some(tags) = normalized_tags {
-        document = state
-            .store
-            .update_tags(ws_id, document.id, DocumentTagOp::Add, &tags)
-            .await?;
+        document = state.store.update_tags(ws_id, document.id, DocumentTagOp::Add, &tags).await?;
     }
 
     try_record_document_audit_event(
@@ -392,11 +386,7 @@ async fn create_document(
     Ok((
         StatusCode::CREATED,
         [("etag", etag.clone())],
-        Json(CreateDocumentEnvelope {
-            document,
-            sections: Vec::new(),
-            etag,
-        }),
+        Json(CreateDocumentEnvelope { document, sections: Vec::new(), etag }),
     ))
 }
 
@@ -414,10 +404,8 @@ async fn list_documents(
         None => None,
     };
 
-    let (items, next_cursor) = state
-        .store
-        .list(ws_id, query.path_prefix.as_deref(), archived, limit, cursor)
-        .await?;
+    let (items, next_cursor) =
+        state.store.list(ws_id, query.path_prefix.as_deref(), archived, limit, cursor).await?;
 
     Ok(Json(DocumentsPageEnvelope { items, next_cursor }))
 }
@@ -1086,7 +1074,11 @@ async fn create_mem(
     let mut store = store.write().await;
     let path_norm = normalize_doc_path(path);
 
-    if !store.workspace_members.keys().any(|(existing_workspace_id, _)| *existing_workspace_id == workspace_id) {
+    if !store
+        .workspace_members
+        .keys()
+        .any(|(existing_workspace_id, _)| *existing_workspace_id == workspace_id)
+    {
         store.workspace_members.insert((workspace_id, created_by), WorkspaceRole::Owner);
     }
 
@@ -1330,9 +1322,10 @@ async fn workspace_role_for_user_mem(
         return Ok(Some(role));
     }
 
-    let has_members = store.workspace_members.keys().any(|(existing_workspace_id, _)| {
-        *existing_workspace_id == workspace_id
-    });
+    let has_members = store
+        .workspace_members
+        .keys()
+        .any(|(existing_workspace_id, _)| *existing_workspace_id == workspace_id);
     if !has_members {
         // Memory tests bootstrap the first caller in a workspace as owner.
         return Ok(Some(WorkspaceRole::Owner));
@@ -1653,12 +1646,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::CREATED);
-        let etag_header = resp
-            .headers()
-            .get("etag")
-            .and_then(|value| value.to_str().ok())
-            .unwrap()
-            .to_string();
+        let etag_header =
+            resp.headers().get("etag").and_then(|value| value.to_str().ok()).unwrap().to_string();
 
         let body = body_json(resp).await;
         assert_eq!(body["document"]["path"], "notes/hello.md");
@@ -2124,9 +2113,7 @@ mod tests {
             .await
             .unwrap();
 
-        store
-            .grant_workspace_role_for_tests(ws_id, other_author_id, WorkspaceRole::Editor)
-            .await;
+        store.grant_workspace_role_for_tests(ws_id, other_author_id, WorkspaceRole::Editor).await;
 
         let create_doc_resp = app
             .clone()
@@ -2420,9 +2407,7 @@ mod tests {
         let doc_id = create_body["document"]["id"].as_str().unwrap();
         let etag = create_body["document"]["etag"].as_str().unwrap().to_string();
 
-        store
-            .grant_workspace_role_for_tests(ws_id, viewer_id, WorkspaceRole::Viewer)
-            .await;
+        store.grant_workspace_role_for_tests(ws_id, viewer_id, WorkspaceRole::Viewer).await;
 
         let list_resp = app
             .clone()
@@ -2433,7 +2418,10 @@ mod tests {
 
         let get_resp = app
             .clone()
-            .oneshot(get_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &viewer_token))
+            .oneshot(get_request(
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}"),
+                &viewer_token,
+            ))
             .await
             .unwrap();
         assert_eq!(get_resp.status(), StatusCode::OK);
@@ -2482,7 +2470,10 @@ mod tests {
 
         let delete_forbidden = app
             .clone()
-            .oneshot(delete_request(&format!("/v1/workspaces/{ws_id}/documents/{doc_id}"), &viewer_token))
+            .oneshot(delete_request(
+                &format!("/v1/workspaces/{ws_id}/documents/{doc_id}"),
+                &viewer_token,
+            ))
             .await
             .unwrap();
         assert_eq!(delete_forbidden.status(), StatusCode::FORBIDDEN);
@@ -2529,9 +2520,7 @@ mod tests {
         let create_doc_body = body_json(create_doc_resp).await;
         let doc_id = create_doc_body["document"]["id"].as_str().unwrap();
 
-        store
-            .grant_workspace_role_for_tests(ws_id, editor_id, WorkspaceRole::Editor)
-            .await;
+        store.grant_workspace_role_for_tests(ws_id, editor_id, WorkspaceRole::Editor).await;
 
         let create_override_resp = app
             .clone()

@@ -157,7 +157,8 @@ describe("CommentsPanel", () => {
 
   it("emits thread selection with document and thread ids", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-    const onThreadSelect = vi.fn<(documentId: string, threadId: string) => void>();
+    const onThreadSelect =
+      vi.fn<(documentId: string, threadId: string) => void>();
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);

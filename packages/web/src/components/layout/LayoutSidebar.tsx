@@ -2,17 +2,11 @@ import type { Document, Workspace } from "@scriptum/shared";
 import clsx from "clsx";
 import type { PeerPresence } from "../../store/presence";
 import type { SidebarPanel } from "../../store/ui";
-import { AgentsSection } from "../sidebar/AgentsSection";
-import {
-  type ContextMenuAction,
-  DocumentTree,
-} from "../sidebar/DocumentTree";
-import {
-  type SearchPanelResult,
-  SearchPanel,
-} from "../sidebar/SearchPanel";
 import { CommandPalette } from "../CommandPalette";
 import styles from "../Layout.module.css";
+import { AgentsSection } from "../sidebar/AgentsSection";
+import { type ContextMenuAction, DocumentTree } from "../sidebar/DocumentTree";
+import { SearchPanel, type SearchPanelResult } from "../sidebar/SearchPanel";
 import { TagsList } from "../sidebar/TagsList";
 import { WorkspaceDropdown } from "../sidebar/WorkspaceDropdown";
 
@@ -37,7 +31,10 @@ export interface LayoutSidebarProps {
   onCommandPaletteOpenChange: (open: boolean) => void;
   onCreateDocument: () => void;
   onCreateWorkspace: () => void;
-  onDocumentContextAction: (action: ContextMenuAction, document: Document) => void;
+  onDocumentContextAction: (
+    action: ContextMenuAction,
+    document: Document,
+  ) => void;
   onDocumentSelect: (documentId: string) => void;
   onRenameDocument: (documentId: string, nextPath: string) => void;
   onSearchResultSelect: (documentId: string) => void;
@@ -128,7 +125,11 @@ export function LayoutSidebar({
         openDocumentIds={openDocumentIds.slice()}
         workspaces={workspaces.slice()}
       />
-      <TagsList activeTag={activeTag} onTagSelect={onTagSelect} tags={workspaceTags} />
+      <TagsList
+        activeTag={activeTag}
+        onTagSelect={onTagSelect}
+        tags={workspaceTags}
+      />
       {searchPanelOpen ? (
         <SearchPanel
           loading={showPanelSkeletons}
@@ -150,7 +151,9 @@ export function LayoutSidebar({
                   showArchivedDocuments && styles.secondaryButtonActive,
                 )}
                 data-testid="document-tree-archive-toggle"
-                disabled={!showArchivedDocuments && archivedWorkspaceCount === 0}
+                disabled={
+                  !showArchivedDocuments && archivedWorkspaceCount === 0
+                }
                 onClick={onToggleArchivedDocuments}
                 type="button"
               >

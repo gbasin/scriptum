@@ -424,7 +424,10 @@ export function CommandPalette({
                 data-motion={isOpen ? "enter" : "exit"}
                 onMouseDown={(event) => event.stopPropagation()}
               >
-                <label className={styles.panelLabel} htmlFor="command-palette-input">
+                <label
+                  className={styles.panelLabel}
+                  htmlFor="command-palette-input"
+                >
                   Command Palette
                 </label>
                 <input
@@ -436,9 +439,15 @@ export function CommandPalette({
                   type="text"
                   value={query}
                 />
-                <ul className={styles.results} data-testid="command-palette-results">
+                <ul
+                  className={styles.results}
+                  data-testid="command-palette-results"
+                >
                   {filteredItems.length === 0 ? (
-                    <li className={styles.empty} data-testid="command-palette-empty">
+                    <li
+                      className={styles.empty}
+                      data-testid="command-palette-empty"
+                    >
                       No matches found.
                     </li>
                   ) : null}

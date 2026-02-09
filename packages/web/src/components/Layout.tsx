@@ -6,7 +6,10 @@ import styles from "./Layout.module.css";
 import { LayoutDialogs } from "./layout/LayoutDialogs";
 import { LayoutRightPanel } from "./layout/LayoutRightPanel";
 import { LayoutSidebar } from "./layout/LayoutSidebar";
-import { isNewDocumentShortcut, formatRenameBacklinkToast } from "./layout/layoutUtils";
+import {
+  formatRenameBacklinkToast,
+  isNewDocumentShortcut,
+} from "./layout/layoutUtils";
 import { ToastViewport } from "./ToastViewport";
 
 export type { IncomingBacklink };

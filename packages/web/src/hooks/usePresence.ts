@@ -1,8 +1,8 @@
 import {
+  type AwarenessPeerSnapshot,
   nameToColor,
   parseAwarenessPeer,
   readAwarenessPeers,
-  type AwarenessPeerSnapshot,
 } from "@scriptum/editor";
 import { useCallback, useEffect, useState } from "react";
 

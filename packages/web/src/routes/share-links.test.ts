@@ -45,6 +45,8 @@ describe("shareUrlFromCreateShareLinkResponse", () => {
   });
 
   it("returns null when payload does not contain a usable URL", () => {
-    expect(shareUrlFromCreateShareLinkResponse({}, "https://app.scriptum.dev")).toBeNull();
+    expect(
+      shareUrlFromCreateShareLinkResponse({}, "https://app.scriptum.dev"),
+    ).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
-import clsx from "clsx";
 import type { Document } from "@scriptum/shared";
-import { DocumentTree } from "./sidebar/DocumentTree";
+import clsx from "clsx";
 import styles from "./Layout.module.css";
+import { DocumentTree } from "./sidebar/DocumentTree";
 
 export interface MoveDocumentDialogProps {
   destinationFolderPath: string | null;

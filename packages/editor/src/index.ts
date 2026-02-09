@@ -5,11 +5,11 @@ export {
   remoteCursorExtension,
 } from "./collaboration/cursors";
 export {
-  parseAwarenessPeer,
-  readAwarenessPeers,
   type AwarenessPeerCursor,
   type AwarenessPeerSnapshot,
+  parseAwarenessPeer,
   type ReadAwarenessPeersOptions,
+  readAwarenessPeers,
 } from "./collaboration/presence";
 export {
   CollaborationProvider,

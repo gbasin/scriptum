@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  commentsStoreKey,
-  useCommentsStore,
-} from "./comments";
+import { commentsStoreKey, useCommentsStore } from "./comments";
 
 describe("comments store", () => {
   beforeEach(() => {

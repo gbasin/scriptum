@@ -167,7 +167,9 @@ interface ApiClient {
   deleteDocument: (
     ...args: SharedMethodArgs<"deleteDocument">
   ) => SharedMethodResult<"deleteDocument">;
-  addTags: (...args: SharedMethodArgs<"addTags">) => SharedMethodResult<"addTags">;
+  addTags: (
+    ...args: SharedMethodArgs<"addTags">
+  ) => SharedMethodResult<"addTags">;
   searchDocuments: (
     ...args: SharedMethodArgs<"searchDocuments">
   ) => SharedMethodResult<"searchDocuments">;
@@ -500,12 +502,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
     listWorkspaces: async (listOptions = {}) => {
       const payload = await runWithApiError(() =>
-        sharedClient.listWorkspaces({
-          ...(listOptions.limit !== undefined
-            ? { limit: listOptions.limit }
-            : {}),
-          ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
-        }, { signal: listOptions.signal }),
+        sharedClient.listWorkspaces(
+          {
+            ...(listOptions.limit !== undefined
+              ? { limit: listOptions.limit }
+              : {}),
+            ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
+          },
+          { signal: listOptions.signal },
+        ),
       );
       return mapPaged(payload, mapWorkspace);
     },
@@ -529,19 +534,23 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
     listDocuments: async (workspaceId, listOptions = {}) => {
       const payload = await runWithApiError(() =>
-        sharedClient.listDocuments(workspaceId, {
-          ...(listOptions.limit !== undefined
-            ? { limit: listOptions.limit }
-            : {}),
-          ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
-          ...(listOptions.pathPrefix
-            ? { path_prefix: listOptions.pathPrefix }
-            : {}),
-          ...(listOptions.tag ? { tag: listOptions.tag } : {}),
-          ...(listOptions.includeArchived !== undefined
-            ? { include_archived: listOptions.includeArchived }
-            : {}),
-        }, { signal: listOptions.signal }),
+        sharedClient.listDocuments(
+          workspaceId,
+          {
+            ...(listOptions.limit !== undefined
+              ? { limit: listOptions.limit }
+              : {}),
+            ...(listOptions.cursor ? { cursor: listOptions.cursor } : {}),
+            ...(listOptions.pathPrefix
+              ? { path_prefix: listOptions.pathPrefix }
+              : {}),
+            ...(listOptions.tag ? { tag: listOptions.tag } : {}),
+            ...(listOptions.includeArchived !== undefined
+              ? { include_archived: listOptions.includeArchived }
+              : {}),
+          },
+          { signal: listOptions.signal },
+        ),
       );
       return mapPaged(payload, mapDocument);
     },
@@ -551,14 +560,19 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
     getDocument: async (workspaceId, documentId, getOptions = {}) => {
       const payload = await runWithApiError(() =>
-        sharedClient.getDocument(workspaceId, documentId, {
-          ...(getOptions.includeContent !== undefined
-            ? { include_content: getOptions.includeContent }
-            : {}),
-          ...(getOptions.includeSections !== undefined
-            ? { include_sections: getOptions.includeSections }
-            : {}),
-        }, { signal: getOptions.signal }),
+        sharedClient.getDocument(
+          workspaceId,
+          documentId,
+          {
+            ...(getOptions.includeContent !== undefined
+              ? { include_content: getOptions.includeContent }
+              : {}),
+            ...(getOptions.includeSections !== undefined
+              ? { include_sections: getOptions.includeSections }
+              : {}),
+          },
+          { signal: getOptions.signal },
+        ),
       );
 
       const record = asRecord(payload);
@@ -594,17 +608,27 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     listComments: (...args) =>
       runWithApiError(() => sharedClient.listComments(...args)),
 
-    createComment: async (workspaceId, documentId, input, requestOptions = {}) => {
+    createComment: async (
+      workspaceId,
+      documentId,
+      input,
+      requestOptions = {},
+    ) => {
       const payload = await runWithApiError(() =>
-        sharedClient.createComment(workspaceId, documentId, {
-          anchor: {
-            section_id: input.anchor.sectionId,
-            start_offset_utf16: input.anchor.startOffsetUtf16,
-            end_offset_utf16: input.anchor.endOffsetUtf16,
-            head_seq: input.anchor.headSeq,
+        sharedClient.createComment(
+          workspaceId,
+          documentId,
+          {
+            anchor: {
+              section_id: input.anchor.sectionId,
+              start_offset_utf16: input.anchor.startOffsetUtf16,
+              end_offset_utf16: input.anchor.endOffsetUtf16,
+              head_seq: input.anchor.headSeq,
+            },
+            message: input.message,
           },
-          message: input.message,
-        }, { signal: requestOptions.signal }),
+          { signal: requestOptions.signal },
+        ),
       );
 
       const record = asRecord(payload);
@@ -621,9 +645,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       requestOptions = {},
     ) => {
       const payload = await runWithApiError(() =>
-        sharedClient.addCommentMessage(workspaceId, threadId, {
-          body_md: bodyMd,
-        }, { signal: requestOptions.signal }),
+        sharedClient.addCommentMessage(
+          workspaceId,
+          threadId,
+          {
+            body_md: bodyMd,
+          },
+          { signal: requestOptions.signal },
+        ),
       );
 
       const record = asRecord(payload);
@@ -637,9 +666,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       requestOptions = {},
     ) => {
       const payload = await runWithApiError(() =>
-        sharedClient.resolveComment(workspaceId, threadId, {
-          if_version: ifVersion,
-        }, { signal: requestOptions.signal }),
+        sharedClient.resolveComment(
+          workspaceId,
+          threadId,
+          {
+            if_version: ifVersion,
+          },
+          { signal: requestOptions.signal },
+        ),
       );
 
       const record = asRecord(payload);
@@ -653,9 +687,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       requestOptions = {},
     ) => {
       const payload = await runWithApiError(() =>
-        sharedClient.reopenComment(workspaceId, threadId, {
-          if_version: ifVersion,
-        }, { signal: requestOptions.signal }),
+        sharedClient.reopenComment(
+          workspaceId,
+          threadId,
+          {
+            if_version: ifVersion,
+          },
+          { signal: requestOptions.signal },
+        ),
       );
 
       const record = asRecord(payload);

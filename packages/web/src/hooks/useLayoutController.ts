@@ -1,10 +1,6 @@
 import type { Document, Workspace } from "@scriptum/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { BacklinkEntry } from "../components/right-panel/Backlinks";
-import { useDocumentCrud } from "../hooks/useDocumentCrud";
-import { useLayoutState } from "../hooks/useLayoutState";
-import { useToast } from "../hooks/useToast";
 import {
   baseName,
   COMPACT_LAYOUT_BREAKPOINT_PX,
@@ -13,19 +9,23 @@ import {
   normalizeTag,
   parentFolderPath,
 } from "../components/layout/layoutUtils";
-import {
-  buildIncomingBacklinks,
-  type IncomingBacklink,
-} from "../lib/wiki-links";
+import type { BacklinkEntry } from "../components/right-panel/Backlinks";
 import {
   buildSearchPanelResults,
   isSearchPanelShortcut,
 } from "../components/sidebar/SearchPanel";
-import { useCommentsStore } from "../store/comments";
 import {
   collectWorkspaceTags,
   filterDocumentsByTag,
 } from "../components/sidebar/TagsList";
+import { useDocumentCrud } from "../hooks/useDocumentCrud";
+import { useLayoutState } from "../hooks/useLayoutState";
+import { useToast } from "../hooks/useToast";
+import {
+  buildIncomingBacklinks,
+  type IncomingBacklink,
+} from "../lib/wiki-links";
+import { useCommentsStore } from "../store/comments";
 
 export interface LayoutController {
   dialogs: {
@@ -53,9 +53,7 @@ export interface LayoutController {
     incomingBacklinkEntries: BacklinkEntry[];
     onBacklinkSelect: (documentId: string) => void;
     onCommentThreadSelect: (documentId: string, threadId: string) => void;
-    onRightPanelTabChange: (
-      tab: "outline" | "backlinks" | "comments",
-    ) => void;
+    onRightPanelTabChange: (tab: "outline" | "backlinks" | "comments") => void;
     onToggleRightPanel: () => void;
     outlineContainer: HTMLElement | null;
     rightPanelOpen: boolean;
@@ -198,7 +196,9 @@ export function useLayoutController(): LayoutController {
   );
   const visibleDocuments = useMemo(
     () =>
-      showArchivedDocuments ? filteredArchivedDocuments : filteredActiveDocuments,
+      showArchivedDocuments
+        ? filteredArchivedDocuments
+        : filteredActiveDocuments,
     [filteredActiveDocuments, filteredArchivedDocuments, showArchivedDocuments],
   );
   const searchPanelResults = useMemo(

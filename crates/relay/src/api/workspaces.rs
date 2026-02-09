@@ -5,16 +5,13 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    audit::AuditEventType,
-    auth::middleware::AuthenticatedUser,
-    validation::ValidatedJson,
+    audit::AuditEventType, auth::middleware::AuthenticatedUser, validation::ValidatedJson,
 };
 
 use super::{
-    extract_if_match, normalize_limit, parse_cursor, validate_name, validate_slug, ApiError,
-    try_record_audit_event, ApiState, CreateWorkspaceRequest, ListWorkspacesQuery,
-    UpdateWorkspaceRequest,
-    WorkspaceEnvelope, WorkspaceRecord, WorkspacesPageEnvelope,
+    extract_if_match, normalize_limit, parse_cursor, try_record_audit_event, validate_name,
+    validate_slug, ApiError, ApiState, CreateWorkspaceRequest, ListWorkspacesQuery,
+    UpdateWorkspaceRequest, WorkspaceEnvelope, WorkspaceRecord, WorkspacesPageEnvelope,
 };
 
 pub(super) async fn create_workspace(

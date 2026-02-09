@@ -33,8 +33,8 @@ import { ShareDialog } from "../components/share/ShareDialog";
 import { useScriptumEditor } from "../hooks/useScriptumEditor";
 import { useToast } from "../hooks/useToast";
 import {
-  createShareLink as createShareLinkApi,
   type CreateCommentInput,
+  createShareLink as createShareLinkApi,
 } from "../lib/api-client";
 import {
   buildOpenDocumentTabs,
@@ -63,8 +63,8 @@ import {
   timelineAuthorFromPeer,
   UNKNOWN_REMOTE_TIMELINE_AUTHOR,
 } from "../lib/timeline";
-import { useDocumentsStore } from "../store/documents";
 import { useCommentsStore } from "../store/comments";
+import { useDocumentsStore } from "../store/documents";
 import { type PeerPresence, usePresenceStore } from "../store/presence";
 import { useSyncStore } from "../store/sync";
 import { useWorkspaceStore } from "../store/workspace";
@@ -75,11 +75,11 @@ import {
   createShareLinkRecord,
   expirationIsoFromOption,
   parseShareLinkMaxUses,
-  shareUrlFromCreateShareLinkResponse,
   type ShareLinkExpirationOption,
   type ShareLinkPermission,
   type ShareLinkTargetType,
   sharePermissionLabel,
+  shareUrlFromCreateShareLinkResponse,
   storeShareLinkRecord,
 } from "./share-links";
 
@@ -501,7 +501,8 @@ export function DocumentRoute() {
   const reconnectProgress = fixtureModeEnabled
     ? fixtureState.reconnectProgress
     : null;
-  const shareLinksEnabled = !fixtureModeEnabled || fixtureState.shareLinksEnabled;
+  const shareLinksEnabled =
+    !fixtureModeEnabled || fixtureState.shareLinksEnabled;
   const showEditorLoadingSkeleton =
     !fixtureModeEnabled && syncState === "reconnecting";
   const handleEditorDocContentChanged = (
@@ -629,12 +630,7 @@ export function DocumentRoute() {
       return;
     }
     setDocumentThreads(workspaceId, documentId, inlineCommentThreads);
-  }, [
-    documentId,
-    inlineCommentThreads,
-    setDocumentThreads,
-    workspaceId,
-  ]);
+  }, [documentId, inlineCommentThreads, setDocumentThreads, workspaceId]);
 
   useEffect(() => {
     const highlightedThreadId = parseCommentThreadHash(location.hash);

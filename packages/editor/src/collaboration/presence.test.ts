@@ -42,7 +42,9 @@ describe("parseAwarenessPeer", () => {
   });
 
   it("applies defaults when awareness payload is sparse", () => {
-    expect(parseAwarenessPeer(11, { cursor: { anchor: 4 } }, fallbackColor)).toEqual({
+    expect(
+      parseAwarenessPeer(11, { cursor: { anchor: 4 } }, fallbackColor),
+    ).toEqual({
       clientId: 11,
       color: "color:User 11",
       cursor: {
@@ -55,7 +57,9 @@ describe("parseAwarenessPeer", () => {
   });
 
   it("returns null cursor when anchor/head are missing", () => {
-    expect(parseAwarenessPeer(3, { user: { name: "Bob" } }, fallbackColor)).toEqual({
+    expect(
+      parseAwarenessPeer(3, { user: { name: "Bob" } }, fallbackColor),
+    ).toEqual({
       clientId: 3,
       color: "color:Bob",
       cursor: null,

@@ -20,7 +20,7 @@ use chrono::{Duration, Utc};
 use futures_util::{SinkExt, StreamExt};
 use scriptum_common::crdt::origin::{AuthorType, OriginTag};
 use scriptum_common::protocol::ws::{
-    CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION, WsMessage,
+    WsMessage, CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION,
 };
 use std::{env, fs, sync::Arc};
 use tokio::net::TcpListener;
@@ -1499,15 +1499,14 @@ async fn resume_token_is_bound_to_session_context() {
         )
         .await;
 
-    let result =
-        handle_hello_message(
-            &store,
-            session_b,
-            CURRENT_PROTOCOL_VERSION.to_string(),
-            session_b_token,
-            Some(session_a_resume_token),
-        )
-        .await;
+    let result = handle_hello_message(
+        &store,
+        session_b,
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        session_b_token,
+        Some(session_a_resume_token),
+    )
+    .await;
     match result {
         Ok(WsMessage::HelloAck { resume_accepted, .. }) => assert!(!resume_accepted),
         other => panic!("expected hello ack, got {other:?}"),
@@ -1520,8 +1519,8 @@ async fn resume_token_is_bound_to_session_context() {
         session_a_token,
         None,
     )
-        .await
-        .expect("session A should still validate");
+    .await
+    .expect("session A should still validate");
     match valid {
         WsMessage::HelloAck { .. } => {}
         other => panic!("expected hello ack, got {other:?}"),

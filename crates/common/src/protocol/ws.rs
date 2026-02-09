@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 pub const CURRENT_PROTOCOL_VERSION: &str = "scriptum-sync.v1";
 pub const PREVIOUS_PROTOCOL_VERSION: &str = "scriptum-sync.v0";
-pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION];
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &[CURRENT_PROTOCOL_VERSION, PREVIOUS_PROTOCOL_VERSION];
 
 #[must_use]
 pub fn is_supported_protocol_version(version: &str) -> bool {
@@ -74,7 +75,7 @@ pub enum WsMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::{CURRENT_PROTOCOL_VERSION, WsMessage};
+    use super::{WsMessage, CURRENT_PROTOCOL_VERSION};
     use serde_json::Value;
     use uuid::Uuid;
 

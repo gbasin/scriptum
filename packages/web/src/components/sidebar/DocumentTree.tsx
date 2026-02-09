@@ -472,17 +472,17 @@ function TreeNodeItem({
                 >
                   {contextActionsForDocument(node.document).map(
                     ({ action, label }) => (
-                    <ContextMenu.Item
-                      className={styles.contextMenuItem}
-                      data-testid={`context-action-${action}`}
-                      key={action}
-                      onClick={() => {
-                        if (node.document)
-                          onContextAction(action, node.document);
-                      }}
-                    >
-                      {label}
-                    </ContextMenu.Item>
+                      <ContextMenu.Item
+                        className={styles.contextMenuItem}
+                        data-testid={`context-action-${action}`}
+                        key={action}
+                        onClick={() => {
+                          if (node.document)
+                            onContextAction(action, node.document);
+                        }}
+                      >
+                        {label}
+                      </ContextMenu.Item>
                     ),
                   )}
                 </ContextMenu.Popup>

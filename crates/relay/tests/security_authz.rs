@@ -35,22 +35,24 @@ fn share_link_permission_checks_cover_disabled_revoked_expired_and_exhausted() {
 }
 
 #[test]
-fn acl_override_management_requires_workspace_or_document_ownership() {
+fn acl_override_management_enforces_workspace_authorization() {
     assert!(
-        DOCUMENTS_SOURCE.contains("ensure_acl_override_manager_access"),
-        "ACL override handlers must validate manager access"
-    );
-    assert!(
-        DOCUMENTS_SOURCE.contains("is_document_owner"),
-        "document ownership check must exist for ACL overrides"
-    );
-    assert!(
-        DOCUMENTS_SOURCE.contains("is_workspace_owner"),
-        "workspace ownership check must exist for ACL overrides"
+        DOCUMENTS_SOURCE
+            .contains("require_workspace_role(&state.store, &user, ws_id, WorkspaceRole::Editor)"),
+        "ACL override handlers must enforce at least workspace editor role"
     );
     assert!(
         DOCUMENTS_SOURCE.contains("create_acl_override_rejects_non_owner_and_non_document_owner"),
-        "ACL authorization regression test for unauthorized caller must exist"
+        "ACL authorization regression test for forbidden callers must exist"
+    );
+    assert!(
+        DOCUMENTS_SOURCE
+            .contains("workspace_owner_can_manage_acl_overrides_for_other_document_owner"),
+        "workspace owners should be allowed to manage overrides"
+    );
+    assert!(
+        DOCUMENTS_SOURCE.contains("editor_role_can_manage_acl_overrides_for_other_users_documents"),
+        "workspace editors should be allowed to manage overrides"
     );
 }
 

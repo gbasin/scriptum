@@ -409,10 +409,8 @@ mod tests {
 
     use super::RelayMetrics;
 
-    const RELAY_ALERT_RULES: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../ops/alerting/relay-alerts.yml"
-    ));
+    const RELAY_ALERT_RULES: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/alerting/relay-alerts.yml"));
 
     #[test]
     fn render_prometheus_includes_red_and_custom_metrics() {
@@ -489,10 +487,7 @@ mod tests {
 
         let rendered = metrics.render_prometheus();
         for metric in alert_metrics {
-            assert!(
-                rendered.contains(metric),
-                "rendered metrics should export `{metric}`"
-            );
+            assert!(rendered.contains(metric), "rendered metrics should export `{metric}`");
         }
         assert!(
             rendered.contains("relay_ws_rate_total{endpoint=\"yjs_update\"}"),

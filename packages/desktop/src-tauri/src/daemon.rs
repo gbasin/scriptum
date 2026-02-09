@@ -38,7 +38,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("scriptum-desktop-{label}-{}-{nanos}.sock", std::process::id()))
+        std::env::temp_dir()
+            .join(format!("scriptum-desktop-{label}-{}-{nanos}.sock", std::process::id()))
     }
 
     #[tokio::test]

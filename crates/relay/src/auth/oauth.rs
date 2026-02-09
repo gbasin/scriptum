@@ -1515,10 +1515,8 @@ mod tests {
             .expect("first callback should complete");
         assert_eq!(first.status(), StatusCode::OK);
 
-        let second = app
-            .oneshot(callback_request(payload))
-            .await
-            .expect("second callback should complete");
+        let second =
+            app.oneshot(callback_request(payload)).await.expect("second callback should complete");
         assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
         assert!(second.headers().get("retry-after").is_some());
 

@@ -580,10 +580,13 @@ export class ScriptumApiClient {
     });
   }
 
-  listWorkspaces(params?: {
-    limit?: number;
-    cursor?: string;
-  }, options: ApiRequestOptions = {}): Promise<PagedResponse<Workspace>> {
+  listWorkspaces(
+    params?: {
+      limit?: number;
+      cursor?: string;
+    },
+    options: ApiRequestOptions = {},
+  ): Promise<PagedResponse<Workspace>> {
     return this.request(listWorkspacesPath(), {
       query: params,
       signal: options.signal,

@@ -337,12 +337,13 @@
   }
 
   .sidebar[data-motion="enter"] {
-    animation: layoutDrawerSlideInLeft var(--duration-normal) var(--ease-standard);
+    animation: layoutDrawerSlideInLeft var(--duration-normal)
+      var(--ease-standard);
   }
 
   .sidebar[data-motion="exit"] {
-    animation: layoutDrawerSlideOutLeft var(--duration-fast) var(--ease-standard)
-      forwards;
+    animation: layoutDrawerSlideOutLeft var(--duration-fast)
+      var(--ease-standard) forwards;
   }
 
   .outlinePanel[data-motion="enter"] {
