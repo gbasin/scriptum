@@ -1377,19 +1377,31 @@ impl RpcServerState {
             return Err("root_path must be an absolute path".to_string());
         }
 
-        // Create `.scriptum/` directory and default workspace.toml.
-        let scriptum_dir = path.join(".scriptum");
-        std::fs::create_dir_all(&scriptum_dir)
-            .map_err(|e| format!("failed to create .scriptum directory: {e}"))?;
+        let workspace_id = Uuid::new_v4();
+        let created_at = chrono::Utc::now();
 
-        let config = crate::config::WorkspaceConfig::default();
+        // Create `.scriptum/` directory and required workspace-local stores.
+        let scriptum_dir = path.join(".scriptum");
+        let workspace_crdt_store_dir = scriptum_dir.join("crdt_store");
+        let wal_dir = workspace_crdt_store_dir.join("wal");
+        let snapshots_dir = workspace_crdt_store_dir.join("snapshots");
+
+        std::fs::create_dir_all(&wal_dir)
+            .map_err(|e| format!("failed to create .scriptum wal directory: {e}"))?;
+        std::fs::create_dir_all(&snapshots_dir)
+            .map_err(|e| format!("failed to create .scriptum snapshots directory: {e}"))?;
+
+        let workspace_meta_db_path = scriptum_dir.join("meta.db");
+        MetaDb::open(&workspace_meta_db_path)
+            .map_err(|e| format!("failed to initialize workspace meta.db: {e}"))?;
+
+        let mut config = crate::config::WorkspaceConfig::default();
+        config.sync.workspace_id = Some(workspace_id.to_string());
+        config.sync.workspace_name = Some(trimmed_name.clone());
         config.save(path).map_err(|e| format!("failed to write workspace.toml: {e}"))?;
 
         // Import any existing markdown files from disk.
         let imported_docs = scan_workspace_markdown_docs(path)?;
-
-        let workspace_id = Uuid::new_v4();
-        let created_at = chrono::Utc::now();
 
         // Seed local metadata/index stores for imported docs.
         self.with_agent_storage(|conn, _| {
@@ -4788,13 +4800,40 @@ mod tests {
         assert_eq!(result["workspace"]["slug"], "new-project");
         assert_eq!(result["name"], "New Project");
         assert_eq!(result["root_path"], json!(root));
+        let workspace_id =
+            result["workspace_id"].as_str().expect("workspace_id should be present").to_string();
         assert!(result["workspace"]["id"].as_str().is_some());
-        assert!(result["workspace_id"].as_str().is_some());
         assert!(result["created_at"].as_str().is_some());
 
-        // Verify .scriptum/workspace.toml was created on disk.
-        let toml_path = tmp.path().join(".scriptum").join("workspace.toml");
+        // Verify expected workspace-local storage layout.
+        let scriptum_dir = tmp.path().join(".scriptum");
+        let toml_path = scriptum_dir.join("workspace.toml");
+        let wal_dir = scriptum_dir.join("crdt_store").join("wal");
+        let snapshots_dir = scriptum_dir.join("crdt_store").join("snapshots");
+        let meta_db_path = scriptum_dir.join("meta.db");
+
         assert!(toml_path.exists(), ".scriptum/workspace.toml should exist");
+        assert!(wal_dir.is_dir(), ".scriptum/crdt_store/wal should exist");
+        assert!(snapshots_dir.is_dir(), ".scriptum/crdt_store/snapshots should exist");
+        assert!(meta_db_path.is_file(), ".scriptum/meta.db should exist");
+
+        // Verify workspace identity persisted to workspace.toml.
+        let workspace_config = crate::config::WorkspaceConfig::load(tmp.path());
+        assert_eq!(workspace_config.sync.workspace_id.as_deref(), Some(workspace_id.as_str()));
+        assert_eq!(workspace_config.sync.workspace_name.as_deref(), Some("New Project"));
+
+        // Verify workspace meta.db was initialized with schema.
+        let workspace_meta_db =
+            crate::store::meta_db::MetaDb::open(&meta_db_path).expect("meta.db should open");
+        let documents_table_exists: i64 = workspace_meta_db
+            .connection()
+            .query_row(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'documents_local'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("documents_local table query should succeed");
+        assert_eq!(documents_table_exists, 1, "documents_local table should exist");
 
         // Verify workspace is now listed.
         let list_req = Request::new("workspace.list", None, RequestId::Number(121));

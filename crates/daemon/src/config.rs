@@ -216,6 +216,8 @@ pub struct SyncConfig {
     pub relay_url: Option<String>,
     /// Workspace ID on the relay server.
     pub workspace_id: Option<String>,
+    /// Human-readable local workspace name.
+    pub workspace_name: Option<String>,
 }
 
 // ── Errors ─────────────────────────────────────────────────────────
@@ -343,6 +345,7 @@ api_key = "sk-prod"
             sync: SyncConfig {
                 relay_url: Some("https://custom-relay.example.com".into()),
                 workspace_id: Some("ws-123".into()),
+                workspace_name: Some("Workspace 123".into()),
             },
         };
         cfg.save_to(&path).unwrap();
@@ -364,11 +367,13 @@ redaction_policy = "disabled"
 [sync]
 relay_url = "https://relay.example.com"
 workspace_id = "ws-456"
+workspace_name = "My Workspace"
 "#;
         let cfg: WorkspaceConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.git.push_policy, PushPolicy::Manual);
         assert_eq!(cfg.git.redaction_policy, RedactionPolicy::Disabled);
         assert_eq!(cfg.sync.workspace_id.as_deref(), Some("ws-456"));
+        assert_eq!(cfg.sync.workspace_name.as_deref(), Some("My Workspace"));
     }
 
     #[test]
