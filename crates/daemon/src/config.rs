@@ -92,11 +92,23 @@ impl GlobalConfig {
 /// AI service configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-#[derive(Default)]
 pub struct AiConfig {
-    /// API keys are stored in the OS keychain, not in config files.
+    /// Anthropic API key used for AI-generated commit messages.
+    pub api_key: Option<String>,
     /// Model to use (e.g. `claude-haiku-4-5-20251001`).
     pub model: Option<String>,
+    /// Enables or disables AI commit message generation globally.
+    pub enabled: bool,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            model: None,
+            enabled: true,
+        }
+    }
 }
 
 /// Editor type for this client.
@@ -254,7 +266,9 @@ mod tests {
         assert!(cfg.relay_url.is_none());
         assert!(cfg.display_name.is_none());
         assert_eq!(cfg.editor_type, EditorTypeConfig::Human);
+        assert!(cfg.ai.api_key.is_none());
         assert!(cfg.ai.model.is_none());
+        assert!(cfg.ai.enabled);
     }
 
     #[test]
@@ -266,7 +280,11 @@ mod tests {
             relay_url: Some("https://relay.example.com".into()),
             display_name: Some("Alice".into()),
             editor_type: EditorTypeConfig::Human,
-            ai: AiConfig { model: Some("claude-haiku-4-5-20251001".into()) },
+            ai: AiConfig {
+                api_key: Some("sk-ant-test".into()),
+                model: Some("claude-haiku-4-5-20251001".into()),
+                enabled: false,
+            },
         };
         cfg.save_to(&path).unwrap();
         let loaded = GlobalConfig::load_from(&path).unwrap();
@@ -281,23 +299,27 @@ display_name = "Bob"
 editor_type = "agent"
 
 [ai]
+api_key = "sk-ant-config"
 model = "claude-haiku-4-5-20251001"
+enabled = false
 "#;
         let cfg: GlobalConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.relay_url.as_deref(), Some("https://relay.scriptum.dev"));
         assert_eq!(cfg.display_name.as_deref(), Some("Bob"));
         assert_eq!(cfg.editor_type, EditorTypeConfig::Agent);
+        assert_eq!(cfg.ai.api_key.as_deref(), Some("sk-ant-config"));
         assert_eq!(cfg.ai.model.as_deref(), Some("claude-haiku-4-5-20251001"));
+        assert!(!cfg.ai.enabled);
     }
 
     #[test]
-    fn global_config_rejects_plaintext_api_key() {
+    fn global_config_accepts_api_key() {
         let toml_str = r#"
 [ai]
 api_key = "sk-prod"
 "#;
-        let error = toml::from_str::<GlobalConfig>(toml_str).expect_err("parse should fail");
-        assert!(error.to_string().contains("unknown field `api_key`"));
+        let cfg = toml::from_str::<GlobalConfig>(toml_str).expect("parse should succeed");
+        assert_eq!(cfg.ai.api_key.as_deref(), Some("sk-prod"));
     }
 
     #[test]

@@ -391,6 +391,7 @@ export interface GitStatusResult {
   remote?: string;
   policy?: GitSyncPolicy;
   ai_enabled?: boolean;
+  ai_configured?: boolean;
   commit_interval_sec?: number;
   status_output?: string;
 }

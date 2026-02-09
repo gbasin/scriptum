@@ -11,7 +11,6 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
-use std::{fs, path::PathBuf};
 
 use super::triggers::{ChangeType, ChangedFile};
 use regex::Regex;
@@ -118,20 +117,34 @@ impl Default for AnthropicCommitClient {
 
 impl AnthropicCommitClient {
     pub fn new() -> Self {
-        let model = crate::config::GlobalConfig::load()
+        let global_config = crate::config::GlobalConfig::load();
+        Self::from_global_config(&global_config)
+    }
+
+    pub fn from_global_config(config: &crate::config::GlobalConfig) -> Self {
+        let model = config
             .ai
             .model
             .as_deref()
             .and_then(trimmed_non_empty)
             .unwrap_or_else(|| DEFAULT_ANTHROPIC_MODEL.to_string());
+        let api_key = if config.ai.enabled {
+            resolve_api_key(config)
+        } else {
+            None
+        };
 
         Self {
             http: reqwest::Client::new(),
             api_url: ANTHROPIC_API_URL.to_string(),
-            api_key: resolve_api_key(),
+            api_key,
             model,
             max_tokens: DEFAULT_MAX_TOKENS,
         }
+    }
+
+    pub fn is_configured(&self) -> bool {
+        self.api_key.is_some()
     }
 }
 
@@ -214,23 +227,12 @@ impl AiCommitClient for AnthropicCommitClient {
     }
 }
 
-fn resolve_api_key() -> Option<String> {
+fn resolve_api_key(config: &crate::config::GlobalConfig) -> Option<String> {
     std::env::var("ANTHROPIC_API_KEY")
         .ok()
         .as_deref()
         .and_then(trimmed_non_empty)
-        .or_else(|| api_key_from_config_file())
-}
-
-fn api_key_from_config_file() -> Option<String> {
-    let path: PathBuf = crate::config::global_config_path()?;
-    let contents = fs::read_to_string(path).ok()?;
-    let parsed: toml::Value = toml::from_str(&contents).ok()?;
-    parsed
-        .get("ai")
-        .and_then(|ai| ai.get("api_key"))
-        .and_then(toml::Value::as_str)
-        .and_then(trimmed_non_empty)
+        .or_else(|| config.ai.api_key.as_deref().and_then(trimmed_non_empty))
 }
 
 fn trimmed_non_empty(value: &str) -> Option<String> {
@@ -441,7 +443,7 @@ fn enforce_first_line_limit(message: &str, max_len: usize) -> String {
 mod tests {
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     use axum::{
         http::{HeaderMap, StatusCode},
@@ -514,6 +516,22 @@ mod tests {
         ]
     }
 
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn global_config_with_api(api_key: Option<&str>, enabled: bool) -> crate::config::GlobalConfig {
+        crate::config::GlobalConfig {
+            ai: crate::config::AiConfig {
+                api_key: api_key.map(str::to_string),
+                model: None,
+                enabled,
+            },
+            ..crate::config::GlobalConfig::default()
+        }
+    }
+
     #[derive(Debug)]
     struct CapturedAnthropicCall {
         x_api_key: Option<String>,
@@ -523,6 +541,33 @@ mod tests {
     }
 
     // ── AnthropicCommitClient ────────────────────────────────────────
+
+    #[test]
+    fn resolve_api_key_prefers_environment_variable() {
+        let _guard = env_lock().lock().expect("env lock should be acquirable");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-env");
+        let config = global_config_with_api(Some("sk-ant-config"), true);
+        assert_eq!(resolve_api_key(&config).as_deref(), Some("sk-ant-env"));
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn resolve_api_key_falls_back_to_global_config_when_env_missing() {
+        let _guard = env_lock().lock().expect("env lock should be acquirable");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let config = global_config_with_api(Some("sk-ant-config"), true);
+        assert_eq!(resolve_api_key(&config).as_deref(), Some("sk-ant-config"));
+    }
+
+    #[test]
+    fn anthropic_client_respects_global_ai_enabled_flag() {
+        let _guard = env_lock().lock().expect("env lock should be acquirable");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-env");
+        let config = global_config_with_api(None, false);
+        let client = AnthropicCommitClient::from_global_config(&config);
+        assert!(!client.is_configured(), "ai should be disabled when global ai.enabled is false");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
 
     #[tokio::test]
     async fn anthropic_client_posts_expected_request_format() {

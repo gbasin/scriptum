@@ -4,6 +4,8 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use scriptum_common::protocol::rpc_methods;
+
 use crate::client::DaemonClient;
 use crate::output::{self, OutputFormat};
 
@@ -19,9 +21,21 @@ pub struct AgentStatusResult {
     pub agent_id: String,
     pub display_name: String,
     #[serde(default)]
+    pub ai_commits_configured: Option<bool>,
+    #[serde(default)]
     pub active_sections: Vec<ActiveSection>,
     #[serde(default)]
     pub overlaps: Vec<SectionOverlap>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitStatusResult {
+    #[serde(default)]
+    ai_configured: Option<bool>,
+    #[serde(default)]
+    ai_commit_enabled: Option<bool>,
+    #[serde(default)]
+    ai_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,12 +81,27 @@ pub fn run(args: StatusArgs) -> anyhow::Result<()> {
 
 async fn call_status() -> anyhow::Result<AgentStatusResult> {
     let client = DaemonClient::default();
-    client.call("agent.status", json!({})).await
+    let mut status: AgentStatusResult = client.call(rpc_methods::AGENT_STATUS, json!({})).await?;
+
+    if let Ok(git_status) = client.call::<_, GitStatusResult>(rpc_methods::GIT_STATUS, json!({})).await {
+        status.ai_commits_configured = git_status
+            .ai_configured
+            .or(git_status.ai_commit_enabled)
+            .or(git_status.ai_enabled);
+    }
+
+    Ok(status)
 }
 
 fn format_human(result: &AgentStatusResult) -> String {
     let mut lines = Vec::new();
     lines.push(format!("{} ({})", result.display_name, result.agent_id));
+    if let Some(ai_configured) = result.ai_commits_configured {
+        lines.push(format!(
+            "  AI commits: {}",
+            if ai_configured { "configured" } else { "not configured" }
+        ));
+    }
 
     if result.active_sections.is_empty() {
         lines.push("  No active sections.".into());
@@ -108,6 +137,7 @@ mod tests {
         AgentStatusResult {
             agent_id: "agent-1".into(),
             display_name: "claude".into(),
+            ai_commits_configured: Some(true),
             active_sections: vec![ActiveSection {
                 doc_path: "docs/readme.md".into(),
                 section_id: "sec-abc".into(),
@@ -128,6 +158,7 @@ mod tests {
     fn human_format_shows_sections_and_overlaps() {
         let output = format_human(&sample_result());
         assert!(output.contains("claude"));
+        assert!(output.contains("AI commits: configured"));
         assert!(output.contains("docs/readme.md"));
         assert!(output.contains("## Auth"));
         assert!(output.contains("sec-abc"));
@@ -139,10 +170,12 @@ mod tests {
         let result = AgentStatusResult {
             agent_id: "a".into(),
             display_name: "test".into(),
+            ai_commits_configured: Some(false),
             active_sections: vec![],
             overlaps: vec![],
         };
         let output = format_human(&result);
+        assert!(output.contains("AI commits: not configured"));
         assert!(output.contains("No active sections"));
     }
 

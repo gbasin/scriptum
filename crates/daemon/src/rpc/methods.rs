@@ -77,6 +77,7 @@ pub struct GitState<E: CommandExecutor = ProcessCommandExecutor> {
     last_sync_at: Arc<RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
     ai_client: Arc<dyn AiCommitClient>,
     ai_enabled: bool,
+    ai_configured: bool,
     ai_redaction_policy: AiRedactionPolicy,
 }
 
@@ -90,12 +91,16 @@ impl<E: CommandExecutor> GitState<E> {
     pub fn with_executor(repo_path: impl Into<PathBuf>, executor: E) -> Self {
         let repo_path = repo_path.into();
         let workspace_config = WorkspaceConfig::load(&repo_path);
+        let global_config = crate::config::GlobalConfig::load();
+        let anthropic_client = Arc::new(AnthropicCommitClient::from_global_config(&global_config));
+        let ai_enabled = workspace_config.git.ai_commit && global_config.ai.enabled;
 
-        Self::with_executor_and_ai(
+        Self::with_executor_and_ai_config(
             repo_path,
             executor,
-            Arc::new(AnthropicCommitClient::new()),
-            workspace_config.git.ai_commit,
+            anthropic_client.clone(),
+            ai_enabled,
+            anthropic_client.is_configured(),
             map_workspace_redaction_policy(workspace_config.git.redaction_policy),
         )
     }
@@ -107,6 +112,24 @@ impl<E: CommandExecutor> GitState<E> {
         ai_enabled: bool,
         ai_redaction_policy: AiRedactionPolicy,
     ) -> Self {
+        Self::with_executor_and_ai_config(
+            repo_path,
+            executor,
+            ai_client,
+            ai_enabled,
+            ai_enabled,
+            ai_redaction_policy,
+        )
+    }
+
+    fn with_executor_and_ai_config(
+        repo_path: impl Into<PathBuf>,
+        executor: E,
+        ai_client: Arc<dyn AiCommitClient>,
+        ai_enabled: bool,
+        ai_configured: bool,
+        ai_redaction_policy: AiRedactionPolicy,
+    ) -> Self {
         let repo_path = repo_path.into();
         Self {
             worker: Arc::new(GitWorker::with_executor(repo_path, executor)),
@@ -114,6 +137,7 @@ impl<E: CommandExecutor> GitState<E> {
             last_sync_at: Arc::new(RwLock::new(None)),
             ai_client,
             ai_enabled,
+            ai_configured,
             ai_redaction_policy,
         }
     }
@@ -126,7 +150,7 @@ impl<E: CommandExecutor> GitState<E> {
             self.worker.diff_cached_name_status().map_err(|e| e.to_string())?;
         let changed_files = parse_changed_files_from_name_status(&staged_name_status.stdout);
 
-        let commit_message = if self.ai_enabled {
+        let commit_message = if self.ai_enabled && self.ai_configured {
             let mut prompt = String::new();
             let trimmed_hint = semantic_hint.trim();
             if !trimmed_hint.is_empty() {
@@ -245,6 +269,7 @@ impl<E: CommandExecutor + 'static> GitOps for GitState<E> {
                 self.policy.try_read().map(|p| p.clone()).unwrap_or_default()
             },
             last_sync_at: self.last_sync_at.try_read().ok().and_then(|v| *v),
+            ai_configured: self.ai_enabled && self.ai_configured,
         })
     }
 
@@ -3317,6 +3342,7 @@ struct GitStatusInfo {
     dirty: bool,
     status_output: String,
     policy: GitSyncPolicy,
+    ai_configured: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -3587,6 +3613,7 @@ mod tests {
                     dirty: false,
                     status_output: String::new(),
                     policy: GitSyncPolicy::Manual,
+                    ai_configured: false,
                     last_sync_at: None,
                 }))),
                 sync_result: Arc::new(Mutex::new(Ok(Uuid::nil()))),
@@ -4866,6 +4893,7 @@ mod tests {
             dirty: true,
             status_output: " M README.md\n".to_string(),
             policy: GitSyncPolicy::AutoRebase,
+            ai_configured: true,
             last_sync_at: None,
         }));
         let state = state_with_git(mock);
@@ -4877,6 +4905,7 @@ mod tests {
         assert_eq!(result["dirty"], true);
         assert_eq!(result["status_output"], " M README.md\n");
         assert_eq!(result["policy"], "auto_rebase");
+        assert_eq!(result["ai_configured"], true);
         assert_eq!(result.get("last_sync_at"), None);
     }
 
@@ -5125,6 +5154,7 @@ mod tests {
             dirty: false,
             status_output: String::new(),
             policy: GitSyncPolicy::Disabled,
+            ai_configured: false,
             last_sync_at: None,
         }));
         let state = state_with_git(mock);
@@ -5135,6 +5165,7 @@ mod tests {
         let result = response.result.expect("result should be populated");
         assert_eq!(result["dirty"], false);
         assert_eq!(result["policy"], "disabled");
+        assert_eq!(result["ai_configured"], false);
     }
 
     // ── git.configure round-trip ────────────────────────────────────

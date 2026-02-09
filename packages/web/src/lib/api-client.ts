@@ -283,7 +283,9 @@ function normalizeGitStatusResult(status: GitStatusResult): GitSyncSettingsSnaps
     remoteUrl: asOptionalString(status.remote_url ?? status.remote) ?? "origin",
     pushPolicy: asGitSyncPolicy(status.push_policy ?? status.policy, "manual"),
     aiCommitEnabled:
-      typeof status.ai_commit_enabled === "boolean"
+      typeof status.ai_configured === "boolean"
+        ? status.ai_configured
+        : typeof status.ai_commit_enabled === "boolean"
         ? status.ai_commit_enabled
         : typeof status.ai_enabled === "boolean"
           ? status.ai_enabled
