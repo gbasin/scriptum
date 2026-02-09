@@ -341,6 +341,57 @@ async fn core_method_result_shapes_match_contract() {
 }
 
 #[tokio::test]
+async fn workspace_registry_persists_across_state_restart() {
+    let daemon_home = unique_temp_path("scriptum-jsonrpc-workspace-registry-home");
+    fs::create_dir_all(&daemon_home).expect("daemon home should be created");
+    let global_config_path = daemon_home.join("config.toml");
+
+    let workspace_root = unique_temp_path("scriptum-jsonrpc-workspace-registry-workspace");
+    fs::create_dir_all(&workspace_root).expect("workspace root should be created");
+
+    let state_before_restart =
+        RpcServerState::default().with_global_config_path(global_config_path.clone());
+    let create_response = call_raw(
+        &state_before_restart,
+        &Request::new(
+            "workspace.create",
+            Some(json!({
+                "name": "Persisted Workspace",
+                "root_path": workspace_root,
+            })),
+            RequestId::String("workspace-registry-create".to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(create_response.error, None);
+    let create_result = create_response.result.expect("workspace.create result should be present");
+    let workspace_id = create_result
+        .get("workspace_id")
+        .cloned()
+        .expect("workspace.create should return workspace_id");
+
+    let state_after_restart =
+        RpcServerState::default().with_global_config_path(global_config_path.clone());
+    let report = state_after_restart.recover_workspaces_at_startup().await;
+    assert_eq!(report.registered_workspaces, 1);
+    assert_eq!(report.skipped_paths, 0);
+
+    let list_response = call_raw(
+        &state_after_restart,
+        &Request::new(
+            "workspace.list",
+            Some(json!({ "offset": 0, "limit": 10 })),
+            RequestId::String("workspace-registry-list".to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(list_response.error, None);
+    let list_result = list_response.result.expect("workspace.list result should be present");
+    assert_eq!(list_result["total"], 1);
+    assert_eq!(list_result["items"][0]["workspace_id"], workspace_id);
+}
+
+#[tokio::test]
 async fn jsonrpc_version_matrix_supports_current_and_rejects_legacy() {
     let state = RpcServerState::default();
 

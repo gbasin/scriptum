@@ -120,7 +120,8 @@ export interface WorkspaceListResult {
 }
 
 export interface WorkspaceOpenParams {
-  workspace_id: string;
+  workspace_id?: string;
+  root_path?: string;
 }
 
 export interface WorkspaceOpenResult {

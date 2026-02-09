@@ -37,6 +37,8 @@ pub struct GlobalConfig {
     pub editor_type: EditorTypeConfig,
     /// AI settings.
     pub ai: AiConfig,
+    /// Registered workspace root paths (absolute paths).
+    pub workspace_paths: Vec<String>,
 }
 
 impl Default for GlobalConfig {
@@ -46,6 +48,7 @@ impl Default for GlobalConfig {
             display_name: None,
             editor_type: EditorTypeConfig::Human,
             ai: AiConfig::default(),
+            workspace_paths: Vec::new(),
         }
     }
 }
@@ -87,6 +90,19 @@ impl GlobalConfig {
                 .map_err(|error| ConfigError::Io(std::io::Error::other(error.to_string())))
         })
     }
+
+    /// Add a workspace root path if it is non-empty and not already registered.
+    /// Returns true when the config is modified.
+    pub fn add_workspace_path(&mut self, raw_path: impl AsRef<str>) -> bool {
+        let path = raw_path.as_ref().trim();
+        if path.is_empty() || self.workspace_paths.iter().any(|existing| existing == path) {
+            return false;
+        }
+
+        self.workspace_paths.push(path.to_string());
+        self.workspace_paths.sort();
+        true
+    }
 }
 
 /// AI service configuration.
@@ -103,11 +119,7 @@ pub struct AiConfig {
 
 impl Default for AiConfig {
     fn default() -> Self {
-        Self {
-            api_key: None,
-            model: None,
-            enabled: true,
-        }
+        Self { api_key: None, model: None, enabled: true }
     }
 }
 
@@ -269,6 +281,7 @@ mod tests {
         assert!(cfg.ai.api_key.is_none());
         assert!(cfg.ai.model.is_none());
         assert!(cfg.ai.enabled);
+        assert!(cfg.workspace_paths.is_empty());
     }
 
     #[test]
@@ -285,6 +298,7 @@ mod tests {
                 model: Some("claude-haiku-4-5-20251001".into()),
                 enabled: false,
             },
+            workspace_paths: vec!["/tmp/ws-a".into(), "/tmp/ws-b".into()],
         };
         cfg.save_to(&path).unwrap();
         let loaded = GlobalConfig::load_from(&path).unwrap();
@@ -297,6 +311,7 @@ mod tests {
 relay_url = "https://relay.scriptum.dev"
 display_name = "Bob"
 editor_type = "agent"
+workspace_paths = ["/tmp/workspace-a", "/tmp/workspace-b"]
 
 [ai]
 api_key = "sk-ant-config"
@@ -310,6 +325,7 @@ enabled = false
         assert_eq!(cfg.ai.api_key.as_deref(), Some("sk-ant-config"));
         assert_eq!(cfg.ai.model.as_deref(), Some("claude-haiku-4-5-20251001"));
         assert!(!cfg.ai.enabled);
+        assert_eq!(cfg.workspace_paths, vec!["/tmp/workspace-a", "/tmp/workspace-b"]);
     }
 
     #[test]
@@ -326,6 +342,15 @@ api_key = "sk-prod"
     fn global_config_missing_fields_use_defaults() {
         let cfg: GlobalConfig = toml::from_str("").unwrap();
         assert_eq!(cfg, GlobalConfig::default());
+    }
+
+    #[test]
+    fn global_config_add_workspace_path_dedupes() {
+        let mut cfg = GlobalConfig::default();
+        assert!(cfg.add_workspace_path("/tmp/ws-z"));
+        assert!(!cfg.add_workspace_path("/tmp/ws-z"));
+        assert!(!cfg.add_workspace_path("   "));
+        assert_eq!(cfg.workspace_paths, vec!["/tmp/ws-z"]);
     }
 
     #[test]

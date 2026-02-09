@@ -9,13 +9,17 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::agent::lease::{LeaseClaim, LeaseMode, LeaseStore};
 use crate::agent::session::{AgentSession as PersistedAgentSession, SessionStatus, SessionStore};
-use crate::config::{RedactionPolicy as ConfigRedactionPolicy, WorkspaceConfig};
+use crate::config::{
+    workspace_config_path, GlobalConfig, RedactionPolicy as ConfigRedactionPolicy, WorkspaceConfig,
+};
 use crate::engine::{doc_manager::DocManager, ydoc::YDoc};
 use crate::git::commit::{
     fallback_commit_message, generate_commit_message_with_fallback, AiCommitClient,
     AnthropicCommitClient, RedactionPolicy as AiRedactionPolicy,
 };
-use crate::git::triggers::{ChangeType, ChangedFile, TriggerCollector, TriggerConfig, TriggerEvent};
+use crate::git::triggers::{
+    ChangeType, ChangedFile, TriggerCollector, TriggerConfig, TriggerEvent,
+};
 use crate::git::worker::{CommandExecutor, GitWorker, ProcessCommandExecutor};
 use crate::rpc::trace::{trace_id_from_raw_request, with_trace_id_scope};
 use crate::search::indexer::extract_title;
@@ -92,7 +96,7 @@ impl<E: CommandExecutor> GitState<E> {
     pub fn with_executor(repo_path: impl Into<PathBuf>, executor: E) -> Self {
         let repo_path = repo_path.into();
         let workspace_config = WorkspaceConfig::load(&repo_path);
-        let global_config = crate::config::GlobalConfig::load();
+        let global_config = GlobalConfig::load();
         let anthropic_client = Arc::new(AnthropicCommitClient::from_global_config(&global_config));
         let ai_enabled = workspace_config.git.ai_commit && global_config.ai.enabled;
 
@@ -251,6 +255,7 @@ pub struct RpcServerState {
     doc_history: Arc<RwLock<HashMap<(Uuid, Uuid), BTreeMap<i64, DocSnapshotRecord>>>>,
     degraded_docs: Arc<RwLock<HashSet<Uuid>>>,
     crdt_store_dir: Arc<PathBuf>,
+    global_config_path: Option<PathBuf>,
     workspaces: Arc<RwLock<HashMap<Uuid, WorkspaceInfo>>>,
     shutdown_notifier: Option<broadcast::Sender<()>>,
     git_state: Option<Arc<dyn GitOps + Send + Sync>>,
@@ -761,7 +766,10 @@ struct WorkspaceListResult {
 
 #[derive(Debug, Clone, Deserialize)]
 struct WorkspaceOpenParams {
-    workspace_id: Uuid,
+    #[serde(default)]
+    workspace_id: Option<Uuid>,
+    #[serde(default)]
+    root_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -787,6 +795,12 @@ struct WorkspaceCreateResult {
     name: String,
     root_path: String,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceStartupRecoveryReport {
+    pub registered_workspaces: usize,
+    pub skipped_paths: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -996,6 +1010,7 @@ impl Default for RpcServerState {
             doc_history: Arc::new(RwLock::new(HashMap::new())),
             degraded_docs: Arc::new(RwLock::new(HashSet::new())),
             crdt_store_dir: Arc::new(default_crdt_store_dir),
+            global_config_path: None,
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notifier: None,
             git_state: None,
@@ -1060,6 +1075,11 @@ impl RpcServerState {
 
     pub fn with_crdt_store_dir(mut self, crdt_store_dir: impl Into<PathBuf>) -> Self {
         self.crdt_store_dir = Arc::new(crdt_store_dir.into());
+        self
+    }
+
+    pub fn with_global_config_path(mut self, global_config_path: impl Into<PathBuf>) -> Self {
+        self.global_config_path = Some(global_config_path.into());
         self
     }
 
@@ -1138,14 +1158,12 @@ impl RpcServerState {
 
         let action = match policy {
             GitSyncPolicy::Disabled => return Ok(None),
-            GitSyncPolicy::Manual => GitSyncAction::Commit {
-                message,
-                trigger_type: Some(trigger_type),
-            },
-            GitSyncPolicy::AutoRebase => GitSyncAction::CommitAndPush {
-                message,
-                trigger_type: Some(trigger_type),
-            },
+            GitSyncPolicy::Manual => {
+                GitSyncAction::Commit { message, trigger_type: Some(trigger_type) }
+            }
+            GitSyncPolicy::AutoRebase => {
+                GitSyncAction::CommitAndPush { message, trigger_type: Some(trigger_type) }
+            }
         };
 
         git.sync(action).await.map(Some)
@@ -1654,46 +1672,46 @@ impl RpcServerState {
             AgentClaimMode::Shared => LeaseMode::Shared,
         };
 
-        let (result, claimed_section_id, claimed_agent_id, claimed_expires_at) =
-            self.with_agent_storage(|conn, lease_store| {
-            Self::ensure_active_session(conn, workspace_id, &agent_id, now)?;
+        let (result, claimed_section_id, claimed_agent_id, claimed_expires_at) = self
+            .with_agent_storage(|conn, lease_store| {
+                Self::ensure_active_session(conn, workspace_id, &agent_id, now)?;
 
-            let claim = LeaseClaim {
-                workspace_id: workspace_id.to_string(),
-                doc_id: doc_id.to_string(),
-                section_id: normalized_section_id.clone(),
-                agent_id: agent_id.clone(),
-                ttl_sec,
-                mode,
-                note,
-            };
+                let claim = LeaseClaim {
+                    workspace_id: workspace_id.to_string(),
+                    doc_id: doc_id.to_string(),
+                    section_id: normalized_section_id.clone(),
+                    agent_id: agent_id.clone(),
+                    ttl_sec,
+                    mode,
+                    note,
+                };
 
-            let claim_result =
-                lease_store.claim(conn, claim, now).map_err(|error| error.to_string())?;
-            let lease = claim_result.lease;
-            let conflicts = claim_result
-                .conflicts
-                .into_iter()
-                .map(|conflict| AgentClaimConflictResult {
-                    agent_id: conflict.agent_id,
-                    section_id: conflict.section_id,
-                })
-                .collect::<Vec<_>>();
+                let claim_result =
+                    lease_store.claim(conn, claim, now).map_err(|error| error.to_string())?;
+                let lease = claim_result.lease;
+                let conflicts = claim_result
+                    .conflicts
+                    .into_iter()
+                    .map(|conflict| AgentClaimConflictResult {
+                        agent_id: conflict.agent_id,
+                        section_id: conflict.section_id,
+                    })
+                    .collect::<Vec<_>>();
 
-            Ok((
-                AgentClaimResult {
-                    lease_id: format!(
-                        "{}:{}:{}:{}",
-                        workspace_id, doc_id, lease.section_id, lease.agent_id
-                    ),
-                    expires_at: lease.expires_at,
-                    conflicts,
-                },
-                lease.section_id,
-                lease.agent_id,
-                lease.expires_at,
-            ))
-        })?;
+                Ok((
+                    AgentClaimResult {
+                        lease_id: format!(
+                            "{}:{}:{}:{}",
+                            workspace_id, doc_id, lease.section_id, lease.agent_id
+                        ),
+                        expires_at: lease.expires_at,
+                        conflicts,
+                    },
+                    lease.section_id,
+                    lease.agent_id,
+                    lease.expires_at,
+                ))
+            })?;
 
         self.schedule_lease_expiry_trigger(
             workspace_id,
@@ -1844,15 +1862,24 @@ impl RpcServerState {
         WorkspaceListResult { items, next_cursor, total }
     }
 
-    async fn workspace_open(&self, workspace_id: Uuid) -> Result<WorkspaceOpenResult, String> {
-        let workspaces = self.workspaces.read().await;
-        let ws = workspaces
-            .get(&workspace_id)
-            .ok_or_else(|| format!("workspace {} not found", workspace_id))?;
-
+    async fn workspace_doc_count(&self, workspace_id: Uuid) -> usize {
         let doc_metadata = self.doc_metadata.read().await;
-        let doc_count = doc_metadata.keys().filter(|(ws_id, _)| *ws_id == workspace_id).count();
-        let workspace = workspace_to_rpc_workspace(ws);
+        doc_metadata.keys().filter(|(ws_id, _)| *ws_id == workspace_id).count()
+    }
+
+    async fn workspace_open_by_id(
+        &self,
+        workspace_id: Uuid,
+    ) -> Result<WorkspaceOpenResult, String> {
+        let ws = {
+            let workspaces = self.workspaces.read().await;
+            workspaces
+                .get(&workspace_id)
+                .cloned()
+                .ok_or_else(|| format!("workspace {} not found", workspace_id))?
+        };
+        let doc_count = self.workspace_doc_count(workspace_id).await;
+        let workspace = workspace_to_rpc_workspace(&ws);
 
         Ok(WorkspaceOpenResult {
             workspace,
@@ -1862,6 +1889,202 @@ impl RpcServerState {
             doc_count,
             created_at: ws.created_at,
         })
+    }
+
+    fn load_registered_workspace_paths(&self) -> Vec<String> {
+        let Some(path) = self.global_config_path.as_deref() else {
+            return Vec::new();
+        };
+
+        match GlobalConfig::load_from(path) {
+            Ok(config) => config.workspace_paths,
+            Err(crate::config::ConfigError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Vec::new()
+            }
+            Err(error) => {
+                warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "failed to load global config while restoring workspace registry; using defaults"
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    fn persist_registered_workspace_path(&self, root_path: &str) -> Result<(), String> {
+        let Some(path) = self.global_config_path.as_deref() else {
+            return Ok(());
+        };
+
+        let mut config = match GlobalConfig::load_from(path) {
+            Ok(config) => config,
+            Err(crate::config::ConfigError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                GlobalConfig::default()
+            }
+            Err(error) => {
+                warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "failed to load global config while registering workspace path; using defaults"
+                );
+                GlobalConfig::default()
+            }
+        };
+
+        if !config.add_workspace_path(root_path) {
+            return Ok(());
+        }
+
+        config.save_to(path).map_err(|error| {
+            format!("failed to persist workspace path in `{}`: {error}", path.display())
+        })
+    }
+
+    fn canonical_workspace_root(raw_path: &str) -> Result<PathBuf, String> {
+        let trimmed = raw_path.trim();
+        if trimmed.is_empty() {
+            return Err("root_path must not be empty".to_string());
+        }
+
+        let path = Path::new(trimmed);
+        if !path.is_absolute() {
+            return Err("root_path must be an absolute path".to_string());
+        }
+
+        let canonical = path.canonicalize().map_err(|error| {
+            format!("failed to resolve workspace root `{}`: {error}", path.display())
+        })?;
+        if !canonical.is_dir() {
+            return Err(format!("workspace root `{}` is not a directory", canonical.display()));
+        }
+        Ok(canonical)
+    }
+
+    fn workspace_info_from_root(root_path: &Path) -> Result<WorkspaceInfo, String> {
+        let workspace_toml = workspace_config_path(root_path);
+        if !workspace_toml.is_file() {
+            return Err(format!("workspace config not found at `{}`", workspace_toml.display()));
+        }
+
+        let config = WorkspaceConfig::load_from(&workspace_toml).map_err(|error| {
+            format!("failed to read workspace config `{}`: {error}", workspace_toml.display())
+        })?;
+
+        let raw_workspace_id = config.sync.workspace_id.as_deref().ok_or_else(|| {
+            format!("workspace config `{}` is missing sync.workspace_id", workspace_toml.display())
+        })?;
+        let workspace_id = Uuid::parse_str(raw_workspace_id).map_err(|error| {
+            format!(
+                "workspace config `{}` has invalid sync.workspace_id `{raw_workspace_id}`: {error}",
+                workspace_toml.display()
+            )
+        })?;
+
+        let name = config
+            .sync
+            .workspace_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                root_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "Workspace".to_string());
+
+        let canonical_root = root_path.to_str().ok_or_else(|| {
+            format!("workspace root path `{}` is not valid UTF-8", root_path.display())
+        })?;
+
+        Ok(WorkspaceInfo {
+            workspace_id,
+            name,
+            root_path: canonical_root.to_string(),
+            created_at: chrono::Utc::now(),
+        })
+    }
+
+    async fn register_workspace_from_root_path(
+        &self,
+        raw_root_path: &str,
+        persist_registration: bool,
+    ) -> Result<WorkspaceInfo, String> {
+        let canonical_root = Self::canonical_workspace_root(raw_root_path)?;
+        let info = Self::workspace_info_from_root(&canonical_root)?;
+
+        {
+            let mut workspaces = self.workspaces.write().await;
+            if let Some(duplicate_id) = workspaces
+                .values()
+                .find(|workspace| {
+                    workspace.root_path == info.root_path
+                        && workspace.workspace_id != info.workspace_id
+                })
+                .map(|workspace| workspace.workspace_id)
+            {
+                workspaces.remove(&duplicate_id);
+            }
+            workspaces.insert(info.workspace_id, info.clone());
+        }
+
+        if persist_registration {
+            self.persist_registered_workspace_path(&info.root_path)?;
+        }
+
+        Ok(info)
+    }
+
+    pub async fn recover_workspaces_at_startup(&self) -> WorkspaceStartupRecoveryReport {
+        let mut report = WorkspaceStartupRecoveryReport::default();
+        let registered_paths = self.load_registered_workspace_paths();
+        let mut unique_paths = BTreeSet::new();
+
+        for root_path in registered_paths {
+            if !unique_paths.insert(root_path.clone()) {
+                continue;
+            }
+
+            match self.register_workspace_from_root_path(&root_path, false).await {
+                Ok(_) => report.registered_workspaces += 1,
+                Err(error) => {
+                    report.skipped_paths += 1;
+                    warn!(
+                        root_path = %root_path,
+                        error = %error,
+                        "skipping workspace registration during startup"
+                    );
+                }
+            }
+        }
+
+        report
+    }
+
+    async fn workspace_open(
+        &self,
+        params: WorkspaceOpenParams,
+    ) -> Result<WorkspaceOpenResult, String> {
+        match (params.workspace_id, params.root_path) {
+            (Some(workspace_id), None) => self.workspace_open_by_id(workspace_id).await,
+            (None, Some(root_path)) => {
+                let info = self.register_workspace_from_root_path(&root_path, true).await?;
+                self.workspace_open_by_id(info.workspace_id).await
+            }
+            (Some(_), Some(_)) => {
+                Err("workspace.open accepts either workspace_id or root_path, not both".to_string())
+            }
+            (None, None) => Err("workspace.open requires workspace_id or root_path".to_string()),
+        }
     }
 
     async fn workspace_create(
@@ -1901,9 +2124,21 @@ impl RpcServerState {
         config.sync.workspace_id = Some(workspace_id.to_string());
         config.sync.workspace_name = Some(trimmed_name.clone());
         config.save(path).map_err(|e| format!("failed to write workspace.toml: {e}"))?;
+        let canonical_root_path = path.canonicalize().map_err(|error| {
+            format!("failed to resolve workspace root `{}`: {error}", path.display())
+        })?;
+        let canonical_root = canonical_root_path
+            .to_str()
+            .ok_or_else(|| {
+                format!(
+                    "workspace root path `{}` is not valid UTF-8",
+                    canonical_root_path.display()
+                )
+            })?
+            .to_string();
 
         // Import any existing markdown files from disk.
-        let imported_docs = scan_workspace_markdown_docs(path)?;
+        let imported_docs = scan_workspace_markdown_docs(&canonical_root_path)?;
 
         // Seed local metadata/index stores for imported docs.
         self.with_agent_storage(|conn, _| {
@@ -2010,17 +2245,18 @@ impl RpcServerState {
         let info = WorkspaceInfo {
             workspace_id,
             name: trimmed_name.clone(),
-            root_path: root_path.clone(),
+            root_path: canonical_root.clone(),
             created_at,
         };
         self.workspaces.write().await.insert(workspace_id, info.clone());
+        self.persist_registered_workspace_path(&canonical_root)?;
         let workspace = workspace_to_rpc_workspace(&info);
 
         Ok(WorkspaceCreateResult {
             workspace,
             workspace_id,
             name: trimmed_name,
-            root_path,
+            root_path: canonical_root,
             created_at,
         })
     }
@@ -3633,7 +3869,9 @@ impl GitSyncAction {
     fn with_trigger_type(self, trigger_type: impl Into<String>) -> Self {
         let trigger_type = Some(trigger_type.into());
         match self {
-            GitSyncAction::Commit { message, .. } => GitSyncAction::Commit { message, trigger_type },
+            GitSyncAction::Commit { message, .. } => {
+                GitSyncAction::Commit { message, trigger_type }
+            }
             GitSyncAction::CommitAndPush { message, .. } => {
                 GitSyncAction::CommitAndPush { message, trigger_type }
             }
@@ -3686,12 +3924,22 @@ async fn handle_workspace_open(request: Request, state: &RpcServerState) -> Resp
         }
     };
 
-    match state.workspace_open(params.workspace_id).await {
+    match state.workspace_open(params).await {
         Ok(result) => Response::success(request.id, json!(result)),
-        Err(reason) => Response::error(
-            request.id,
-            RpcError { code: INTERNAL_ERROR, message: reason, data: None },
-        ),
+        Err(reason) => {
+            if reason.contains("requires workspace_id or root_path")
+                || reason.contains("either workspace_id or root_path")
+                || reason.contains("must not be empty")
+                || reason.contains("must be an absolute path")
+            {
+                invalid_params_response(request.id, reason)
+            } else {
+                Response::error(
+                    request.id,
+                    RpcError { code: INTERNAL_ERROR, message: reason, data: None },
+                )
+            }
+        }
     }
 }
 
@@ -5483,7 +5731,8 @@ mod tests {
             ok_command("M\tdocs/readme.md\n"),
             ok_command("[main abc123] commit\n"),
         ]);
-        let ai_client = Arc::new(MockAiClient::failure(AiCommitError::ClientError("disabled".into())));
+        let ai_client =
+            Arc::new(MockAiClient::failure(AiCommitError::ClientError("disabled".into())));
         let git = GitState::with_executor_and_ai(
             "/tmp/repo",
             executor.clone(),
@@ -6080,6 +6329,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_open_registers_workspace_from_root_path() {
+        let global_config_root = tempfile::tempdir().expect("tempdir should be created");
+        let global_config_path = global_config_root.path().join("config.toml");
+        let workspace_root = tempfile::tempdir().expect("workspace root tempdir should be created");
+        let workspace_id = Uuid::new_v4();
+
+        let mut workspace_config = crate::config::WorkspaceConfig::default();
+        workspace_config.sync.workspace_id = Some(workspace_id.to_string());
+        workspace_config.sync.workspace_name = Some("Opened Workspace".to_string());
+        workspace_config.save(workspace_root.path()).expect("workspace config should be saved");
+
+        let state = RpcServerState::default().with_global_config_path(global_config_path.clone());
+        let request = Request::new(
+            "workspace.open",
+            Some(json!({
+                "root_path": workspace_root.path().to_str().expect("workspace path should be UTF-8")
+            })),
+            RequestId::Number(113),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        assert!(response.error.is_none(), "expected success: {response:?}");
+        let result = response.result.expect("result should be present");
+        assert_eq!(result["workspace_id"], json!(workspace_id));
+        assert_eq!(result["name"], "Opened Workspace");
+        assert_eq!(result["doc_count"], 0);
+
+        let listed =
+            dispatch_request(Request::new("workspace.list", None, RequestId::Number(114)), &state)
+                .await;
+        assert!(listed.error.is_none(), "workspace.list should succeed: {listed:?}");
+        let listed_result = listed.result.expect("workspace.list result should be present");
+        assert_eq!(listed_result["total"], 1);
+        assert_eq!(listed_result["items"][0]["workspace_id"], json!(workspace_id));
+
+        let persisted = crate::config::GlobalConfig::load_from(&global_config_path)
+            .expect("global config should be persisted");
+        let canonical_root = workspace_root
+            .path()
+            .canonicalize()
+            .expect("workspace path should canonicalize")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(persisted.workspace_paths, vec![canonical_root]);
+    }
+
+    #[tokio::test]
+    async fn workspace_open_rejects_ambiguous_params() {
+        let state = RpcServerState::default();
+        let request = Request::new(
+            "workspace.open",
+            Some(json!({
+                "workspace_id": Uuid::new_v4(),
+                "root_path": "/tmp/project"
+            })),
+            RequestId::Number(115),
+        );
+        let response = dispatch_request(request, &state).await;
+
+        let error = response.error.expect("error should be present");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert!(error.data.expect("error data should be present")["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("either workspace_id or root_path"));
+    }
+
+    #[tokio::test]
     async fn workspace_open_rejects_missing_params() {
         let state = RpcServerState::default();
         let request = Request::new("workspace.open", None, RequestId::Number(112));
@@ -6106,10 +6423,16 @@ mod tests {
 
         assert!(response.error.is_none(), "expected success: {response:?}");
         let result = response.result.expect("result");
+        let canonical_root = tmp
+            .path()
+            .canonicalize()
+            .expect("workspace root should canonicalize")
+            .to_string_lossy()
+            .to_string();
         assert_eq!(result["workspace"]["name"], "New Project");
         assert_eq!(result["workspace"]["slug"], "new-project");
         assert_eq!(result["name"], "New Project");
-        assert_eq!(result["root_path"], json!(root));
+        assert_eq!(result["root_path"], json!(canonical_root));
         let workspace_id =
             result["workspace_id"].as_str().expect("workspace_id should be present").to_string();
         assert!(result["workspace"]["id"].as_str().is_some());
@@ -6151,6 +6474,75 @@ mod tests {
         let list_result = list_resp.result.expect("result");
         assert_eq!(list_result["total"], 1);
         assert_eq!(list_result["items"][0]["name"], "New Project");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_recovered_after_restart() {
+        let daemon_home = tempfile::tempdir().expect("tempdir should be created");
+        let global_config_path = daemon_home.path().join("config.toml");
+        let workspace_root = tempfile::tempdir().expect("workspace root should be created");
+
+        let state_before_restart =
+            RpcServerState::default().with_global_config_path(global_config_path.clone());
+        let create = Request::new(
+            "workspace.create",
+            Some(json!({
+                "name": "Restartable Workspace",
+                "root_path": workspace_root.path().to_str().expect("workspace path should be UTF-8"),
+            })),
+            RequestId::Number(126),
+        );
+        let create_resp = dispatch_request(create, &state_before_restart).await;
+        assert!(create_resp.error.is_none(), "workspace.create should succeed: {create_resp:?}");
+        let create_result = create_resp.result.expect("workspace.create result should be present");
+        let workspace_id = create_result["workspace_id"].clone();
+
+        let state_after_restart =
+            RpcServerState::default().with_global_config_path(global_config_path.clone());
+        let report = state_after_restart.recover_workspaces_at_startup().await;
+        assert_eq!(report.registered_workspaces, 1);
+        assert_eq!(report.skipped_paths, 0);
+
+        let list_resp = dispatch_request(
+            Request::new("workspace.list", None, RequestId::Number(127)),
+            &state_after_restart,
+        )
+        .await;
+        assert!(list_resp.error.is_none(), "workspace.list should succeed: {list_resp:?}");
+        let list_result = list_resp.result.expect("workspace.list result should be present");
+        assert_eq!(list_result["total"], 1);
+        assert_eq!(list_result["items"][0]["workspace_id"], workspace_id);
+    }
+
+    #[tokio::test]
+    async fn startup_workspace_recovery_skips_missing_or_corrupt_paths() {
+        let daemon_home = tempfile::tempdir().expect("tempdir should be created");
+        let global_config_path = daemon_home.path().join("config.toml");
+        let missing_workspace = daemon_home.path().join("missing-workspace");
+
+        let corrupt_workspace = tempfile::tempdir().expect("corrupt workspace should be created");
+        let corrupt_config_dir = corrupt_workspace.path().join(".scriptum");
+        std::fs::create_dir_all(&corrupt_config_dir)
+            .expect("corrupt workspace .scriptum should be created");
+        std::fs::write(corrupt_config_dir.join("workspace.toml"), "not = [valid")
+            .expect("corrupt workspace.toml should be written");
+
+        let mut global_config = crate::config::GlobalConfig::default();
+        global_config.workspace_paths = vec![
+            missing_workspace.to_string_lossy().to_string(),
+            corrupt_workspace
+                .path()
+                .canonicalize()
+                .expect("corrupt workspace path should canonicalize")
+                .to_string_lossy()
+                .to_string(),
+        ];
+        global_config.save_to(&global_config_path).expect("global config should be written");
+
+        let state = RpcServerState::default().with_global_config_path(global_config_path);
+        let report = state.recover_workspaces_at_startup().await;
+        assert_eq!(report.registered_workspaces, 0);
+        assert_eq!(report.skipped_paths, 2);
     }
 
     #[tokio::test]

@@ -61,8 +61,10 @@ async fn run_standalone_with_paths(paths: DaemonPaths) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
     let state = RpcServerState::default()
         .with_crdt_store_dir(paths.base_dir.join("crdt_store"))
+        .with_global_config_path(paths.base_dir.join("config.toml"))
         .with_shutdown_notifier(shutdown_tx.clone());
     recover_state_from_crdt_store(&state, &paths.base_dir).await?;
+    recover_registered_workspaces(&state).await;
     let ctrl_c_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -87,8 +89,10 @@ async fn start_embedded_with_paths(paths: DaemonPaths) -> Result<EmbeddedDaemonH
     let (shutdown_tx, shutdown_rx) = broadcast::channel(4);
     let state = RpcServerState::default()
         .with_crdt_store_dir(paths.base_dir.join("crdt_store"))
+        .with_global_config_path(paths.base_dir.join("config.toml"))
         .with_shutdown_notifier(shutdown_tx.clone());
     recover_state_from_crdt_store(&state, &paths.base_dir).await?;
+    recover_registered_workspaces(&state).await;
     let socket_path = paths.socket_path.clone();
     let pid_path = paths.pid_path.clone();
     let task = tokio::spawn(async move {
@@ -183,6 +187,22 @@ async fn recover_state_from_crdt_store(state: &RpcServerState, base_dir: &Path) 
         );
     }
     Ok(())
+}
+
+async fn recover_registered_workspaces(state: &RpcServerState) {
+    let report = state.recover_workspaces_at_startup().await;
+    if report.skipped_paths == 0 {
+        info!(
+            registered_workspaces = report.registered_workspaces,
+            "workspace registry recovery completed"
+        );
+    } else {
+        warn!(
+            registered_workspaces = report.registered_workspaces,
+            skipped_paths = report.skipped_paths,
+            "workspace registry recovery completed with skipped paths"
+        );
+    }
 }
 
 async fn start_local_yjs_ws_server() -> Result<JoinHandle<()>> {
