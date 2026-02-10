@@ -82,7 +82,7 @@ pub fn run(args: NewArgs) -> anyhow::Result<()> {
             Ok(())
         }
         Err(error) => {
-            output::print_error(format, "RPC_ERROR", &format!("{error:#}"));
+            output::print_anyhow_error(format, &error);
             Err(error)
         }
     }

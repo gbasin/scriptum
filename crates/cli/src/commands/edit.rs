@@ -83,7 +83,7 @@ pub fn run(args: EditArgs) -> anyhow::Result<()> {
             Ok(())
         }
         Err(e) => {
-            output::print_error(format, "RPC_ERROR", &format!("{e:#}"));
+            output::print_anyhow_error(format, &e);
             Err(e)
         }
     }
