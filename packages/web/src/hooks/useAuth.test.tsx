@@ -232,6 +232,42 @@ describe("useAuth", () => {
     harness.unmount();
   });
 
+  it("caps refresh timer delay for distant expiry timestamps", async () => {
+    vi.useFakeTimers();
+    const now = Date.parse("2026-02-07T00:00:00.000Z");
+    vi.setSystemTime(now);
+
+    const auth = createMockAuth();
+    auth.getStoredSession.mockReturnValue(
+      buildSession({
+        accessExpiresAt: "2099-01-01T00:01:00.000Z",
+      }),
+    );
+    auth.refreshAccessToken.mockResolvedValue(null);
+
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const store = createStore();
+    const harness = renderUseAuth({
+      auth: authOptions(auth),
+      store,
+      location: { assign: vi.fn(), origin: "https://app.scriptum.dev" },
+    });
+
+    expect(
+      setTimeoutSpy.mock.calls.some((call) => call[1] === 2_147_483_647),
+    ).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+
+    expect(auth.refreshAccessToken).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("redirects to login path when token refresh fails", async () => {
     vi.useFakeTimers();
     const now = Date.parse("2026-02-07T00:00:00.000Z");
@@ -244,6 +280,42 @@ describe("useAuth", () => {
       }),
     );
     auth.refreshAccessToken.mockResolvedValue(null);
+
+    const assign = vi.fn();
+    const store = createStore();
+    const harness = renderUseAuth({
+      auth: authOptions(auth),
+      store,
+      refreshBufferMs: 5_000,
+      location: { assign, origin: "https://app.scriptum.dev" },
+      loginPath: "/",
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_001);
+      await Promise.resolve();
+    });
+
+    expect(auth.refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith("https://app.scriptum.dev/");
+    expect(store.getState().status).toBe("unauthenticated");
+    expect(store.getState().error).toContain("Session expired");
+
+    harness.unmount();
+  });
+
+  it("redirects to login path when token refresh throws", async () => {
+    vi.useFakeTimers();
+    const now = Date.parse("2026-02-07T00:00:00.000Z");
+    vi.setSystemTime(now);
+
+    const auth = createMockAuth();
+    auth.getStoredSession.mockReturnValue(
+      buildSession({
+        accessExpiresAt: "2026-02-07T00:00:10.000Z",
+      }),
+    );
+    auth.refreshAccessToken.mockRejectedValue(new Error("network failure"));
 
     const assign = vi.fn();
     const store = createStore();

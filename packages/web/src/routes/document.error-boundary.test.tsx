@@ -16,6 +16,20 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }
 
+const listCommentsMock = vi.hoisted(() => vi.fn());
+const getDocumentHistoryTimelineMock = vi.hoisted(() => vi.fn());
+const getDocumentDiffTimelineMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../lib/api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api-client")>();
+  return {
+    ...actual,
+    listComments: listCommentsMock,
+    getDocumentHistoryTimeline: getDocumentHistoryTimelineMock,
+    getDocumentDiffTimeline: getDocumentDiffTimelineMock,
+  };
+});
+
 vi.mock("@scriptum/editor", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@scriptum/editor")>();
   return {
@@ -72,6 +86,21 @@ describe("DocumentRoute editor error boundary", () => {
     useDocumentsStore
       .getState()
       .setActiveDocumentForWorkspace(workspace.id, document.id);
+
+    listCommentsMock.mockReset();
+    getDocumentHistoryTimelineMock.mockReset();
+    getDocumentDiffTimelineMock.mockReset();
+
+    listCommentsMock.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
+    getDocumentHistoryTimelineMock.mockResolvedValue({
+      events: [],
+    });
+    getDocumentDiffTimelineMock.mockResolvedValue({
+      snapshots: [],
+    });
   });
 
   afterEach(() => {

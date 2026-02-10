@@ -19,6 +19,7 @@ const DEFAULT_REFRESH_BUFFER_MS = 60_000;
 const DEFAULT_LOGIN_PATH = "/";
 const DEFAULT_LOCATION_ORIGIN = "http://localhost";
 const LOCAL_SESSION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
+const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 
 type UseAuthLocation = Pick<Location, "assign" | "origin">;
 
@@ -172,22 +173,31 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const runRefresh = async () => {
-      const refreshed = await auth.refreshAccessToken();
-      if (disposed) {
-        return;
-      }
-      if (!refreshed) {
+      try {
+        const refreshed = await auth.refreshAccessToken();
+        if (disposed) {
+          return;
+        }
+        if (!refreshed) {
+          setUnauthenticated(store, "Session expired. Please log in again.");
+          redirectToLogin();
+          return;
+        }
+        setAuthenticated(store, refreshed);
+      } catch {
+        if (disposed) {
+          return;
+        }
         setUnauthenticated(store, "Session expired. Please log in again.");
         redirectToLogin();
-        return;
       }
-      setAuthenticated(store, refreshed);
     };
 
     const accessExpiresAtMs = Date.parse(accessExpiresAt);
-    const delayMs = Number.isNaN(accessExpiresAtMs)
+    const rawDelayMs = Number.isNaN(accessExpiresAtMs)
       ? 0
       : Math.max(0, accessExpiresAtMs - Date.now() - refreshBufferMs);
+    const delayMs = Math.min(rawDelayMs, MAX_TIMEOUT_DELAY_MS);
 
     timer = setTimeout(() => {
       void runRefresh();
