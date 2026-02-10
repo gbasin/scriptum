@@ -11,6 +11,7 @@ describe("ui store", () => {
     expect(store.getState().rightPanelTab).toBe("outline");
     expect(store.getState().commandPaletteOpen).toBe(false);
     expect(store.getState().activeModal).toBeNull();
+    expect(store.getState().onboardingCompleted).toBe(false);
   });
 
   it("toggles sidebar and sets sidebar panel", () => {
@@ -58,6 +59,16 @@ describe("ui store", () => {
     expect(store.getState().activeModal).toBeNull();
   });
 
+  it("marks onboarding as complete and can reset it", () => {
+    const store = createUiStore();
+
+    store.getState().completeOnboarding();
+    expect(store.getState().onboardingCompleted).toBe(true);
+
+    store.getState().resetOnboarding();
+    expect(store.getState().onboardingCompleted).toBe(false);
+  });
+
   it("resets all ui state to defaults", () => {
     const store = createUiStore({
       sidebarOpen: false,
@@ -66,6 +77,7 @@ describe("ui store", () => {
       rightPanelTab: "comments",
       commandPaletteOpen: true,
       activeModal: "rename-document",
+      onboardingCompleted: true,
     });
 
     store.getState().reset();
@@ -76,5 +88,6 @@ describe("ui store", () => {
     expect(store.getState().rightPanelTab).toBe("outline");
     expect(store.getState().commandPaletteOpen).toBe(false);
     expect(store.getState().activeModal).toBeNull();
+    expect(store.getState().onboardingCompleted).toBe(true);
   });
 });
