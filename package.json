@@ -2,6 +2,7 @@
   "name": "scriptum",
   "private": true,
   "version": "0.0.0",
+  "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "scripts": {
     "dev": "concurrently -k -s first -n web,daemon,relay -c cyan,green,magenta \"pnpm --filter @scriptum/web dev\" \"cargo run --bin scriptumd\" \"cargo run --bin scriptum-relay\"",

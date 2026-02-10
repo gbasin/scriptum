@@ -326,4 +326,4 @@ Note: `scriptum://docs/{id}` and `scriptum://docs/{id}/sections` are resource te
 
 ## License
 
-TBD
+MIT. See `LICENSE` for the full text.

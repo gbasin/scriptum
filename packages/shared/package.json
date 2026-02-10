@@ -1,6 +1,7 @@
 {
   "name": "@scriptum/shared",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
