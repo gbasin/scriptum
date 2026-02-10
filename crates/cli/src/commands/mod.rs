@@ -9,6 +9,7 @@ pub mod checkpoint;
 pub mod claim;
 pub mod conflicts;
 pub mod diff;
+pub mod doctor;
 pub mod edit;
 pub mod init;
 pub mod ls;
@@ -40,6 +41,8 @@ pub enum Command {
     Search(search::SearchArgs),
     /// Show pending changes since last commit
     Diff(diff::DiffArgs),
+    /// Run environment and health diagnostics
+    Doctor(doctor::DoctorArgs),
     /// List workspace documents
     Ls(ls::LsArgs),
     /// CRDT-based per-line attribution
@@ -74,6 +77,7 @@ pub fn run(cmd: Command) -> anyhow::Result<()> {
         Command::Sections(args) => sections::run(args),
         Command::Search(args) => search::run(args),
         Command::Diff(args) => diff::run(args),
+        Command::Doctor(args) => doctor::run(args),
         Command::Ls(args) => ls::run(args),
         Command::Blame(args) => blame::run(args),
         Command::Claim(args) => claim::run(args),

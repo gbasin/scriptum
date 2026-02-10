@@ -18,8 +18,10 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let should_boot_daemon =
-        !matches!(&cli.command, commands::Command::Setup(_) | commands::Command::Init(_));
+    let should_boot_daemon = !matches!(
+        &cli.command,
+        commands::Command::Setup(_) | commands::Command::Init(_) | commands::Command::Doctor(_)
+    );
     if should_boot_daemon {
         daemon_launcher::ensure_daemon_running().await?;
     }

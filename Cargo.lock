@@ -4154,8 +4154,10 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml 0.8.2",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
