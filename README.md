@@ -215,6 +215,10 @@ Rust coverage requires `cargo-llvm-cov`:
 cargo install cargo-llvm-cov
 ```
 
+## Contributing
+
+See `CONTRIBUTING.md` for contributor setup, coding standards, testing expectations, and PR process.
+
 ### Relay (Docker)
 
 ```bash
